@@ -2,8 +2,9 @@ import type { GeneratedFile, PendingToolPermission, PermissionMode, PermissionRu
 import { nowIso } from "@supbot/shared";
 import type { AdapterToolCall } from "./modelAdapter";
 import { PermissionPolicy } from "./permissionPolicy";
+import { pathIsInside, resolveProjectWriteTarget } from "./projectManager";
 import { validateJsonSchemaValue } from "./jsonSchema";
-import type { ToolExecutionContext, ToolRegistry } from "./toolRegistry";
+import type { ToolDefinition, ToolExecutionContext, ToolRegistry } from "./toolRegistry";
 
 export interface ToolExecutorInput {
   jobId: string;
@@ -68,8 +69,13 @@ export class ToolExecutor {
       await emit({ status: "denied", error: message });
       return { record, toolResultText: `Error: ${message}`, generatedFiles };
     }
+    const projectBoundaryError = validateProjectBoundary(tool, parsedInput, input.context);
+    if (projectBoundaryError) {
+      await emit({ status: "denied", error: projectBoundaryError });
+      return { record, toolResultText: `Error: ${projectBoundaryError}`, generatedFiles };
+    }
     let executionContext = input.context;
-    if (tool.risk === "dangerous") {
+    if (tool.risk === "dangerous" && !input.context.projectRoot) {
       try {
         const isolatedHost = await input.context.ensureIsolatedWorkspace?.(tool.name);
         if (isolatedHost) {
@@ -150,6 +156,104 @@ function parseToolArguments(raw: string): unknown {
 function validateToolInput(input: unknown, schema: { type: string; properties: Record<string, unknown>; required?: string[]; additionalProperties?: boolean }): string | undefined {
   const result = validateJsonSchemaValue(input, schema, "Tool input");
   return result.ok ? undefined : result.errors.join(" ");
+}
+
+function validateProjectBoundary(tool: ToolDefinition, input: unknown, context: ToolExecutionContext): string | undefined {
+  const projectRoot = context.projectRoot || context.host.projectRoot;
+  const allowedWriteRoots = context.allowedWriteRoots || context.host.allowedWriteRoots || [];
+  if (!projectRoot || !allowedWriteRoots.length || tool.risk !== "dangerous") {
+    return undefined;
+  }
+  try {
+    if (tool.name === "WriteFile") {
+      const parsed = objectInput(input);
+      const target = typeof parsed.path === "string" ? parsed.path : "";
+      if (!target) {
+        return "Project WriteFile target path is required.";
+      }
+      resolveProjectWriteTarget(projectRoot, target, allowedWriteRoots);
+      return undefined;
+    }
+    if (tool.name === "Shell") {
+      const command = String(objectInput(input).command || "");
+      return validateProjectShellCommand(command, projectRoot, allowedWriteRoots);
+    }
+    if (tool.name.startsWith("mcp.")) {
+      return validateMcpProjectPaths(input, projectRoot, allowedWriteRoots);
+    }
+  } catch (error) {
+    return (error as Error).message;
+  }
+  return undefined;
+}
+
+function validateProjectShellCommand(command: string, projectRoot: string, allowedWriteRoots: string[]): string | undefined {
+  if (!command.trim()) {
+    return undefined;
+  }
+  if (/(^|[\\/\s])\.\.([\\/\s]|$)/.test(command)) {
+    return "Project shell commands cannot reference parent-directory paths.";
+  }
+  const absolutePath = command.match(/[A-Za-z]:[\\/][^\s"'`]+|\/[^\s"'`]+/g)?.find((path) => !pathIsInside(projectRoot, path));
+  if (absolutePath) {
+    return `Project shell command path must stay inside ${projectRoot}: ${absolutePath}`;
+  }
+  const writes = />|Out-File|Set-Content|Add-Content|New-Item|Copy-Item|Move-Item|Remove-Item|\brm\b|\bdel\b|Invoke-WebRequest[\s\S]*-OutFile|curl[\s\S]*\s-o\s/i.test(command);
+  if (!writes) {
+    return undefined;
+  }
+  const normalized = command.replace(/\\/g, "/").toLowerCase();
+  const mentionsAllowedRoot = allowedWriteRoots.some((root) => {
+    const relativeRoot = projectRelative(projectRoot, root).replace(/\\/g, "/").toLowerCase();
+    return relativeRoot && normalized.includes(relativeRoot);
+  });
+  return mentionsAllowedRoot ? undefined : "Project shell writes must target an approved project output folder.";
+}
+
+function validateMcpProjectPaths(input: unknown, projectRoot: string, allowedWriteRoots: string[]): string | undefined {
+  for (const item of collectPathLikeValues(input)) {
+    if (!isPathLike(item.value)) {
+      continue;
+    }
+    const key = item.key.toLowerCase();
+    const writeLike = /output|dest|target|write|save|path/.test(key);
+    if (!writeLike) {
+      continue;
+    }
+    try {
+      resolveProjectWriteTarget(projectRoot, item.value, allowedWriteRoots);
+    } catch (error) {
+      return `MCP project path rejected for ${item.key}: ${(error as Error).message}`;
+    }
+  }
+  return undefined;
+}
+
+function collectPathLikeValues(input: unknown, key = "input"): Array<{ key: string; value: string }> {
+  if (typeof input === "string") {
+    return [{ key, value: input }];
+  }
+  if (Array.isArray(input)) {
+    return input.flatMap((item, index) => collectPathLikeValues(item, `${key}[${index}]`));
+  }
+  if (!input || typeof input !== "object") {
+    return [];
+  }
+  return Object.entries(input as Record<string, unknown>).flatMap(([entryKey, value]) => collectPathLikeValues(value, entryKey));
+}
+
+function isPathLike(value: string): boolean {
+  return /[\\/]/.test(value) || /^[A-Za-z]:/.test(value);
+}
+
+function objectInput(input: unknown): Record<string, unknown> {
+  return input && typeof input === "object" && !Array.isArray(input) ? input as Record<string, unknown> : {};
+}
+
+function projectRelative(projectRoot: string, path: string): string {
+  return pathIsInside(projectRoot, path)
+    ? path.slice(projectRoot.length).replace(/^[\\/]+/, "")
+    : path;
 }
 
 function withPermissionTimeout(promise: Promise<"approved" | "denied">, timeoutMs: number): Promise<"approved" | "denied" | "timeout"> {

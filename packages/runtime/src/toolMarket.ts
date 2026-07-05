@@ -1,4 +1,16 @@
-import type { CapabilityDefinition, ToolMarketCatalogItem, ToolMarketConfig, ToolMarketProduct, ToolMarketProductType, ToolMarketQuery } from "@supbot/shared";
+import type {
+  CapabilityDefinition,
+  ToolMarketCatalogItem,
+  ToolMarketConfig,
+  ToolMarketLocalDeployment,
+  ToolMarketMcpDeployment,
+  ToolMarketPackageFile,
+  ToolMarketProduct,
+  ToolMarketProductType,
+  ToolMarketQuery
+} from "@supbot/shared";
+
+const toolMarketRequestTimeoutMs = 8000;
 
 export const localToolMarketProducts: ToolMarketProduct[] = [
   {
@@ -16,7 +28,11 @@ export const localToolMarketProducts: ToolMarketProduct[] = [
       description: "Adds local file workflow templates on top of /read and /write.",
       enabled: true
     },
-    commandTemplates: ["/read ", "/write report.txt\n"]
+    commandTemplates: ["/read ", "/write report.txt\n"],
+    localDeployment: {
+      kind: "tool",
+      commandTemplates: ["/read ", "/write report.txt\n"]
+    }
   },
   {
     id: "shell-runner",
@@ -33,7 +49,11 @@ export const localToolMarketProducts: ToolMarketProduct[] = [
       description: "Adds shell command automation templates backed by /shell.",
       enabled: true
     },
-    commandTemplates: ["/shell npm test", "/shell git status --short"]
+    commandTemplates: ["/shell npm test", "/shell git status --short"],
+    localDeployment: {
+      kind: "tool",
+      commandTemplates: ["/shell npm test", "/shell git status --short"]
+    }
   },
   {
     id: "document-skills",
@@ -50,7 +70,11 @@ export const localToolMarketProducts: ToolMarketProduct[] = [
       description: "Adds document workflow prompts for docs, sheets, slides, and PDFs.",
       enabled: true
     },
-    commandTemplates: ["Summarize this document: ", "Create a PDF report for: "]
+    commandTemplates: ["Summarize this document: ", "Create a PDF report for: "],
+    localDeployment: {
+      kind: "skill",
+      commandTemplates: ["Summarize this document: ", "Create a PDF report for: "]
+    }
   },
   {
     id: "planner-subagent-kit",
@@ -63,11 +87,15 @@ export const localToolMarketProducts: ToolMarketProduct[] = [
     capability: {
       id: "market.plugin.planner-subagent-kit",
       name: "Planner Subagent Kit",
-      kind: "skill",
+      kind: "plugin",
       description: "Adds planning and review prompt templates for subagent workflows.",
       enabled: true
     },
-    commandTemplates: ["@research map the options for ", "@builder implement and verify "]
+    commandTemplates: ["@research map the options for ", "@builder implement and verify "],
+    localDeployment: {
+      kind: "plugin",
+      commandTemplates: ["@research map the options for ", "@builder implement and verify "]
+    }
   },
   {
     id: "local-mcp-bridge",
@@ -80,11 +108,15 @@ export const localToolMarketProducts: ToolMarketProduct[] = [
     capability: {
       id: "market.mcp.local-mcp-bridge",
       name: "Local MCP Bridge",
-      kind: "tool",
+      kind: "mcp",
       description: "Connect local stdio MCP servers through presets, diagnostics, import/export, and permission rules.",
       enabled: true
     },
-    commandTemplates: ["Open Config > MCP"]
+    commandTemplates: ["Open Config > MCP"],
+    localDeployment: {
+      kind: "mcp",
+      commandTemplates: ["Open Config > MCP"]
+    }
   }
 ];
 
@@ -141,9 +173,9 @@ export async function fetchRemoteToolMarketProducts(
   if (query.type && query.type !== "all") {
     url.searchParams.set("type", query.type);
   }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 2500);
   const cookie = await authenticateToolMarket(config, auth);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), toolMarketRequestTimeoutMs);
   let response: Response;
   try {
     response = await fetch(url, {
@@ -154,14 +186,20 @@ export async function fetchRemoteToolMarketProducts(
         ...authHeaders(auth.accessToken, cookie)
       }
     });
+  } catch (error) {
+    throw toolMarketConnectionError(error, url, "request");
   } finally {
     clearTimeout(timer);
   }
   if (!response.ok) {
-    const detail = await response.text().catch(() => response.statusText);
-    throw new Error(detail || `Tool market request failed with status ${response.status}`);
+    throw await toolMarketHttpError(response, "request");
   }
-  const payload = await response.json() as RemoteToolMarketListPayload;
+  let payload: RemoteToolMarketListPayload;
+  try {
+    payload = await response.json() as RemoteToolMarketListPayload;
+  } catch {
+    throw new Error("Tool market request failed: catalog API returned invalid JSON.");
+  }
   const items = Array.isArray(payload) ? payload : Array.isArray(payload.items) ? payload.items : [];
   return items.map(normalizeRemoteMarketProduct);
 }
@@ -179,7 +217,7 @@ async function authenticateToolMarket(config: ToolMarketConfig, auth: ToolMarket
   const loginUrl = new URL(normalizeMarketApiUrl(config.apiUrl));
   loginUrl.searchParams.set("action", "login");
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 2500);
+  const timer = setTimeout(() => controller.abort(), toolMarketRequestTimeoutMs);
   try {
     const response = await fetch(loginUrl, {
       method: "POST",
@@ -192,10 +230,14 @@ async function authenticateToolMarket(config: ToolMarketConfig, auth: ToolMarket
       body: JSON.stringify({ email: auth.email.trim(), password: auth.password })
     });
     if (!response.ok) {
-      const detail = await response.text().catch(() => response.statusText);
-      throw new Error(detail || `Tool market login failed with status ${response.status}`);
+      throw await toolMarketHttpError(response, "login");
     }
     return readSetCookie(response.headers);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Tool market ")) {
+      throw error;
+    }
+    throw toolMarketConnectionError(error, loginUrl, "login");
   } finally {
     clearTimeout(timer);
   }
@@ -216,6 +258,46 @@ function readSetCookie(headers: Headers): string | undefined {
     .map((cookie) => cookie.split(";", 1)[0])
     .filter(Boolean);
   return pairs.length ? pairs.join("; ") : undefined;
+}
+
+async function toolMarketHttpError(response: Response, phase: "login" | "request"): Promise<Error> {
+  const detailText = await response.text().catch(() => response.statusText);
+  const detail = parseMarketErrorDetail(detailText) || response.statusText || `HTTP ${response.status}`;
+  if (phase === "login") {
+    return new Error(`Tool market login failed: ${detail}`);
+  }
+  if (response.status === 401 || response.status === 403) {
+    return new Error(`Tool market requires a valid subscriber login: ${detail}`);
+  }
+  return new Error(`Tool market request failed (${response.status}): ${detail}`);
+}
+
+function toolMarketConnectionError(error: unknown, url: URL, phase: "login" | "request"): Error {
+  const original = error as Error & { cause?: { code?: string; message?: string } };
+  if (original.name === "AbortError") {
+    return new Error(`Tool market ${phase} timed out while contacting ${url.origin}.`);
+  }
+  const reason = original.cause?.code || original.cause?.message;
+  return new Error(`Tool market ${phase} failed while contacting ${url.origin}${reason ? ` (${reason})` : ""}.`);
+}
+
+function parseMarketErrorDetail(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return "";
+  }
+  try {
+    const payload = JSON.parse(trimmed) as { error?: { message?: unknown }; message?: unknown };
+    if (typeof payload.error?.message === "string" && payload.error.message.trim()) {
+      return payload.error.message.trim();
+    }
+    if (typeof payload.message === "string" && payload.message.trim()) {
+      return payload.message.trim();
+    }
+  } catch {
+    // Plain text error bodies are fine.
+  }
+  return trimmed.slice(0, 400);
 }
 
 export function normalizeMarketApiUrl(rawUrl: string): string {
@@ -252,6 +334,17 @@ interface RemoteToolMarketProduct {
   subscription_id?: string;
   source_health?: string;
   serviceId?: string;
+  capability?: unknown;
+  commandTemplates?: unknown;
+  command_templates?: unknown;
+  localDeployment?: unknown;
+  local_deployment?: unknown;
+  deployment?: unknown;
+  install?: unknown;
+  package?: unknown;
+  files?: unknown;
+  mcpServer?: unknown;
+  mcp_server?: unknown;
 }
 
 function normalizeRemoteMarketProduct(product: RemoteToolMarketProduct): ToolMarketProduct {
@@ -260,6 +353,14 @@ function normalizeRemoteMarketProduct(product: RemoteToolMarketProduct): ToolMar
   const name = safeText(product.name, id);
   const providerName = safeText(product.providerName || product.provider_name || product.provider_id, "ToolsMarket");
   const description = safeText(product.description, "Remote tool market product.");
+  const capability = normalizeRemoteCapability(product.capability, {
+    id: `market.remote.${slug(id)}`,
+    name,
+    kind: type === "plugin" || type === "mcp" ? type : type === "skill" ? "skill" : "tool",
+    description,
+    enabled: true
+  });
+  const localDeployment = normalizeRemoteLocalDeployment(product, type, capability);
   return {
     id,
     name,
@@ -272,14 +373,108 @@ function normalizeRemoteMarketProduct(product: RemoteToolMarketProduct): ToolMar
     priceLabel: product.priceLabel || formatRemotePrice(product),
     purchased: product.purchased === true || Boolean(product.subscription_id),
     sourceHealth: product.source_health,
-    capability: {
-      id: `market.remote.${slug(id)}`,
-      name,
-      kind: type === "skill" || type === "plugin" ? "skill" : "tool",
-      description,
-      enabled: true
-    }
+    capability: localDeployment.capability || capability,
+    commandTemplates: localDeployment.commandTemplates,
+    localDeployment
   };
+}
+
+function normalizeRemoteCapability(value: unknown, fallback: CapabilityDefinition): CapabilityDefinition {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return fallback;
+  }
+  const input = value as Partial<CapabilityDefinition>;
+  return {
+    id: safeText(input.id, fallback.id),
+    name: safeText(input.name, fallback.name),
+    kind: normalizeCapabilityKind(input.kind, fallback.kind),
+    description: safeText(input.description, fallback.description),
+    enabled: input.enabled !== false
+  };
+}
+
+function normalizeRemoteLocalDeployment(product: RemoteToolMarketProduct, type: ToolMarketProductType, capability: CapabilityDefinition): ToolMarketLocalDeployment {
+  const source = (objectValue(product.localDeployment)
+    || objectValue(product.local_deployment)
+    || objectValue(product.deployment)
+    || objectValue(product.install)
+    || objectValue(product.package)
+    || objectValue(product)) as Record<string, unknown>;
+  const deploymentKind = normalizeType(stringValue(source.kind) || stringValue(source.type) || type);
+  const commandTemplates = normalizeStringArray(source.commandTemplates || source.command_templates || product.commandTemplates || product.command_templates);
+  const files = normalizePackageFiles(source.files || product.files);
+  const mcpServer = normalizeMcpDeployment(source.mcpServer || source.mcp_server || product.mcpServer || product.mcp_server);
+  const deploymentCapability = normalizeRemoteCapability(source.capability || product.capability, capability);
+  return {
+    kind: deploymentKind,
+    ...(files.length ? { files } : {}),
+    capability: deploymentCapability,
+    ...(mcpServer ? { mcpServer } : {}),
+    ...(commandTemplates.length ? { commandTemplates } : {})
+  };
+}
+
+function normalizeCapabilityKind(value: unknown, fallback: CapabilityDefinition["kind"]): CapabilityDefinition["kind"] {
+  return value === "skill" || value === "tool" || value === "plugin" || value === "mcp" || value === "subagent" || value === "scheduler" || value === "storage"
+    ? value
+    : fallback;
+}
+
+function normalizePackageFiles(value: unknown): ToolMarketPackageFile[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const files: ToolMarketPackageFile[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      continue;
+    }
+    const file = item as Partial<ToolMarketPackageFile>;
+    const path = safeText(file.path, "");
+    const content = typeof file.content === "string" ? file.content : undefined;
+    if (!path || typeof content !== "string") {
+      continue;
+    }
+    files.push({
+      path,
+      content,
+      encoding: file.encoding === "base64" ? "base64" : "utf8"
+    });
+  }
+  return files;
+}
+
+function normalizeMcpDeployment(value: unknown): ToolMarketMcpDeployment | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const input = value as Partial<ToolMarketMcpDeployment>;
+  const name = safeText(input.name, "");
+  const command = safeText(input.command, "");
+  if (!name || !command) {
+    return undefined;
+  }
+  return {
+    ...(typeof input.id === "string" && input.id.trim() ? { id: input.id.trim() } : {}),
+    name,
+    command,
+    args: Array.isArray(input.args) ? input.args.filter((arg): arg is string => typeof arg === "string") : [],
+    cwd: typeof input.cwd === "string" && input.cwd.trim() ? input.cwd.trim() : undefined,
+    env: normalizeEnv(input.env),
+    requestTimeoutMs: typeof input.requestTimeoutMs === "number" ? input.requestTimeoutMs : undefined,
+    enabled: input.enabled !== false,
+    autoConnect: Boolean(input.autoConnect)
+  };
+}
+
+function normalizeEnv(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const entries = Object.entries(value)
+    .filter(([key, entry]) => key.trim() && typeof entry === "string")
+    .map(([key, entry]) => [key.trim(), entry as string]);
+  return entries.length ? Object.fromEntries(entries) : undefined;
 }
 
 function normalizeType(type: string | undefined): ToolMarketProductType {
@@ -311,6 +506,21 @@ function formatRemotePrice(product: RemoteToolMarketProduct): string {
 
 function safeText(value: unknown, fallback: string): string {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function objectValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim());
 }
 
 function slug(value: string): string {

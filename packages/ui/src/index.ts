@@ -1,6 +1,6 @@
 import type { ChatMessage, Conversation, JobStatus, ScheduledJob } from "@supbot/shared";
 
-export type SlashAction = "new" | "history" | "tasks" | "config" | "model" | "clear" | "copy" | "tool";
+export type SlashAction = "new" | "history" | "config" | "model" | "clear" | "copy" | "tool";
 
 export interface SlashCommand {
   command: string;
@@ -13,7 +13,6 @@ export interface SlashCommand {
 export const slashCommandTemplates: SlashCommand[] = [
   { command: "/new", action: "new", title: "New conversation", description: "Start a fresh local thread." },
   { command: "/history", action: "history", title: "History", description: "Open conversation history." },
-  { command: "/tasks", action: "tasks", title: "Tasks", description: "Open the local job list." },
   { command: "/config", action: "config", title: "Config", description: "Open agent configuration." },
   { command: "/model", action: "model", title: "Model", description: "Jump to model settings." },
   { command: "/clear", action: "clear", title: "Clear", description: "Create a clean chat." },

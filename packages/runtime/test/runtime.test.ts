@@ -5,7 +5,8 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, test } from "vitest";
-import { JsonFileStorage, MemoryManager, OpenAIChatCompletionsAdapter, normalizeChatCompletionsUrl, resolveMentionedSubagent, SupbotRuntime, TranscriptStore } from "../src";
+import { JsonFileStorage, MemoryManager, OpenAIChatCompletionsAdapter, normalizeChatCompletionsUrl, resolveMentionedSubagent, SupbotRuntime, ToolExecutor, ToolRegistry, TranscriptStore } from "../src";
+import { normalizeMarketApiUrl } from "../src/toolMarket";
 import { defaultModelConfig } from "@supbot/shared";
 
 const tempDirs: string[] = [];
@@ -17,6 +18,15 @@ async function createRuntime() {
   const runtime = new SupbotRuntime(new JsonFileStorage(dir), { rootDir });
   await runtime.init();
   return runtime;
+}
+
+async function createRuntimeWithPaths() {
+  const rootDir = await createGitRoot();
+  const dir = await mkdtemp(join(tmpdir(), "supbot-test-"));
+  tempDirs.push(dir);
+  const runtime = new SupbotRuntime(new JsonFileStorage(dir), { rootDir });
+  await runtime.init();
+  return { runtime, dataDir: dir, rootDir };
 }
 
 async function createRuntimeWithoutBaseline() {
@@ -71,6 +81,19 @@ async function waitForJob(runtime: SupbotRuntime, jobId: string): Promise<void> 
   throw new Error(`Timed out waiting for job ${jobId}.`);
 }
 
+async function waitForAutopilotRun(runtime: SupbotRuntime, runId: string): Promise<void> {
+  const deadline = Date.now() + 8_000;
+  while (Date.now() < deadline) {
+    const run = runtime.snapshot().autopilotRuns.find((item) => item.id === runId);
+    if (run && ["completed", "failed", "blocked", "paused", "canceled"].includes(run.status)) {
+      await waitForCondition(`autopilot ${runId} cleanup`, () => runtime.snapshot().status === "ready");
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Timed out waiting for autopilot run ${runId}.`);
+}
+
 async function waitForCondition(label: string, predicate: () => boolean): Promise<void> {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
@@ -80,6 +103,12 @@ async function waitForCondition(label: string, predicate: () => boolean): Promis
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error(`Timed out waiting for ${label}.`);
+}
+
+function fakeJwt(claims: Record<string, unknown>): string {
+  const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
+  return `${header}.${payload}.`;
 }
 
 async function withMockModel(
@@ -629,25 +658,106 @@ describe("SupbotRuntime", () => {
     expect(resolveMentionedSubagent("@missing check this", snapshot.subagents)).toBeUndefined();
   });
 
-  test("installs and uninstalls local tool market products as capabilities", async () => {
+  test("installs and uninstalls local tool market products as local deployment packages", async () => {
     const runtime = await createRuntime();
+    const dataDir = tempDirs[tempDirs.length - 1];
     const initial = (await runtime.listToolMarket({ query: "Shell" })).find((item) => item.id === "shell-runner");
     expect(initial?.installed).toBe(false);
 
     const installed = await runtime.installToolMarketProduct("shell-runner");
     expect(installed.installed).toBe(true);
     expect(runtime.snapshot().capabilities.some((item) => item.id === installed.capabilityId)).toBe(true);
+    const localToolDir = join(dataDir, "tools", "shell-runner");
+    const localManifestPath = join(localToolDir, "supbot-local-tool.json");
+    const receiptPath = join(dataDir, "tool-market", "local", "shell-runner", "supbot-market-install.json");
+    const manifest = JSON.parse(await readFile(localManifestPath, "utf8")) as { product: { id: string }; deployment: { kind: string }; localPath: string };
+    expect(manifest.product.id).toBe("shell-runner");
+    expect(manifest.deployment.kind).toBe("tool");
+    expect(manifest.localPath).toBe(localToolDir);
+    expect(JSON.parse(await readFile(join(localToolDir, "supbot-tool.json"), "utf8"))).toMatchObject({ id: "shell-runner", kind: "tool" });
+    expect(JSON.parse(await readFile(receiptPath, "utf8"))).toMatchObject({ product: { id: "shell-runner" }, localPath: localToolDir });
 
     const uninstalled = await runtime.uninstallToolMarketProduct("shell-runner");
     expect(uninstalled.installed).toBe(false);
     expect(runtime.snapshot().capabilities.some((item) => item.id === uninstalled.capabilityId)).toBe(false);
+    await expect(readFile(localManifestPath, "utf8")).rejects.toThrow();
+    await expect(readFile(receiptPath, "utf8")).rejects.toThrow();
+  });
+
+  test("edits and deletes capabilities", async () => {
+    const runtime = await createRuntime();
+    const updated = await runtime.updateCapability("tool.scheduler", {
+      name: "Local timers",
+      description: "Updated scheduler description.",
+      enabled: false
+    });
+    expect(updated).toMatchObject({
+      id: "tool.scheduler",
+      kind: "scheduler",
+      name: "Local timers",
+      description: "Updated scheduler description.",
+      enabled: false
+    });
+    expect(runtime.snapshot().capabilities.find((item) => item.id === "tool.scheduler")).toMatchObject(updated);
+
+    const installed = await runtime.installToolMarketProduct("shell-runner");
+    expect(runtime.snapshot().capabilities.some((item) => item.id === installed.capabilityId)).toBe(true);
+
+    await runtime.deleteCapability(installed.capabilityId);
+    expect(runtime.snapshot().capabilities.some((item) => item.id === installed.capabilityId)).toBe(false);
+
+    await runtime.installToolMarketProduct("shell-runner");
+    expect(runtime.snapshot().capabilities.some((item) => item.id === installed.capabilityId)).toBe(true);
+  });
+
+  test("deleted default capabilities stay deleted after restart", async () => {
+    const rootDir = await createGitRoot();
+    const dir = await mkdtemp(join(tmpdir(), "supbot-test-"));
+    tempDirs.push(dir);
+    const runtime = new SupbotRuntime(new JsonFileStorage(dir), { rootDir });
+    await runtime.init();
+    await runtime.deleteCapability("tool.scheduler");
+    expect(runtime.snapshot().capabilities.some((item) => item.id === "tool.scheduler")).toBe(false);
+
+    const restarted = new SupbotRuntime(new JsonFileStorage(dir), { rootDir });
+    await restarted.init();
+    expect(restarted.snapshot().capabilities.some((item) => item.id === "tool.scheduler")).toBe(false);
+  });
+
+  test("installs market skills and plugins into native local folders", async () => {
+    const runtime = await createRuntime();
+    const dataDir = tempDirs[tempDirs.length - 1];
+
+    const skill = await runtime.installToolMarketProduct("document-skills");
+    expect(skill.installed).toBe(true);
+    const skillDir = join(dataDir, "skills", "document-skills");
+    expect(await readFile(join(skillDir, "SKILL.md"), "utf8")).toContain("Document Skills");
+    expect(JSON.parse(await readFile(join(skillDir, "supbot-local-tool.json"), "utf8"))).toMatchObject({
+      product: { id: "document-skills" },
+      deployment: { kind: "skill" },
+      localPath: skillDir
+    });
+
+    const plugin = await runtime.installToolMarketProduct("planner-subagent-kit");
+    expect(plugin.installed).toBe(true);
+    const pluginDir = join(dataDir, "plugins", "planner-subagent-kit");
+    expect(JSON.parse(await readFile(join(pluginDir, ".codex-plugin", "plugin.json"), "utf8"))).toMatchObject({
+      id: "planner-subagent-kit",
+      name: "Planner Subagent Kit"
+    });
+    expect(await readFile(join(pluginDir, "README.md"), "utf8")).toContain("Planner Subagent Kit");
+
+    await runtime.uninstallToolMarketProduct("document-skills");
+    await runtime.uninstallToolMarketProduct("planner-subagent-kit");
+    await expect(readFile(join(skillDir, "SKILL.md"), "utf8")).rejects.toThrow();
+    await expect(readFile(join(pluginDir, ".codex-plugin", "plugin.json"), "utf8")).rejects.toThrow();
   });
 
   test("saves remote tool market config while redacting the access token", async () => {
     const runtime = await createRuntime();
     const saved = await runtime.updateToolMarketConfig({
       source: "hybrid",
-      apiUrl: "http://127.0.0.1:3000/subscriber/market/api",
+      apiUrl: "https://i-shu.com",
       accountEmail: "subscriber@example.com",
       accessToken: "market-secret",
       password: "market123"
@@ -658,6 +768,10 @@ describe("SupbotRuntime", () => {
     expect(JSON.stringify(saved)).not.toContain("market-secret");
     expect(JSON.stringify(saved)).not.toContain("market123");
     expect(runtime.snapshot().toolMarketConfig.accessTokenSaved).toBe(true);
+  });
+
+  test("normalizes the production tool market origin to the catalog API", () => {
+    expect(normalizeMarketApiUrl("https://i-shu.com")).toBe("https://i-shu.com/subscriber/market/api");
   });
 
   test("migrates old local-only market state with a remote API to hybrid source", async () => {
@@ -685,7 +799,68 @@ describe("SupbotRuntime", () => {
     expect(runtime.snapshot().toolMarketConfig.source).toBe("hybrid");
   });
 
-  test("lists and installs remote tool market products as local capabilities", async () => {
+  test("falls back to local tool market products when hybrid remote sync fails", async () => {
+    const server = createServer((_request, response) => {
+      response.statusCode = 401;
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({ error: { message: "missing subscriber session" } }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const runtime = await createRuntime();
+      const events: string[] = [];
+      runtime.onEvent((event) => {
+        if (event.type === "error") {
+          events.push(event.message);
+        }
+      });
+      const address = server.address() as AddressInfo;
+      await runtime.updateToolMarketConfig({
+        source: "hybrid",
+        apiUrl: `http://127.0.0.1:${address.port}`,
+        accountEmail: "subscriber@example.com",
+        clearPassword: true
+      });
+
+      const products = await runtime.listToolMarket({});
+      expect(products.some((item) => item.origin === "local")).toBe(true);
+      expect(products.some((item) => item.origin === "remote")).toBe(false);
+      expect(events).toEqual([]);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  test("reports remote tool market login failures with a clear message", async () => {
+    const server = createServer((request, response) => {
+      const url = new URL(request.url || "/", "http://127.0.0.1");
+      if (url.searchParams.get("action") === "login") {
+        response.statusCode = 401;
+        response.setHeader("Content-Type", "application/json");
+        response.end(JSON.stringify({ error: { message: "email or password is incorrect" } }));
+        return;
+      }
+      response.statusCode = 500;
+      response.end("unexpected catalog request");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const runtime = await createRuntime();
+      const address = server.address() as AddressInfo;
+      await runtime.updateToolMarketConfig({
+        source: "remote",
+        apiUrl: `http://127.0.0.1:${address.port}`,
+        accountEmail: "subscriber@example.com",
+        password: "wrong-password"
+      });
+
+      await expect(runtime.listToolMarket({})).rejects.toThrow("Tool market login failed: email or password is incorrect");
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  test("lists and installs remote tool market products as local deployment packages", async () => {
     let loggedIn = false;
     const server = createServer((request, response) => {
       const url = new URL(request.url || "/", "http://127.0.0.1");
@@ -716,7 +891,22 @@ describe("SupbotRuntime", () => {
           provider_name: "ToolsMarket",
           description: "Calendar automation from a remote market.",
           billing_mode: "free",
-          source_health: "healthy"
+          source_health: "healthy",
+          local_deployment: {
+            kind: "mcp",
+            files: [{
+              path: "calendar-mcp.cjs",
+              content: "process.stdin.resume();\n"
+            }],
+            mcp_server: {
+              id: "calendar-mcp",
+              name: "Calendar MCP",
+              command: "node",
+              args: ["{installDir}\\calendar-mcp.cjs"],
+              enabled: true,
+              autoConnect: false
+            }
+          }
         }]
       }));
     });
@@ -739,6 +929,40 @@ describe("SupbotRuntime", () => {
       const installed = await runtime.installToolMarketProduct("calendar-mcp");
       expect(installed.installed).toBe(true);
       expect(runtime.snapshot().capabilities.some((item) => item.id === installed.capabilityId)).toBe(true);
+      const dataDir = tempDirs[tempDirs.length - 1];
+      const rootDir = tempDirs[tempDirs.length - 2];
+      const installPath = join(dataDir, "mcp", "calendar-mcp");
+      const receiptPath = join(dataDir, "tool-market", "remote", "calendar-mcp");
+      expect(await readFile(join(installPath, "calendar-mcp.cjs"), "utf8")).toBe("process.stdin.resume();\n");
+      expect(JSON.parse(await readFile(join(installPath, "supbot-local-tool.json"), "utf8"))).toMatchObject({
+        product: { id: "calendar-mcp", origin: "remote" },
+        deployment: { kind: "mcp", mcpServer: { id: "calendar-mcp" } },
+        localPath: installPath
+      });
+      expect(JSON.parse(await readFile(join(receiptPath, "supbot-market-install.json"), "utf8"))).toMatchObject({
+        product: { id: "calendar-mcp", origin: "remote" },
+        deployment: { kind: "mcp", mcpServer: { id: "calendar-mcp" } },
+        localPath: installPath
+      });
+      expect(runtime.snapshot().mcpServers.find((item) => item.id === "calendar-mcp")).toMatchObject({
+        name: "Calendar MCP",
+        command: "node",
+        cwd: installPath,
+        args: [join(installPath, "calendar-mcp.cjs")]
+      });
+
+      const restarted = new SupbotRuntime(new JsonFileStorage(dataDir), { rootDir });
+      await restarted.init();
+      await restarted.updateToolMarketConfig({ source: "local", apiUrl: "", accountEmail: "", clearPassword: true });
+      const installedFromDisk = await restarted.listToolMarket({ query: "Calendar" });
+      expect(installedFromDisk).toHaveLength(1);
+      expect(installedFromDisk[0]).toMatchObject({ id: "calendar-mcp", installed: true });
+
+      const uninstalled = await restarted.uninstallToolMarketProduct("calendar-mcp");
+      expect(uninstalled.installed).toBe(false);
+      expect(restarted.snapshot().mcpServers.some((item) => item.id === "calendar-mcp")).toBe(false);
+      await expect(readFile(join(installPath, "supbot-local-tool.json"), "utf8")).rejects.toThrow();
+      await expect(readFile(join(receiptPath, "supbot-market-install.json"), "utf8")).rejects.toThrow();
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
@@ -747,6 +971,9 @@ describe("SupbotRuntime", () => {
   test("runs local write tool and records generated files", async () => {
     const runtime = await createRuntime();
     const result = await runtime.sendPrompt({ prompt: "/write note.txt\nhello from supbot" });
+    await waitForCondition("pending slash write permission", () => runtime.snapshot().pendingToolPermissions.length === 1);
+    expect(runtime.snapshot().pendingToolPermissions[0].toolName).toBe("WriteFile");
+    await runtime.approveToolPermission(runtime.snapshot().pendingToolPermissions[0].id);
     await waitForJob(runtime, result.job.id);
 
     const conversation = runtime.snapshot().conversations.find((item) => item.id === result.conversation.id);
@@ -758,8 +985,42 @@ describe("SupbotRuntime", () => {
     expect(runtime.snapshot().worktrees.find((item) => item.id === job?.worktreeId)?.diffStatus).toBe("dirty");
   });
 
+  test("blocks approved slash writes outside the isolated workspace", async () => {
+    const runtime = await createRuntime();
+    const outsideDir = await mkdtemp(join(tmpdir(), "supbot-outside-"));
+    tempDirs.push(outsideDir);
+    const outsidePath = join(outsideDir, "system-ish.txt");
+    const result = await runtime.sendPrompt({ prompt: `/write "${outsidePath}"\nblocked` });
+    await waitForCondition("pending outside write permission", () => runtime.snapshot().pendingToolPermissions.length === 1);
+    expect(runtime.snapshot().pendingToolPermissions[0].toolName).toBe("WriteFile");
+    await runtime.approveToolPermission(runtime.snapshot().pendingToolPermissions[0].id);
+    await waitForJob(runtime, result.job.id);
+
+    const conversation = runtime.snapshot().conversations.find((item) => item.id === result.conversation.id);
+    const assistant = conversation?.messages.find((item) => item.role === "assistant");
+    expect(assistant?.text).toContain("WriteFile target must stay inside");
+    await expect(readFile(outsidePath, "utf8")).rejects.toThrow();
+    expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe("failed");
+  });
+
+  test("blocks write path traversal outside the isolated workspace", async () => {
+    const runtime = await createRuntime();
+    await runtime.addPermissionRule({ toolName: "WriteFile", behavior: "allow" });
+    const result = await runtime.sendPrompt({ prompt: "/write ../escape.txt\nblocked" });
+    await waitForJob(runtime, result.job.id);
+
+    const conversation = runtime.snapshot().conversations.find((item) => item.id === result.conversation.id);
+    const assistant = conversation?.messages.find((item) => item.role === "assistant");
+    const job = runtime.snapshot().jobs.find((item) => item.id === result.job.id);
+    const worktree = runtime.snapshot().worktrees.find((item) => item.id === job?.worktreeId);
+    expect(assistant?.text).toContain("WriteFile target must stay inside");
+    expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe("failed");
+    await expect(readFile(join(dirname(worktree!.path), "escape.txt"), "utf8")).rejects.toThrow();
+  });
+
   test("fails writable tools with a clear worktree error when no baseline commit exists", async () => {
     const runtime = await createRuntimeWithoutBaseline();
+    await runtime.addPermissionRule({ toolName: "WriteFile", behavior: "allow" });
     const result = await runtime.sendPrompt({ prompt: "/write note.txt\nhello" });
     await waitForJob(runtime, result.job.id);
 
@@ -790,6 +1051,9 @@ describe("SupbotRuntime", () => {
       : "printf 'Used : 1\\nFree : 2\\n'";
 
     const result = await runtime.sendPrompt({ prompt: `/shell ${command}` });
+    await waitForCondition("pending slash shell permission", () => runtime.snapshot().pendingToolPermissions.length === 1);
+    expect(runtime.snapshot().pendingToolPermissions[0].toolName).toBe("Shell");
+    await runtime.approveToolPermission(runtime.snapshot().pendingToolPermissions[0].id);
     await waitForJob(runtime, result.job.id);
 
     const conversation = runtime.snapshot().conversations.find((item) => item.id === result.conversation.id);
@@ -798,6 +1062,274 @@ describe("SupbotRuntime", () => {
     expect(assistant?.text).toContain("Cwd:");
     expect(assistant?.text).toContain("Used");
     expect(assistant?.text).toContain("Free");
+  });
+
+  test("denies dangerous slash commands through the normal permission flow", async () => {
+    const runtime = await createRuntime();
+    const result = await runtime.sendPrompt({ prompt: "/shell should-not-run" });
+    await waitForCondition("pending slash shell permission", () => runtime.snapshot().pendingToolPermissions.length === 1);
+    await runtime.denyToolPermission(runtime.snapshot().pendingToolPermissions[0].id);
+    await waitForJob(runtime, result.job.id);
+
+    const conversation = runtime.snapshot().conversations.find((item) => item.id === result.conversation.id);
+    const assistant = conversation?.messages.find((item) => item.role === "assistant");
+    expect(assistant?.text).toContain("User denied Shell");
+    expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe("denied");
+  });
+
+  test("registers project folders and enforces project sandbox writes", async () => {
+    const runtime = await createRuntime();
+    const projectDir = await mkdtemp(join(tmpdir(), "supbot-project-"));
+    tempDirs.push(projectDir);
+    const project = await runtime.createProjectFromFolder({ rootPath: projectDir, name: "Data Project" });
+    expect(project.metadataPath).toBe(join(projectDir, ".supbot", "project.json"));
+    expect(await readFile(project.metadataPath, "utf8")).toContain("Data Project");
+
+    const executor = new ToolExecutor();
+    const registry = new ToolRegistry();
+    const records: unknown[] = [];
+    const context = {
+      signal: new AbortController().signal,
+      workspaceMode: "main" as const,
+      projectId: project.id,
+      projectRoot: project.rootPath,
+      allowedWriteRoots: ["datasets/raw", "datasets/processed", "outputs", "reports", ".supbot/runs"].map((root) => join(project.rootPath, root)),
+      host: {
+        dataDir: project.rootPath,
+        workspacePath: project.rootPath,
+        cwd: project.rootPath,
+        projectId: project.id,
+        projectRoot: project.rootPath,
+        allowedWriteRoots: ["datasets/raw", "datasets/processed", "outputs", "reports", ".supbot/runs"].map((root) => join(project.rootPath, root)),
+        randomId: (prefix: string) => `${prefix}_test`,
+        nowIso: () => "2026-07-04T00:00:00.000Z"
+      },
+      subagents: [],
+      runSubagent: async () => ({ text: "unused" })
+    };
+
+    const allowed = await executor.execute({
+      jobId: "job_project",
+      conversationId: "conv_project",
+      toolCall: {
+        id: "call_project_allowed",
+        type: "function",
+        function: { name: "WriteFile", arguments: JSON.stringify({ path: "datasets/raw/source.txt", content: "raw" }) }
+      },
+      registry,
+      context,
+      permissionMode: "bypassPermissions",
+      permissionRules: [],
+      requestPermission: async () => "approved",
+      onProgress: async (record) => {
+        records.push(record);
+      }
+    });
+    expect(allowed.record.status).toBe("completed");
+    expect(await readFile(join(project.rootPath, "datasets/raw/source.txt"), "utf8")).toBe("raw");
+
+    const denied = await executor.execute({
+      jobId: "job_project",
+      conversationId: "conv_project",
+      toolCall: {
+        id: "call_project_denied",
+        type: "function",
+        function: { name: "WriteFile", arguments: JSON.stringify({ path: "README.md", content: "bad" }) }
+      },
+      registry,
+      context,
+      permissionMode: "bypassPermissions",
+      permissionRules: [],
+      requestPermission: async () => "approved",
+      onProgress: async (record) => {
+        records.push(record);
+      }
+    });
+    expect(denied.record.status).toBe("denied");
+    await expect(readFile(join(project.rootPath, "README.md"), "utf8")).rejects.toThrow();
+  });
+
+  test("runs a project data autopilot workflow and records artifacts", async () => {
+    const runtime = await createRuntime();
+    const projectDir = await mkdtemp(join(tmpdir(), "supbot-data-run-"));
+    tempDirs.push(projectDir);
+    const project = await runtime.createProjectFromFolder({ rootPath: projectDir, name: "Data Run" });
+    const mock = await withMockModel(runtime, (body) => {
+      const parsed = JSON.parse(body);
+      const userText = parsed.messages.filter((message: { role: string }) => message.role === "user").at(-1)?.content || "";
+      const hasToolResult = parsed.messages.some((message: { role: string }) => message.role === "tool");
+      const write = (id: string, path: string, content: string) => ({
+        choices: [{
+          message: {
+            content: null,
+            tool_calls: [{
+              id,
+              type: "function",
+              function: { name: "WriteFile", arguments: JSON.stringify({ path, content }) }
+            }]
+          }
+        }]
+      });
+      if (!hasToolResult && userText.includes("Stage: collect")) {
+        return write("call_collect", "datasets/raw/source.csv", "name,value\\na,1\\nb,2\\n");
+      }
+      if (!hasToolResult && userText.includes("Stage: process")) {
+        return write("call_process", "datasets/processed/clean.csv", "name,value\\na,1\\nb,2\\n");
+      }
+      if (!hasToolResult && userText.includes("Stage: analyze")) {
+        return write("call_analyze", "outputs/findings.txt", "Total value: 3\\nEvidence: datasets/processed/clean.csv\\n");
+      }
+      if (!hasToolResult && userText.includes("Stage: report")) {
+        return write("call_report", "reports/final.md", "# Report\\nTotal value is 3.\\nEvidence: outputs/findings.txt\\n");
+      }
+      if (userText.includes("Goal-output alignment review")) {
+        return { choices: [{ message: { content: "PASS\nThe report satisfies the goal and cites outputs/findings.txt." } }] };
+      }
+      return { choices: [{ message: { content: `Stage complete. Evidence: ${projectDir}\\reports\\final.md` } }] };
+    });
+    try {
+      const run = await runtime.startDataRun({
+        projectId: project.id,
+        title: "Analyze sample data",
+        goal: "Collect a small CSV, process it, analyze totals, and write a report.",
+        dataSources: [{ id: "source", kind: "folderScan", label: "project", path: project.rootPath }]
+      });
+      await waitForAutopilotRun(runtime, run.id);
+      const snapshot = runtime.snapshot();
+      const completed = snapshot.autopilotRuns.find((item) => item.id === run.id);
+      expect(completed?.status).toBe("completed");
+      expect(completed?.reportPath).toContain("reports");
+      const artifacts = snapshot.dataArtifacts.filter((artifact) => artifact.runId === run.id);
+      expect(artifacts.map((artifact) => artifact.kind)).toEqual(expect.arrayContaining(["raw", "processed", "analysis", "report"]));
+      expect(snapshot.autopilotTasks.filter((task) => task.runId === run.id).every((task) => task.status === "completed")).toBe(true);
+      expect(await readFile(join(project.rootPath, ".supbot", "runs", run.id, "checkpoint.json"), "utf8")).toContain("Completed");
+    } finally {
+      await mock.close();
+    }
+  });
+
+  test("continues autopilot until outputs match the goal", async () => {
+    const runtime = await createRuntime();
+    const projectDir = await mkdtemp(join(tmpdir(), "supbot-data-loop-"));
+    tempDirs.push(projectDir);
+    const project = await runtime.createProjectFromFolder({ rootPath: projectDir, name: "Loop Run" });
+    let reviewCount = 0;
+    const mock = await withMockModel(runtime, (body) => {
+      const parsed = JSON.parse(body);
+      const userText = parsed.messages.filter((message: { role: string }) => message.role === "user").at(-1)?.content || "";
+      const hasToolResult = parsed.messages.some((message: { role: string }) => message.role === "tool");
+      const write = (id: string, path: string, content: string) => ({
+        choices: [{
+          message: {
+            content: null,
+            tool_calls: [{
+              id,
+              type: "function",
+              function: { name: "WriteFile", arguments: JSON.stringify({ path, content }) }
+            }]
+          }
+        }]
+      });
+      if (!hasToolResult && userText.includes("Stage: collect")) {
+        return write("call_loop_collect", "datasets/raw/source.csv", "name,value\\na,1\\nb,2\\n");
+      }
+      if (!hasToolResult && userText.includes("Stage: process")) {
+        return write("call_loop_process", "datasets/processed/clean.csv", "name,value\\na,1\\nb,2\\n");
+      }
+      if (!hasToolResult && userText.includes("Stage: analyze")) {
+        return write("call_loop_analyze", "outputs/findings.txt", "Total value: 3\\nEvidence: datasets/processed/clean.csv\\n");
+      }
+      if (!hasToolResult && userText.includes("Revise outputs to match goal")) {
+        return write("call_loop_fix", "reports/final.md", "# Report\\nTotal value is 3.\\nAverage value is 1.5.\\nEvidence: outputs/findings.txt\\n");
+      }
+      if (!hasToolResult && userText.includes("Stage: report")) {
+        return write("call_loop_report", "reports/final.md", "# Report\\nTotal value is 3.\\nEvidence: outputs/findings.txt\\n");
+      }
+      if (userText.includes("Goal-output alignment review")) {
+        reviewCount += 1;
+        if (reviewCount === 1) {
+          return { choices: [{ message: { content: "FAIL\nThe report is missing the requested average value." } }] };
+        }
+        return { choices: [{ message: { content: "PASS\nThe revised report includes total and average values with evidence." } }] };
+      }
+      return { choices: [{ message: { content: "Stage complete." } }] };
+    });
+    try {
+      const run = await runtime.startDataRun({
+        projectId: project.id,
+        title: "Analyze totals and average",
+        goal: "Collect a CSV, process it, analyze totals, and write a report that includes both total and average value.",
+        dataSources: [],
+        writePolicy: { maxTasks: 12 }
+      });
+      await waitForAutopilotRun(runtime, run.id);
+      const snapshot = runtime.snapshot();
+      const completed = snapshot.autopilotRuns.find((item) => item.id === run.id);
+      expect(completed?.status).toBe("completed");
+      expect(reviewCount).toBe(2);
+      const tasks = snapshot.autopilotTasks.filter((task) => task.runId === run.id);
+      expect(tasks.some((task) => task.title.startsWith("Goal-output alignment review"))).toBe(true);
+      expect(tasks.some((task) => task.title.startsWith("Revise outputs to match goal"))).toBe(true);
+      expect(snapshot.autopilotEvents.some((event) => event.runId === run.id && event.message.includes("queued fix iteration"))).toBe(true);
+      expect(await readFile(join(project.rootPath, "reports", "final.md"), "utf8")).toContain("Average value is 1.5");
+    } finally {
+      await mock.close();
+    }
+  });
+
+  test("recovers active autopilot runs as paused with a checkpoint", async () => {
+    const { runtime, dataDir, rootDir } = await createRuntimeWithPaths();
+    await runtime.shutdown();
+    const projectDir = await mkdtemp(join(tmpdir(), "supbot-recover-project-"));
+    tempDirs.push(projectDir);
+    await mkdir(join(projectDir, ".supbot"), { recursive: true });
+    const storage = new JsonFileStorage(dataDir);
+    const state = await storage.load();
+    const now = new Date().toISOString();
+    const project = {
+      id: "project_recover",
+      name: "Recover Project",
+      rootPath: projectDir,
+      metadataPath: join(projectDir, ".supbot", "project.json"),
+      status: "active" as const,
+      createdAt: now,
+      updatedAt: now
+    };
+    state.projects = [project];
+    state.autopilotRuns = [{
+      id: "run_recover",
+      projectId: project.id,
+      projectRoot: project.rootPath,
+      title: "Recover run",
+      goal: "Recover after restart",
+      status: "running",
+      currentStage: "collect",
+      writePolicy: {
+        mode: "projectSandbox",
+        allowedWriteRoots: ["datasets/raw", "datasets/processed", "outputs", "reports", ".supbot/runs"],
+        allowNetwork: true,
+        allowMcp: true,
+        maxRuntimeMinutes: 120,
+        maxTasks: 16,
+        maxRetries: 1
+      },
+      dataSources: [],
+      taskIds: [],
+      artifactIds: [],
+      checkpointIds: [],
+      evidence: [],
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now
+    }];
+    await storage.save(state);
+    const restarted = new SupbotRuntime(storage, { rootDir });
+    await restarted.init();
+    const recovered = restarted.snapshot().autopilotRuns.find((run) => run.id === "run_recover");
+    expect(recovered?.status).toBe("paused");
+    expect(recovered?.error).toContain("Recovered");
+    expect(await readFile(join(project.rootPath, ".supbot", "runs", "run_recover", "checkpoint.json"), "utf8")).toContain("Recovered");
+    await restarted.shutdown();
   });
 
   test("runs model-requested read tools and feeds results back to the model", async () => {
@@ -1048,6 +1580,54 @@ describe("SupbotRuntime", () => {
       expect(runtime.snapshot().pendingToolPermissions).toHaveLength(0);
       expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe("completed");
       expect(mock.calls()).toBe(2);
+    } finally {
+      await mock.close();
+    }
+  });
+
+  test("deletes jobs and task execution records when deleting a conversation", async () => {
+    const runtime = await createRuntime();
+    await runtime.addPermissionRule({ toolName: "WriteFile", behavior: "allow" });
+    const mock = await withMockModel(runtime, (body, call) => {
+      if (call === 1) {
+        return {
+          choices: [{
+            message: {
+              content: null,
+              tool_calls: [{
+                id: "call_write_cleanup",
+                type: "function",
+                function: { name: "WriteFile", arguments: JSON.stringify({ path: "cleanup.txt", content: "delete me with the conversation" }) }
+              }]
+            }
+          }]
+        };
+      }
+      const parsed = JSON.parse(body);
+      expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes("cleanup.txt"))).toBe(true);
+      return { choices: [{ message: { content: "Cleanup task completed." } }] };
+    });
+    try {
+      const result = await runtime.sendPrompt({ prompt: "write a cleanup file" });
+      await waitForJob(runtime, result.job.id);
+
+      const before = runtime.snapshot();
+      expect(before.jobs.some((item) => item.id === result.job.id)).toBe(true);
+      expect(before.agentLoopTraces.some((item) => item.jobId === result.job.id)).toBe(true);
+      expect(before.querySessions.some((item) => item.jobId === result.job.id)).toBe(true);
+      expect(before.runtimeEvents.some((item) => item.jobId === result.job.id || item.conversationId === result.conversation.id)).toBe(true);
+      expect(before.worktrees.some((item) => item.jobId === result.job.id)).toBe(true);
+
+      await runtime.deleteConversation(result.conversation.id);
+
+      const after = runtime.snapshot();
+      expect(after.conversations.some((item) => item.id === result.conversation.id)).toBe(false);
+      expect(after.jobs.some((item) => item.id === result.job.id || item.conversationId === result.conversation.id)).toBe(false);
+      expect(after.agentLoopTraces.some((item) => item.jobId === result.job.id || item.conversationId === result.conversation.id)).toBe(false);
+      expect(after.querySessions.some((item) => item.jobId === result.job.id || item.conversationId === result.conversation.id)).toBe(false);
+      expect(after.runtimeEvents.some((item) => item.jobId === result.job.id || item.conversationId === result.conversation.id)).toBe(false);
+      expect(after.pendingToolPermissions.some((item) => item.jobId === result.job.id || item.conversationId === result.conversation.id)).toBe(false);
+      expect(after.worktrees.some((item) => item.jobId === result.job.id || item.conversationId === result.conversation.id)).toBe(false);
     } finally {
       await mock.close();
     }
@@ -1931,13 +2511,19 @@ describe("SupbotRuntime", () => {
   test("serves read-only remote bridge status and blocks writable remote tool execution", async () => {
     const runtime = await createRuntime();
     const token = "remote-test-token";
-    const config = await runtime.updateRemoteBridgeConfig({
+    let config = await runtime.updateRemoteBridgeConfig({
       enabled: true,
       host: "127.0.0.1",
       port: 0,
       token
     });
     expect(config.enabled).toBe(true);
+    config = await runtime.updateRemoteBridgeConfig({ host: "0.0.0.0" });
+    expect(config.host).toBe("127.0.0.1");
+    config = await runtime.updateRemoteBridgeConfig({ host: "0.0.0.0", allowRemoteBind: true });
+    expect(config.host).toBe("0.0.0.0");
+    config = await runtime.updateRemoteBridgeConfig({ host: "127.0.0.1", allowRemoteBind: false });
+    expect(config.host).toBe("127.0.0.1");
     const bridgeUrl = `http://127.0.0.1:${config.port}`;
 
     const snapshotResponse = await fetch(`${bridgeUrl}/snapshot`, {
@@ -1949,6 +2535,30 @@ describe("SupbotRuntime", () => {
 
     const unauthorized = await fetch(`${bridgeUrl}/snapshot`);
     expect(unauthorized.status).toBe(401);
+
+    const invalidJson = await fetch(`${bridgeUrl}/prompt`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: "{"
+    });
+    expect(invalidJson.status).toBe(400);
+
+    const oversizedBody = await fetch(`${bridgeUrl}/prompt`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "x".repeat(70 * 1024) })
+    });
+    expect(oversizedBody.status).toBe(413);
+
+    const slashResponse = await fetch(`${bridgeUrl}/prompt`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "/write remote.txt\nblocked" })
+    });
+    expect(slashResponse.status).toBe(200);
+    const slashSent = await slashResponse.json() as { job: { id: string } };
+    await waitForJob(runtime, slashSent.job.id);
+    expect(runtime.snapshot().agentLoopTraces.find((trace) => trace.jobId === slashSent.job.id)?.toolCalls[0].status).toBe("denied");
 
     await runtime.addPermissionRule({ toolName: "WriteFile", behavior: "allow" });
     const mock = await withMockModel(runtime, (body, call) => {
@@ -1973,7 +2583,18 @@ describe("SupbotRuntime", () => {
     try {
       const promptResponse = await fetch(`${bridgeUrl}/prompt`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "x-a2a-request-id": "req-remote-1",
+          "x-a2a-peer-id": "peer-supbot-1",
+          "x-servstation-agent-id": "agent-dev-1",
+          "x-tenant-id": "dev-tenant",
+          "x-organization-id": "dev-org",
+          "x-department-id": "dev-dept",
+          "x-user-id": "dev-user",
+          "x-role-ids": "admin,user"
+        },
         body: JSON.stringify({ prompt: "write remotely" })
       });
       expect(promptResponse.status).toBe(200);
@@ -1982,9 +2603,350 @@ describe("SupbotRuntime", () => {
       expect(runtime.snapshot().jobs.find((job) => job.id === sent.job.id)?.workspaceMode).toBe("readOnly");
       expect(runtime.snapshot().agentLoopTraces.find((trace) => trace.jobId === sent.job.id)?.toolCalls[0].status).toBe("denied");
       expect(runtime.snapshot().remoteBridge.audit.length).toBeGreaterThan(0);
+      const audit = runtime.snapshot().remoteBridge.audit.find((record) => record.peerId === "peer-supbot-1");
+      expect(audit?.requestId).toBe("req-remote-1");
+      expect(audit?.agentInstanceId).toBe("agent-dev-1");
+      expect(audit?.caller?.userContext?.userId).toBe("dev-user");
     } finally {
       await mock.close();
       await runtime.shutdown();
+    }
+  });
+
+  test("exposes Servstation as a permission-gated outbound A2A tool", async () => {
+    const runtime = await createRuntime();
+    const servstationCalls: Array<{ path: string; method: string; headers: Record<string, string | string[] | undefined>; body: Record<string, unknown> }> = [];
+    const servstation = createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        const url = new URL(request.url || "/", "http://127.0.0.1");
+        const path = url.pathname;
+        servstationCalls.push({
+          path: `${url.pathname}${url.search}`,
+          method: request.method || "GET",
+          headers: request.headers,
+          body: body ? JSON.parse(body) as Record<string, unknown> : {}
+        });
+        response.setHeader("Content-Type", "application/json");
+        if (request.method === "POST" && path === "/api/v1/agent/connect") {
+          response.end(JSON.stringify({ agentInstanceId: "agent-serv-1", connectionMode: "reused", sessionToken: "redacted" }));
+          return;
+        }
+        if (request.method === "POST" && path === "/api/v1/agent/agent-serv-1/conversations") {
+          response.end(JSON.stringify({ id: "conv-serv-1", title: "New conversation" }));
+          return;
+        }
+        if (request.method === "POST" && path === "/api/v1/agent/agent-serv-1/jobs") {
+          response.end(JSON.stringify({ id: "job-serv-1", agentInstanceId: "agent-serv-1", conversationId: "conv-serv-1", status: "queued" }));
+          return;
+        }
+        if (request.method === "GET" && path === "/api/v1/agent/agent-serv-1/jobs") {
+          expect(url.searchParams.get("conversationId")).toBe("conv-serv-1");
+          response.end(JSON.stringify({
+            jobs: [{
+              id: "job-serv-1",
+              agentInstanceId: "agent-serv-1",
+              conversationId: "conv-serv-1",
+              status: "completed",
+              result: {
+                prompt: "remote system prompt should not be returned to Supbot",
+                assistantText: "Remote staff-agent done.",
+                assistantMessages: ["Remote staff-agent done."],
+                statusEvents: ["turn_1_complete"],
+                model: "mock-remote",
+                usage: { inputTokens: 10, outputTokens: 4 }
+              },
+              progress: { phase: "turn_complete" }
+            }]
+          }));
+          return;
+        }
+        response.statusCode = 404;
+        response.end(JSON.stringify({ error: "not found" }));
+      });
+    });
+    await new Promise<void>((resolve) => servstation.listen(0, "127.0.0.1", resolve));
+    const address = servstation.address() as AddressInfo;
+    const servstationUrl = `http://127.0.0.1:${address.port}`;
+    await runtime.updateIdentityContext({
+      tenantId: "tenant-A",
+      organizationId: "org-A",
+      departmentId: "dept-A",
+      userId: "user-A",
+      roleIds: ["operator", "user"],
+      source: "servstation",
+      servstationUrl
+    });
+    await runtime.updateServstationA2AConfig({ enabled: true, baseUrl: servstationUrl, authMode: "identityHeaders" });
+    await runtime.addPermissionRule({ toolName: "ServstationPrompt", behavior: "allow" });
+    const mock = await withMockModel(runtime, (body, call) => {
+      if (call === 1) {
+        const parsed = JSON.parse(body);
+        expect(parsed.tools.some((tool: { function: { name: string } }) => tool.function.name === "servstation_prompt")).toBe(true);
+        return {
+          choices: [{
+            message: {
+              content: null,
+              tool_calls: [{
+                id: "call_servstation_prompt",
+                type: "function",
+                function: { name: "servstation_prompt", arguments: JSON.stringify({ prompt: "coordinate remote planning" }) }
+              }]
+            }
+          }]
+        };
+      }
+      const parsed = JSON.parse(body);
+      const toolMessage = parsed.messages.find((message: { role: string }) => message.role === "tool");
+      expect(toolMessage.content).toContain("job-serv-1");
+      expect(toolMessage.content).toContain("Remote staff-agent done.");
+      expect(toolMessage.content).not.toContain("remote system prompt should not be returned");
+      const toolResult = JSON.parse(toolMessage.content);
+      expect(toolResult).toMatchObject({
+        status: "completed",
+        assistantText: "Remote staff-agent done.",
+        result: {
+          assistantText: "Remote staff-agent done.",
+          model: "mock-remote",
+          usage: { inputTokens: 10, outputTokens: 4 }
+        },
+        progress: { phase: "turn_complete" }
+      });
+      return { choices: [{ message: { content: "Servstation result: Remote staff-agent done." } }] };
+    });
+    try {
+      const result = await runtime.sendPrompt({ prompt: "ask Servstation" });
+      await waitForJob(runtime, result.job.id);
+      expect(servstationCalls.map((call) => `${call.method} ${call.path}`)).toEqual([
+        "POST /api/v1/agent/connect",
+        "POST /api/v1/agent/agent-serv-1/conversations",
+        "POST /api/v1/agent/agent-serv-1/jobs",
+        "GET /api/v1/agent/agent-serv-1/jobs?conversationId=conv-serv-1"
+      ]);
+      expect(servstationCalls[0].headers["x-tenant-id"]).toBe("tenant-A");
+      expect(servstationCalls[0].headers["x-organization-id"]).toBe("org-A");
+      expect(servstationCalls[0].headers["x-department-id"]).toBe("dept-A");
+      expect(servstationCalls[0].headers["x-user-id"]).toBe("user-A");
+      expect(servstationCalls[0].headers["x-role-ids"]).toBe("operator,user");
+      expect(runtime.snapshot().servstationA2A.config.agentInstanceId).toBe("agent-serv-1");
+      const trace = runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id);
+      expect(trace?.toolCalls[0].toolName).toBe("ServstationPrompt");
+      expect(trace?.toolCalls[0].status).toBe("completed");
+    } finally {
+      await mock.close();
+      await new Promise<void>((resolve, reject) => servstation.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  test("connects to Servstation reverse SSE and returns read-only prompt results", async () => {
+    const runtime = await createRuntime();
+    let eventStream: import("node:http").ServerResponse | undefined;
+    let closeStream: (() => void) | undefined;
+    let resultBody: Record<string, unknown> | undefined;
+    let resolveResult: (() => void) | undefined;
+    const resultReceived = new Promise<void>((resolve) => {
+      resolveResult = resolve;
+    });
+    const servstation = createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        const url = new URL(request.url || "/", "http://127.0.0.1");
+        response.setHeader("Content-Type", "application/json");
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/connect") {
+          response.end(JSON.stringify({ agentInstanceId: "agent-reverse-1" }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-reverse-1/a2a-peers/reverse-connections") {
+          expect(request.headers["x-tenant-id"]).toBe("tenant-rev");
+          const parsed = JSON.parse(body) as Record<string, unknown>;
+          expect(parsed.capabilities).toEqual(["prompt.readOnly"]);
+          response.end(JSON.stringify({
+            peer: { id: "peer-reverse-1" },
+            streamUrl: "/api/v1/agent/agent-reverse-1/a2a-peers/peer-reverse-1/events",
+            heartbeatMs: 500
+          }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-reverse-1/a2a-peers/peer-reverse-1/events") {
+          response.writeHead(200, {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive"
+          });
+          eventStream = response;
+          closeStream = () => response.end();
+          response.write(`event: heartbeat\ndata: {"ok":true}\n\n`);
+          return;
+        }
+        if (request.method === "POST" && url.pathname.endsWith("/ack")) {
+          response.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname.endsWith("/result")) {
+          resultBody = JSON.parse(body) as Record<string, unknown>;
+          resolveResult?.();
+          response.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        response.statusCode = 404;
+        response.end(JSON.stringify({ error: "not found" }));
+      });
+    });
+    await new Promise<void>((resolve) => servstation.listen(0, "127.0.0.1", resolve));
+    const address = servstation.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    await runtime.updateIdentityContext({
+      tenantId: "tenant-rev",
+      organizationId: "org-rev",
+      departmentId: "dept-rev",
+      userId: "user-rev",
+      roleIds: ["user"],
+      source: "servstation",
+      servstationUrl: baseUrl
+    });
+    await runtime.updateServstationA2AConfig({ enabled: true, baseUrl, authMode: "identityHeaders" });
+    const mock = await withMockModel(runtime, () => ({
+      choices: [{ message: { content: "Local Supbot reverse result." } }]
+    }));
+    try {
+      await runtime.connectServstationReverseBridge();
+      await waitForCondition("reverse stream connected", () => runtime.snapshot().servstationA2A.config.reverse?.status === "connected" && Boolean(eventStream));
+      eventStream!.write([
+        "id: inv-reverse-1",
+        "event: invoke_prompt",
+        `data: ${JSON.stringify({
+          invocationId: "inv-reverse-1",
+          requestId: "req-reverse-1",
+          prompt: "Run a read-only local Supbot task",
+          timeoutMs: 5_000,
+          userContext: {
+            tenantId: "tenant-rev",
+            organizationId: "org-rev",
+            departmentId: "dept-rev",
+            userId: "user-rev",
+            roleIds: ["user"],
+            source: "servstation"
+          },
+          agentInstanceId: "agent-reverse-1"
+        })}`,
+        "",
+        ""
+      ].join("\n"));
+      await resultReceived;
+      expect(resultBody).toMatchObject({
+        status: "completed",
+        assistantText: "Local Supbot reverse result."
+      });
+      expect(resultBody?.result).toMatchObject({
+        assistantText: "Local Supbot reverse result.",
+        workspaceMode: "readOnly"
+      });
+      const reverseJob = runtime.snapshot().jobs.find((job) => job.prompt === "Run a read-only local Supbot task");
+      expect(reverseJob?.workspaceMode).toBe("readOnly");
+    } finally {
+      closeStream?.();
+      await runtime.disconnectServstationReverseBridge();
+      await mock.close();
+      await new Promise<void>((resolve, reject) => servstation.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  test("refreshes Servstation OIDC sessions and updates bound identity", async () => {
+    const runtime = await createRuntime();
+    const refreshBodies: string[] = [];
+    let issuerUrl = "";
+    let tokenEndpoint = "";
+    const server = createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        const path = request.url || "/";
+        response.setHeader("Content-Type", "application/json");
+        if (path === "/issuer/.well-known/openid-configuration") {
+          response.end(JSON.stringify({ token_endpoint: tokenEndpoint }));
+          return;
+        }
+        if (request.method === "POST" && path === "/issuer/token") {
+          refreshBodies.push(body);
+          response.end(JSON.stringify({
+            access_token: fakeJwt({
+              tenantId: "tenant-oidc",
+              organizationId: "org-oidc",
+              departmentId: "dept-oidc",
+              preferred_username: "oidc-user",
+              realm_access: { roles: ["user", "offline_access"] }
+            }),
+            refresh_token: "refresh-token-2",
+            token_type: "Bearer",
+            scope: "openid profile offline_access",
+            expires_in: 300
+          }));
+          return;
+        }
+        response.statusCode = 404;
+        response.end(JSON.stringify({ error: "not found" }));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    issuerUrl = `${baseUrl}/issuer`;
+    tokenEndpoint = `${issuerUrl}/token`;
+    try {
+      const initial = await runtime.updateServstationA2AOidcSession({
+        baseUrl,
+        issuerUrl,
+        clientId: "agent-client-web-dev",
+        scope: "openid profile offline_access",
+        tokens: {
+          accessToken: fakeJwt({
+            tenantId: "tenant-old",
+            organizationId: "org-old",
+            departmentId: "dept-old",
+            preferred_username: "old-user"
+          }),
+          refreshToken: "refresh-token-1",
+          expiresAt: new Date(Date.now() - 60_000).toISOString(),
+          issuerUrl,
+          clientId: "agent-client-web-dev"
+        },
+        identityContext: {
+          tenantId: "tenant-old",
+          organizationId: "org-old",
+          departmentId: "dept-old",
+          userId: "old-user",
+          roleIds: ["user"],
+          source: "servstation",
+          servstationUrl: baseUrl
+        }
+      });
+      expect(initial.authMode).toBe("oidc");
+      expect(initial.oidc?.refreshTokenSaved).toBe(true);
+      const refreshed = await runtime.refreshServstationA2AOidcSession();
+      expect(refreshBodies).toHaveLength(1);
+      expect(new URLSearchParams(refreshBodies[0]).get("grant_type")).toBe("refresh_token");
+      expect(new URLSearchParams(refreshBodies[0]).get("refresh_token")).toBe("refresh-token-1");
+      expect(refreshed.oidc?.refreshTokenSaved).toBe(true);
+      expect(refreshed.oidc?.userId).toBe("oidc-user");
+      expect(refreshed.oidc?.accessTokenExpiresAt).toBeTruthy();
+      const identity = await runtime.identityContext();
+      expect(identity).toMatchObject({
+        tenantId: "tenant-oidc",
+        organizationId: "org-oidc",
+        departmentId: "dept-oidc",
+        userId: "oidc-user"
+      });
+      expect(identity?.roleIds).toEqual(["user", "offline_access"]);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
   });
 

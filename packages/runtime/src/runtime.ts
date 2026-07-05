@@ -1,16 +1,29 @@
 import { EventEmitter } from "node:events";
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { createHash } from "node:crypto";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   clampNumber,
   type AgentJob,
   type Attachment,
+  type AutopilotCheckpoint,
+  type AutopilotEvent,
+  type AutopilotRun,
+  type AutopilotRunReport,
+  type AutopilotStage,
+  type AutopilotStartDataRunInput,
+  type AutopilotTask,
+  type AutopilotWritePolicy,
   type CapabilityDefinition,
   type ChatMessage,
   type ChatMessageBlock,
   type CompactBoundary,
   type Conversation,
+  type DataArtifact,
+  type DataArtifactKind,
+  type DataSourceSpec,
   type GeneratedFile,
+  type IdentityContext,
   type JobStatus,
   type McpConfigTransfer,
   type McpDiagnosticResult,
@@ -41,11 +54,15 @@ import {
   type ModelConfig,
   type ModelConfigUpdate,
   type ModelTestResult,
+  type CapabilityUpdateInput,
   nowIso,
   type PendingToolPermission,
   type PermissionMode,
   type PermissionRule,
   type PersonalityConfig,
+  type Project,
+  type ProjectCreateInput,
+  type ProjectUpdateInput,
   type QuerySession,
   type RemoteBridgeAuditRecord,
   type RemoteBridgeConfig,
@@ -56,6 +73,9 @@ import {
   type ScheduledJobInput,
   type SendPromptInput,
   type SendPromptResult,
+  type ServstationA2AConfig,
+  type ServstationA2AConfigUpdate,
+  type ServstationA2AOidcSessionUpdate,
   type SubagentConfig,
   type SupbotEvent,
   type TaskWorktree,
@@ -64,15 +84,30 @@ import {
   type ToolMarketCatalogItem,
   type ToolMarketConfig,
   type ToolMarketConfigUpdate,
+  type ToolMarketLocalDeployment,
+  type ToolMarketMcpDeployment,
+  type ToolMarketPackageFile,
+  type ToolMarketProduct,
   type ToolMarketQuery
 } from "@supbot/shared";
+import { AutopilotOrchestrator } from "./autopilotOrchestrator";
 import { stripQuotes, type LocalToolHost, type LocalToolResult } from "./localTools";
 import { MemoryManager } from "./memoryManager";
 import { McpManager } from "./mcpManager";
 import { generateReply } from "./modelClient";
+import { ProjectManager } from "./projectManager";
 import { QueryEngine } from "./queryEngine";
 import { RemoteBridgeManager } from "./remoteBridgeManager";
-import { createInitialState, type RuntimeState, type StorageAdapter } from "./storage";
+import { ServstationA2AProvider } from "./servstationA2AProvider";
+import { ServstationReverseBridgeClient, type ReversePromptResult } from "./servstationReverseBridgeClient";
+import {
+  identityContextFromAccessToken,
+  oidcAccessTokenExpiringSoon,
+  parseServstationOidcSecret,
+  refreshServstationOidcTokenSet,
+  serializeServstationOidcSecret
+} from "./servstationOidc";
+import { createInitialState, normalizeIdentityContext, type RuntimeState, type StorageAdapter } from "./storage";
 import { SubagentRunner } from "./subagentRunner";
 import { ToolExecutor } from "./toolExecutor";
 import { ToolRegistry } from "./toolRegistry";
@@ -84,6 +119,15 @@ interface RunningJob {
   controller: AbortController;
 }
 
+interface RunningAutopilotRun {
+  controller: AbortController;
+}
+
+interface ProjectToolContextOptions {
+  project?: Project;
+  policy?: AutopilotWritePolicy;
+}
+
 interface PendingPermissionWaiter {
   resolve(decision: "approved" | "denied"): void;
 }
@@ -91,13 +135,18 @@ interface PendingPermissionWaiter {
 export class SupbotRuntime extends EventEmitter {
   private state: RuntimeState = createInitialState();
   private readonly runningJobs = new Map<string, RunningJob>();
+  private readonly runningAutopilotRuns = new Map<string, RunningAutopilotRun>();
   private readonly permissionWaiters = new Map<string, PendingPermissionWaiter>();
   private readonly toolRegistry = new ToolRegistry();
   private readonly mcpManager: McpManager;
+  private readonly servstationA2AProvider: ServstationA2AProvider;
   private readonly worktreeManager: WorktreeManager;
   private readonly remoteBridgeManager: RemoteBridgeManager;
+  private readonly servstationReverseBridgeClient: ServstationReverseBridgeClient;
   private readonly memoryManager = new MemoryManager({ randomId, nowIso });
-  private remoteMarketCache = [] as typeof localToolMarketProducts;
+  private readonly projectManager = new ProjectManager({ randomId, nowIso });
+  private readonly autopilotOrchestrator = new AutopilotOrchestrator({ randomId, nowIso });
+  private remoteMarketCache: ToolMarketProduct[] = [];
   private loaded = false;
   private readonly secretStorageKind: ModelConfig["apiKeyStorage"];
   private readonly marketSecretStorageKind: ToolMarketConfig["tokenStorage"];
@@ -154,6 +203,8 @@ export class SupbotRuntime extends EventEmitter {
       loadTranscript: (conversationId) => this.loadTranscript(conversationId),
       getWorktreeDiff: (id) => this.getWorktreeDiff(id),
       sendRemotePrompt: (input) => this.sendRemotePrompt(input),
+      getIdentityContext: () => this.state.identityContext,
+      updateIdentityContext: (input) => this.updateIdentityContext(input),
       onAudit: async (record) => {
         this.state.remoteBridgeSessions = this.remoteBridgeManager.listSessions();
         this.state.remoteBridgeAudit = this.remoteBridgeManager.listAudit();
@@ -174,7 +225,25 @@ export class SupbotRuntime extends EventEmitter {
         }
       }
     });
+    this.servstationA2AProvider = new ServstationA2AProvider({
+      getConfig: () => this.state.servstationA2AConfig,
+      getAccessToken: (signal) => this.servstationA2AAccessToken(signal),
+      getIdentityContext: () => this.state.identityContext,
+      updateConfig: (input) => this.updateServstationA2AConfig(input),
+      randomId
+    });
+    this.servstationReverseBridgeClient = new ServstationReverseBridgeClient({
+      getConfig: () => this.state.servstationA2AConfig,
+      getAccessToken: (signal) => this.servstationA2AAccessToken(signal),
+      getIdentityContext: () => this.state.identityContext,
+      updateConfig: (input) => this.updateServstationA2AConfig(input),
+      updateReverseState: (input) => this.updateServstationReverseState(input),
+      sendReadOnlyPromptAndWait: (input) => this.sendRemotePromptAndWait(input),
+      randomId,
+      nowIso
+    });
     this.toolRegistry.addProvider(this.mcpManager);
+    this.toolRegistry.addProvider(this.servstationA2AProvider);
   }
 
   async init(): Promise<RuntimeSnapshot> {
@@ -183,6 +252,7 @@ export class SupbotRuntime extends EventEmitter {
     this.worktreeManager.setWorktrees(this.state.worktrees);
     this.loaded = true;
     await this.recoverTranscriptsOnStartup();
+    await this.recoverAutopilotRunsOnStartup();
     await this.remoteBridgeManager.configure({
       config: this.state.remoteBridgeConfig,
       token: this.state.remoteBridgeSecret,
@@ -190,14 +260,18 @@ export class SupbotRuntime extends EventEmitter {
       audit: this.state.remoteBridgeAudit
     });
     await this.mcpManager.autoConnectEnabled();
+    if (this.state.servstationA2AConfig.reverse?.enabled) {
+      this.servstationReverseBridgeClient.start();
+    }
     return this.snapshot();
   }
 
   snapshot(): RuntimeSnapshot {
     this.assertLoaded();
     return {
-      status: this.runningJobs.size ? "running" : "ready",
+      status: this.runningJobs.size || this.runningAutopilotRuns.size ? "running" : "ready",
       agentName: this.state.agentName,
+      identityContext: this.state.identityContext,
       modelConfig: redactModelConfig(this.state.modelConfig, this.state.modelSecret),
       toolMarketConfig: redactToolMarketConfig(this.state.toolMarketConfig, this.state.toolMarketSecret, this.state.toolMarketPasswordSecret),
       personality: this.state.personality,
@@ -206,6 +280,12 @@ export class SupbotRuntime extends EventEmitter {
       conversations: this.state.conversations,
       jobs: this.state.jobs,
       scheduledJobs: this.state.scheduledJobs,
+      projects: this.state.projects,
+      autopilotRuns: this.state.autopilotRuns,
+      autopilotTasks: this.state.autopilotTasks,
+      autopilotEvents: this.state.autopilotEvents,
+      autopilotCheckpoints: this.state.autopilotCheckpoints,
+      dataArtifacts: this.state.dataArtifacts,
       pendingToolPermissions: this.state.pendingToolPermissions,
       agentLoopTraces: this.state.agentLoopTraces,
       querySessions: this.state.querySessions,
@@ -216,7 +296,14 @@ export class SupbotRuntime extends EventEmitter {
       permissionRules: this.state.permissionRules,
       ...this.mcpManager.snapshot(),
       worktrees: this.worktreeManager.list(),
-      remoteBridge: this.remoteBridgeManager.snapshot()
+      remoteBridge: this.remoteBridgeManager.snapshot(),
+      servstationA2A: {
+        config: {
+          ...this.state.servstationA2AConfig,
+          bearerTokenSaved: Boolean(this.state.servstationA2ASecret),
+          oidc: this.redactServstationA2AOidcConfig()
+        }
+      }
     };
   }
 
@@ -237,9 +324,155 @@ export class SupbotRuntime extends EventEmitter {
 
   async deleteConversation(id: string): Promise<void> {
     this.assertLoaded();
+    const jobsToDelete = this.state.jobs.filter((item) => item.conversationId === id);
+    const jobIds = new Set(jobsToDelete.map((item) => item.id));
+    const belongsToDeletedJob = (jobId?: string): boolean => {
+      if (!jobId) {
+        return false;
+      }
+      if (jobIds.has(jobId)) {
+        return true;
+      }
+      return [...jobIds].some((rootJobId) => jobId.startsWith(`${rootJobId}:`));
+    };
+    const belongsToDeletedConversation = (item: { conversationId?: string; jobId?: string }): boolean =>
+      item.conversationId === id || belongsToDeletedJob(item.jobId);
+
+    for (const job of jobsToDelete) {
+      this.runningJobs.get(job.id)?.controller.abort();
+      this.resolveJobPermissions(job.id, "denied");
+    }
+
     this.state.conversations = this.state.conversations.filter((item) => item.id !== id);
-    this.state.jobs = this.state.jobs.filter((item) => item.conversationId !== id);
+    this.state.jobs = this.state.jobs.filter((item) => !belongsToDeletedConversation(item));
+    this.state.pendingToolPermissions = this.state.pendingToolPermissions.filter((item) => !belongsToDeletedConversation(item));
+    this.state.agentLoopTraces = this.state.agentLoopTraces.filter((item) => !belongsToDeletedConversation(item));
+    this.state.querySessions = this.state.querySessions.filter((item) => !belongsToDeletedConversation(item));
+    this.state.runtimeEvents = this.state.runtimeEvents.filter((item) => !belongsToDeletedConversation(item));
+    this.state.worktrees = this.state.worktrees.filter((item) => !belongsToDeletedConversation(item));
+    this.state.compactBoundaries = this.state.compactBoundaries.filter((item) => item.conversationId !== id);
+    this.worktreeManager.setWorktrees(this.state.worktrees);
     await this.persistAndBroadcast();
+  }
+
+  async createProjectFromFolder(input: ProjectCreateInput): Promise<Project> {
+    this.assertLoaded();
+    const project = await this.projectManager.createFromFolder(input, this.state.projects);
+    this.state.projects = [
+      project,
+      ...this.state.projects.filter((item) => item.id !== project.id && resolve(item.rootPath) !== resolve(project.rootPath))
+    ];
+    await this.persistAndBroadcast();
+    this.emitTyped({ type: "project_changed", project });
+    return project;
+  }
+
+  listProjects(): Project[] {
+    this.assertLoaded();
+    return [...this.state.projects];
+  }
+
+  openProject(id: string): Project {
+    this.assertLoaded();
+    return this.requireProject(id);
+  }
+
+  async updateProject(id: string, input: ProjectUpdateInput): Promise<Project> {
+    this.assertLoaded();
+    const current = this.requireProject(id);
+    const project = await this.projectManager.update(current, input);
+    this.state.projects = this.state.projects.map((item) => item.id === id ? project : item);
+    await this.persistAndBroadcast();
+    this.emitTyped({ type: "project_changed", project });
+    return project;
+  }
+
+  async startDataRun(input: AutopilotStartDataRunInput): Promise<AutopilotRun> {
+    this.assertLoaded();
+    const project = this.requireProject(requiredString(input.projectId, "Project id"));
+    this.projectManager.validateProjectPath(project);
+    await this.projectManager.ensureProjectFolders(project.rootPath);
+    const now = nowIso();
+    const policy = this.projectManager.defaultWritePolicy(input.writePolicy || {});
+    const run: AutopilotRun = {
+      id: randomId("aprun"),
+      projectId: project.id,
+      projectRoot: project.rootPath,
+      title: input.title?.trim() || titleFromPrompt(input.goal),
+      goal: requiredString(input.goal, "Autopilot goal"),
+      status: "queued",
+      currentStage: "clarify",
+      writePolicy: policy,
+      dataSources: normalizeDataSources(input.dataSources || []),
+      taskIds: [],
+      artifactIds: [],
+      checkpointIds: [],
+      evidence: [],
+      createdAt: now,
+      updatedAt: now
+    };
+    const tasks = this.autopilotOrchestrator.createTasks(run);
+    const nextRun = { ...run, taskIds: tasks.map((task) => task.id) };
+    this.state.autopilotRuns = [nextRun, ...this.state.autopilotRuns];
+    this.state.autopilotTasks = [...tasks, ...this.state.autopilotTasks];
+    this.state.projects = this.state.projects.map((item) => item.id === project.id ? { ...item, lastRunAt: now, updatedAt: now } : item);
+    await this.addAutopilotCheckpoint(nextRun, "Autopilot data run queued");
+    await this.addAutopilotEvent(nextRun, "info", "Autopilot data run queued", { taskCount: tasks.length });
+    await this.persistAndBroadcast();
+    void this.runAutopilot(nextRun.id);
+    return this.requireAutopilotRun(nextRun.id);
+  }
+
+  async pauseAutopilotRun(id: string): Promise<AutopilotRun> {
+    this.assertLoaded();
+    const run = this.requireAutopilotRun(id);
+    this.runningAutopilotRuns.get(id)?.controller.abort();
+    const next = this.patchAutopilotRun(id, { status: "paused", updatedAt: nowIso(), error: undefined });
+    await this.addAutopilotEvent(next, "info", "Autopilot data run paused");
+    await this.addAutopilotCheckpoint(next, "Paused by user");
+    await this.persistAndBroadcast();
+    return next;
+  }
+
+  async resumeAutopilotRun(id: string): Promise<AutopilotRun> {
+    this.assertLoaded();
+    const run = this.requireAutopilotRun(id);
+    if (run.status !== "paused" && run.status !== "blocked" && run.status !== "failed") {
+      return run;
+    }
+    const next = this.patchAutopilotRun(id, { status: "queued", updatedAt: nowIso(), error: undefined });
+    await this.addAutopilotEvent(next, "info", "Autopilot data run resumed");
+    await this.persistAndBroadcast();
+    void this.runAutopilot(id);
+    return this.requireAutopilotRun(id);
+  }
+
+  async cancelAutopilotRun(id: string): Promise<AutopilotRun> {
+    this.assertLoaded();
+    const run = this.requireAutopilotRun(id);
+    this.runningAutopilotRuns.get(id)?.controller.abort();
+    const now = nowIso();
+    const next = this.patchAutopilotRun(id, { status: "canceled", updatedAt: now, finishedAt: now });
+    this.state.autopilotTasks = this.state.autopilotTasks.map((task) => task.runId === id && (task.status === "queued" || task.status === "running")
+      ? { ...task, status: "skipped", updatedAt: now, finishedAt: now, error: "Run canceled" }
+      : task);
+    await this.addAutopilotEvent(next, "warning", "Autopilot data run canceled");
+    await this.addAutopilotCheckpoint(next, "Canceled by user");
+    await this.persistAndBroadcast();
+    return this.requireAutopilotRun(id);
+  }
+
+  getAutopilotRunReport(id: string): AutopilotRunReport {
+    this.assertLoaded();
+    const run = this.requireAutopilotRun(id);
+    return {
+      run,
+      project: this.state.projects.find((project) => project.id === run.projectId),
+      tasks: this.state.autopilotTasks.filter((task) => task.runId === id),
+      artifacts: this.state.dataArtifacts.filter((artifact) => artifact.runId === id),
+      checkpoints: this.state.autopilotCheckpoints.filter((checkpoint) => checkpoint.runId === id),
+      events: this.state.autopilotEvents.filter((event) => event.runId === id)
+    };
   }
 
   async sendPrompt(input: SendPromptInput): Promise<SendPromptResult> {
@@ -443,6 +676,227 @@ export class SupbotRuntime extends EventEmitter {
   async remoteBridgeConfig(): Promise<RemoteBridgeConfig> {
     this.assertLoaded();
     return this.remoteBridgeManager.snapshot().config;
+  }
+
+  async identityContext(): Promise<IdentityContext | undefined> {
+    this.assertLoaded();
+    return this.state.identityContext ? { ...this.state.identityContext, roleIds: [...this.state.identityContext.roleIds] } : undefined;
+  }
+
+  async updateIdentityContext(input: IdentityContext): Promise<IdentityContext> {
+    this.assertLoaded();
+    const normalized = normalizeIdentityContext({
+      ...input,
+      updatedAt: input.updatedAt ?? nowIso()
+    });
+    if (!normalized) {
+      throw new Error("Invalid identity context");
+    }
+    this.state.identityContext = normalized;
+    await this.persistAndBroadcast();
+    return { ...normalized, roleIds: [...normalized.roleIds] };
+  }
+
+  async servstationA2AConfig(): Promise<ServstationA2AConfig> {
+    this.assertLoaded();
+    return this.redactServstationA2AConfig();
+  }
+
+  async updateServstationA2AConfig(input: ServstationA2AConfigUpdate): Promise<ServstationA2AConfig> {
+    this.assertLoaded();
+    const current = this.state.servstationA2AConfig;
+    const baseUrl = input.baseUrl !== undefined ? normalizeHttpUrl(input.baseUrl) : current.baseUrl;
+    const nextSecret = input.clearBearerToken ? undefined : input.bearerToken?.trim() || this.state.servstationA2ASecret;
+    const authMode = input.authMode === "bearer" || input.authMode === "identityHeaders" || input.authMode === "oidc" ? input.authMode : current.authMode;
+    const currentOidc = this.redactServstationA2AOidcConfig();
+    const oidc = {
+      ...currentOidc,
+      issuerUrl: input.oidcIssuerUrl !== undefined ? normalizeHttpUrl(input.oidcIssuerUrl) : currentOidc.issuerUrl,
+      clientId: input.oidcClientId !== undefined ? emptyToUndefined(input.oidcClientId) : currentOidc.clientId,
+      scope: input.oidcScope !== undefined ? emptyToUndefined(input.oidcScope) : currentOidc.scope,
+      redirectUri: input.oidcRedirectUri !== undefined ? normalizeHttpUrl(input.oidcRedirectUri) : currentOidc.redirectUri,
+      refreshTokenSaved: currentOidc.refreshTokenSaved
+    };
+    const currentReverse = this.state.servstationA2AConfig.reverse || { enabled: false, status: "disconnected" as const };
+    const reverse = {
+      ...currentReverse,
+      enabled: input.reverseEnabled ?? currentReverse.enabled,
+      clientInstanceId: input.reverseClientInstanceId !== undefined ? emptyToUndefined(input.reverseClientInstanceId) : currentReverse.clientInstanceId,
+      status: input.reverseEnabled === false ? "disconnected" as const : currentReverse.status,
+      updatedAt: nowIso()
+    };
+    this.state.servstationA2AConfig = {
+      ...current,
+      enabled: input.enabled ?? current.enabled,
+      baseUrl,
+      authMode,
+      bearerTokenSaved: Boolean(nextSecret),
+      oidc,
+      reverse,
+      agentInstanceId: input.agentInstanceId !== undefined ? emptyToUndefined(input.agentInstanceId) : current.agentInstanceId,
+      updatedAt: nowIso()
+    };
+    this.state.servstationA2ASecret = nextSecret;
+    const event = this.createRuntimeEvent("servstation_a2a", "Servstation A2A config updated", {
+      enabled: this.state.servstationA2AConfig.enabled,
+      baseUrl: this.state.servstationA2AConfig.baseUrl,
+      authMode: this.state.servstationA2AConfig.authMode,
+      agentInstanceId: this.state.servstationA2AConfig.agentInstanceId,
+      bearerTokenSaved: Boolean(nextSecret),
+      oidc,
+      reverse
+    });
+    this.addRuntimeEvent(event);
+    await this.persistAndBroadcast();
+    const redacted = this.redactServstationA2AConfig();
+    this.emitTyped({ type: "servstation_a2a", config: redacted, event });
+    return redacted;
+  }
+
+  async connectServstationReverseBridge(): Promise<ServstationA2AConfig> {
+    this.assertLoaded();
+    await this.updateServstationReverseState({
+      enabled: true,
+      status: "connecting",
+      lastError: undefined
+    });
+    this.servstationReverseBridgeClient.start();
+    return this.redactServstationA2AConfig();
+  }
+
+  async disconnectServstationReverseBridge(): Promise<ServstationA2AConfig> {
+    this.assertLoaded();
+    await this.servstationReverseBridgeClient.stop(false);
+    return this.redactServstationA2AConfig();
+  }
+
+  async updateServstationA2AOidcSession(input: ServstationA2AOidcSessionUpdate): Promise<ServstationA2AConfig> {
+    this.assertLoaded();
+    const current = this.state.servstationA2AConfig;
+    const baseUrl = input.baseUrl !== undefined
+      ? normalizeHttpUrl(input.baseUrl)
+      : current.baseUrl || this.state.identityContext?.servstationUrl || input.identityContext?.servstationUrl;
+    const issuerUrl = normalizeHttpUrl(input.issuerUrl);
+    if (!issuerUrl) {
+      throw new Error("Servstation OIDC issuer URL is required.");
+    }
+    const clientId = requiredString(input.clientId, "Servstation OIDC client id");
+    const tokens = {
+      ...input.tokens,
+      issuerUrl,
+      clientId
+    };
+    const derivedIdentity = input.identityContext
+      ? normalizeIdentityContext({ ...input.identityContext, servstationUrl: baseUrl, updatedAt: nowIso() })
+      : identityContextFromAccessToken(tokens.accessToken, {
+        ...(this.state.identityContext || {}),
+        servstationUrl: baseUrl
+      });
+    if (derivedIdentity) {
+      this.state.identityContext = derivedIdentity;
+    }
+    this.state.servstationA2AOidcSecret = serializeServstationOidcSecret(tokens);
+    this.state.servstationA2AConfig = {
+      ...current,
+      enabled: true,
+      baseUrl,
+      authMode: "oidc",
+      bearerTokenSaved: Boolean(this.state.servstationA2ASecret),
+      oidc: {
+        issuerUrl,
+        clientId,
+        scope: input.scope || tokens.scope || current.oidc?.scope,
+        redirectUri: input.redirectUri !== undefined ? normalizeHttpUrl(input.redirectUri) : current.oidc?.redirectUri,
+        accessTokenExpiresAt: tokens.expiresAt,
+        refreshTokenSaved: Boolean(tokens.refreshToken),
+        userId: derivedIdentity?.userId || current.oidc?.userId
+      },
+      agentInstanceId: derivedIdentity?.agentInstanceId || current.agentInstanceId,
+      updatedAt: nowIso()
+    };
+    const event = this.createRuntimeEvent("servstation_a2a", "Servstation OIDC session updated", {
+      baseUrl,
+      issuerUrl,
+      clientId,
+      userId: derivedIdentity?.userId,
+      refreshTokenSaved: Boolean(tokens.refreshToken)
+    });
+    this.addRuntimeEvent(event);
+    await this.persistAndBroadcast();
+    const redacted = this.redactServstationA2AConfig();
+    this.emitTyped({ type: "servstation_a2a", config: redacted, event });
+    return redacted;
+  }
+
+  async refreshServstationA2AOidcSession(signal?: AbortSignal): Promise<ServstationA2AConfig> {
+    this.assertLoaded();
+    const current = this.state.servstationA2AConfig;
+    const tokens = parseServstationOidcSecret(this.state.servstationA2AOidcSecret);
+    if (!tokens) {
+      throw new Error("Servstation OIDC session is not configured.");
+    }
+    const refreshed = await refreshServstationOidcTokenSet(tokens, signal);
+    const derivedIdentity = identityContextFromAccessToken(refreshed.accessToken, {
+      ...(this.state.identityContext || {}),
+      agentInstanceId: current.agentInstanceId || this.state.identityContext?.agentInstanceId,
+      servstationUrl: current.baseUrl || this.state.identityContext?.servstationUrl
+    });
+    if (derivedIdentity) {
+      this.state.identityContext = normalizeIdentityContext(derivedIdentity);
+    }
+    this.state.servstationA2AOidcSecret = serializeServstationOidcSecret(refreshed);
+    this.state.servstationA2AConfig = {
+      ...current,
+      bearerTokenSaved: Boolean(this.state.servstationA2ASecret),
+      oidc: {
+        ...this.redactServstationA2AOidcConfig(),
+        issuerUrl: refreshed.issuerUrl,
+        clientId: refreshed.clientId,
+        scope: refreshed.scope || current.oidc?.scope,
+        accessTokenExpiresAt: refreshed.expiresAt,
+        refreshTokenSaved: Boolean(refreshed.refreshToken),
+        userId: derivedIdentity?.userId || current.oidc?.userId
+      },
+      agentInstanceId: derivedIdentity?.agentInstanceId || current.agentInstanceId,
+      updatedAt: nowIso()
+    };
+    const event = this.createRuntimeEvent("servstation_a2a", "Servstation OIDC token refreshed", {
+      issuerUrl: refreshed.issuerUrl,
+      clientId: refreshed.clientId,
+      userId: derivedIdentity?.userId,
+      refreshTokenSaved: Boolean(refreshed.refreshToken)
+    });
+    this.addRuntimeEvent(event);
+    await this.persistAndBroadcast();
+    const redacted = this.redactServstationA2AConfig();
+    this.emitTyped({ type: "servstation_a2a", config: redacted, event });
+    return redacted;
+  }
+
+  async clearServstationA2AOidcSession(): Promise<ServstationA2AConfig> {
+    this.assertLoaded();
+    const current = this.state.servstationA2AConfig;
+    this.state.servstationA2AOidcSecret = undefined;
+    this.state.servstationA2AConfig = {
+      ...current,
+      bearerTokenSaved: Boolean(this.state.servstationA2ASecret),
+      oidc: {
+        ...this.redactServstationA2AOidcConfig(),
+        accessTokenExpiresAt: undefined,
+        refreshTokenSaved: false,
+        userId: undefined
+      },
+      updatedAt: nowIso()
+    };
+    const event = this.createRuntimeEvent("servstation_a2a", "Servstation OIDC session cleared", {
+      issuerUrl: current.oidc?.issuerUrl,
+      clientId: current.oidc?.clientId
+    });
+    this.addRuntimeEvent(event);
+    await this.persistAndBroadcast();
+    const redacted = this.redactServstationA2AConfig();
+    this.emitTyped({ type: "servstation_a2a", config: redacted, event });
+    return redacted;
   }
 
   async updateRemoteBridgeConfig(input: Partial<RemoteBridgeConfig> & { token?: string; clearToken?: boolean }): Promise<RemoteBridgeConfig> {
@@ -767,7 +1221,13 @@ export class SupbotRuntime extends EventEmitter {
     for (const running of this.runningJobs.values()) {
       running.controller.abort();
     }
+    for (const running of this.runningAutopilotRuns.values()) {
+      running.controller.abort();
+    }
     await this.mcpManager.disconnectAll();
+    if (this.loaded) {
+      await this.servstationReverseBridgeClient.stop(false);
+    }
     await this.remoteBridgeManager.stop();
     if (this.loaded) {
       await this.persistAndBroadcast();
@@ -892,6 +1352,33 @@ export class SupbotRuntime extends EventEmitter {
     return this.state.personality;
   }
 
+  async updateCapability(id: string, input: CapabilityUpdateInput): Promise<CapabilityDefinition> {
+    this.assertLoaded();
+    const current = this.state.capabilities.find((item) => item.id === id);
+    if (!current) {
+      throw new Error(`Capability not found: ${id}`);
+    }
+    const next: CapabilityDefinition = {
+      ...current,
+      name: input.name !== undefined ? requiredString(input.name, "Capability name") : current.name,
+      description: input.description !== undefined ? input.description.trim() : current.description,
+      enabled: input.enabled !== undefined ? Boolean(input.enabled) : current.enabled
+    };
+    this.state.capabilities = this.state.capabilities.map((item) => item.id === id ? next : item);
+    await this.persistAndBroadcast();
+    return next;
+  }
+
+  async deleteCapability(id: string): Promise<void> {
+    this.assertLoaded();
+    if (!this.state.capabilities.some((item) => item.id === id)) {
+      throw new Error(`Capability not found: ${id}`);
+    }
+    this.state.capabilities = this.state.capabilities.filter((item) => item.id !== id);
+    this.state.deletedCapabilityIds = [...new Set([...this.state.deletedCapabilityIds, id])];
+    await this.persistAndBroadcast();
+  }
+
   async saveSubagent(subagent: SubagentConfig): Promise<SubagentConfig> {
     this.assertLoaded();
     const next: SubagentConfig = {
@@ -918,7 +1405,8 @@ export class SupbotRuntime extends EventEmitter {
   async listToolMarket(query: ToolMarketQuery = {}): Promise<ToolMarketCatalogItem[]> {
     this.assertLoaded();
     const local = this.state.toolMarketConfig.source === "remote" ? [] : localToolMarketProducts;
-    let remote = [] as typeof localToolMarketProducts;
+    const installed = await this.listInstalledToolMarketProducts();
+    let remote: ToolMarketProduct[] = [];
     if (this.state.toolMarketConfig.source !== "local" && this.state.toolMarketConfig.apiUrl.trim()) {
       try {
         remote = await fetchRemoteToolMarketProducts(this.state.toolMarketConfig, query, this.toolMarketAuth());
@@ -929,10 +1417,9 @@ export class SupbotRuntime extends EventEmitter {
         if (this.state.toolMarketConfig.source === "remote") {
           throw error;
         }
-        this.emitTyped({ type: "error", message: (error as Error).message });
       }
     }
-    return listToolMarketCatalog([...local, ...remote], this.state.capabilities, query);
+    return listToolMarketCatalog(uniqueMarketProducts([...local, ...remote, ...installed]), this.state.capabilities, query);
   }
 
   async installToolMarketProduct(productId: string): Promise<ToolMarketCatalogItem> {
@@ -941,15 +1428,28 @@ export class SupbotRuntime extends EventEmitter {
     if (!product) {
       throw new Error(`Tool market product not found: ${productId}`);
     }
+    if (!product.free && !product.purchased) {
+      throw new Error(`Tool market product must be purchased before local installation: ${product.name}`);
+    }
+    const deployment = product.localDeployment || defaultLocalDeployment(product);
+    const installPath = await this.installToolMarketPackage(product, deployment);
     const capability: CapabilityDefinition = {
-      ...product.capability,
+      ...(deployment.capability || product.capability),
       enabled: true
     };
     this.state.capabilities = [
       ...this.state.capabilities.filter((item) => item.id !== capability.id),
       capability
     ];
+    this.state.deletedCapabilityIds = this.state.deletedCapabilityIds.filter((id) => id !== capability.id);
+    const mcpServer = this.upsertMarketMcpServer(product, deployment, installPath);
+    if (mcpServer) {
+      await this.recordMcpEvent("Tool market MCP installed locally", mcpServer.id, { productId: product.id, installPath });
+    }
     await this.persistAndBroadcast();
+    if (mcpServer?.enabled && mcpServer.autoConnect) {
+      await this.connectMcpServer(mcpServer.id);
+    }
     return listToolMarketCatalog([product], this.state.capabilities, {}).find((item) => item.id === product.id)!;
   }
 
@@ -959,7 +1459,12 @@ export class SupbotRuntime extends EventEmitter {
     if (!product) {
       throw new Error(`Tool market product not found: ${productId}`);
     }
-    this.state.capabilities = this.state.capabilities.filter((item) => item.id !== product.capability.id);
+    const deployment = product.localDeployment || defaultLocalDeployment(product);
+    const capabilityId = (deployment.capability || product.capability).id;
+    await this.removeMarketMcpServer(product, deployment);
+    await rm(this.localToolInstallDir(product, deployment), { recursive: true, force: true });
+    await rm(this.toolMarketInstallDir(product), { recursive: true, force: true });
+    this.state.capabilities = this.state.capabilities.filter((item) => item.id !== capabilityId);
     await this.persistAndBroadcast();
     return listToolMarketCatalog([product], this.state.capabilities, {}).find((item) => item.id === product.id)!;
   }
@@ -1023,6 +1528,25 @@ export class SupbotRuntime extends EventEmitter {
   async generatedFilePath(file: GeneratedFile): Promise<string> {
     this.assertLoaded();
     return file.path;
+  }
+
+  isKnownSafePath(filePath: string): boolean {
+    this.assertLoaded();
+    if (!isAbsolute(filePath)) {
+      return false;
+    }
+    const normalized = resolve(filePath);
+    if (pathIsInside(this.storage.getDataDir(), normalized)) {
+      return true;
+    }
+    const knownPaths = [
+      ...this.state.worktrees.map((worktree) => worktree.path),
+      ...this.state.conversations.flatMap((conversation) => conversation.messages.flatMap((message) => [
+        ...(message.attachments || []).map((attachment) => attachment.path).filter((path): path is string => Boolean(path)),
+        ...(message.generatedFiles || []).map((file) => file.path)
+      ]).flat())
+    ];
+    return knownPaths.some((knownPath) => pathIsInside(knownPath, normalized) || resolve(knownPath) === normalized);
   }
 
   onEvent(listener: (event: SupbotEvent) => void): () => void {
@@ -1172,6 +1696,373 @@ export class SupbotRuntime extends EventEmitter {
     }
   }
 
+  private async runAutopilot(runId: string): Promise<void> {
+    if (this.runningAutopilotRuns.has(runId)) {
+      return;
+    }
+    let run = this.requireAutopilotRun(runId);
+    if (["completed", "canceled", "running"].includes(run.status)) {
+      return;
+    }
+    const project = this.requireProject(run.projectId);
+    const controller = new AbortController();
+    this.runningAutopilotRuns.set(runId, { controller });
+    try {
+      const now = nowIso();
+      run = this.patchAutopilotRun(runId, {
+        status: "running",
+        startedAt: run.startedAt || now,
+        updatedAt: now,
+        error: undefined
+      });
+      await this.addAutopilotEvent(run, "info", "Autopilot supervisor started", { projectRoot: project.rootPath });
+      await this.addAutopilotCheckpoint(run, "Supervisor started");
+      await this.persistAndBroadcast();
+
+      while (!controller.signal.aborted) {
+        if (controller.signal.aborted) {
+          break;
+        }
+        run = this.requireAutopilotRun(runId);
+        if (run.status === "paused" || run.status === "canceled") {
+          break;
+        }
+        if (run.status === "blocked") {
+          return;
+        }
+        const nextTaskId = this.nextPendingAutopilotTaskId(run);
+        if (!nextTaskId) {
+          const alignment = await this.ensureAutopilotGoalAligned(project, run, controller.signal);
+          if (alignment === "aligned") {
+            break;
+          }
+          if (alignment === "queued-fix") {
+            continue;
+          }
+          return;
+        }
+        const task = this.requireAutopilotTask(nextTaskId);
+        if (task.status === "completed" || task.status === "skipped") {
+          continue;
+        }
+        await this.runAutopilotTask(project, run, task, controller.signal);
+      }
+
+      run = this.requireAutopilotRun(runId);
+      if (controller.signal.aborted || run.status === "paused" || run.status === "canceled" || run.status === "blocked") {
+        return;
+      }
+      const completed = this.state.autopilotTasks.filter((task) => task.runId === runId).every((task) => task.status === "completed" || task.status === "skipped");
+      if (completed) {
+        const reportArtifact = await this.writeAutopilotRunReportArtifact(run);
+        const finishedAt = nowIso();
+        const next = this.patchAutopilotRun(runId, {
+          status: "completed",
+          artifactIds: uniqueStrings([...run.artifactIds, reportArtifact.id]),
+          reportPath: reportArtifact.path,
+          updatedAt: finishedAt,
+          finishedAt
+        });
+        this.state.dataArtifacts = [reportArtifact, ...this.state.dataArtifacts.filter((artifact) => artifact.id !== reportArtifact.id)];
+        await this.addAutopilotEvent(next, "info", "Autopilot data run completed", { reportPath: reportArtifact.path });
+        await this.addAutopilotCheckpoint(next, "Completed all data-run stages");
+        await this.persistAndBroadcast();
+      }
+    } catch (error) {
+      const current = this.requireAutopilotRun(runId);
+      if (controller.signal.aborted && (current.status === "paused" || current.status === "canceled")) {
+        return;
+      }
+      const now = nowIso();
+      const failed = this.patchAutopilotRun(runId, {
+        status: "failed",
+        error: (error as Error).message,
+        updatedAt: now,
+        finishedAt: now
+      });
+      await this.addAutopilotEvent(failed, "error", "Autopilot data run failed", { error: failed.error });
+      await this.addAutopilotCheckpoint(failed, `Failed: ${failed.error}`);
+      await this.persistAndBroadcast();
+    } finally {
+      this.runningAutopilotRuns.delete(runId);
+      this.emitTyped({ type: "snapshot", snapshot: this.snapshot() });
+    }
+  }
+
+  private nextPendingAutopilotTaskId(run: AutopilotRun): string | undefined {
+    return run.taskIds.find((taskId) => {
+      const task = this.state.autopilotTasks.find((item) => item.id === taskId);
+      return task && task.status !== "completed" && task.status !== "skipped";
+    });
+  }
+
+  private async ensureAutopilotGoalAligned(project: Project, run: AutopilotRun, signal: AbortSignal): Promise<"aligned" | "queued-fix" | "blocked"> {
+    if (signal.aborted) {
+      return "blocked";
+    }
+    if (!this.canAppendAutopilotTask(run.id)) {
+      const blocked = this.patchAutopilotRun(run.id, {
+        status: "blocked",
+        error: "Autopilot task budget exhausted before goal-output review could run.",
+        updatedAt: nowIso()
+      });
+      await this.addAutopilotEvent(blocked, "error", "Autopilot task budget exhausted before goal-output review");
+      await this.addAutopilotCheckpoint(blocked, "Blocked: task budget exhausted before goal-output review");
+      await this.persistAndBroadcast();
+      return "blocked";
+    }
+
+    const reviewTask = this.appendAutopilotTask(run.id, {
+      stage: "review",
+      staffAgent: "reviewer",
+      title: `Goal-output alignment review ${this.nextAutopilotIteration(run.id)}`,
+      prompt: this.buildGoalAlignmentReviewPrompt(run.id)
+    });
+    let activeRun = this.requireAutopilotRun(run.id);
+    await this.addAutopilotEvent(activeRun, "info", "Supervisor queued goal-output alignment review", { taskId: reviewTask.id });
+    await this.addAutopilotCheckpoint(activeRun, "Queued goal-output alignment review");
+    await this.persistAndBroadcast();
+
+    await this.runAutopilotTask(project, activeRun, reviewTask, signal);
+    const completedReview = this.requireAutopilotTask(reviewTask.id);
+    activeRun = this.requireAutopilotRun(run.id);
+    if (signal.aborted || activeRun.status === "paused" || activeRun.status === "canceled" || activeRun.status === "blocked") {
+      return "blocked";
+    }
+    if (completedReview.status !== "completed") {
+      const blocked = this.patchAutopilotRun(run.id, {
+        status: "blocked",
+        error: completedReview.error || "Goal-output review did not complete.",
+        updatedAt: nowIso()
+      });
+      await this.addAutopilotEvent(blocked, "error", "Goal-output review did not complete", { taskId: completedReview.id, error: blocked.error });
+      await this.addAutopilotCheckpoint(blocked, `Blocked: ${blocked.error}`);
+      await this.persistAndBroadcast();
+      return "blocked";
+    }
+
+    if (goalReviewPassed(completedReview.output || "")) {
+      await this.addAutopilotEvent(activeRun, "info", "Goal-output review passed", { taskId: completedReview.id });
+      await this.addAutopilotCheckpoint(activeRun, "Goal-output review passed");
+      await this.persistAndBroadcast();
+      return "aligned";
+    }
+
+    if (!this.canAppendAutopilotTask(run.id)) {
+      const blocked = this.patchAutopilotRun(run.id, {
+        status: "blocked",
+        error: "Goal-output review failed and no task budget remains for another fix iteration.",
+        updatedAt: nowIso()
+      });
+      await this.addAutopilotEvent(blocked, "error", "Goal-output review failed; task budget exhausted", { taskId: completedReview.id });
+      await this.addAutopilotCheckpoint(blocked, "Blocked: goal-output review failed and task budget exhausted");
+      await this.persistAndBroadcast();
+      return "blocked";
+    }
+
+    const fixTask = this.appendAutopilotTask(run.id, {
+      stage: "report",
+      staffAgent: "analyst",
+      title: `Revise outputs to match goal ${this.nextAutopilotIteration(run.id)}`,
+      prompt: this.buildGoalAlignmentFixPrompt(run.id, completedReview.output || "Goal-output review failed.")
+    });
+    const queuedRun = this.requireAutopilotRun(run.id);
+    await this.addAutopilotEvent(queuedRun, "warning", "Goal-output review failed; queued fix iteration", { reviewTaskId: completedReview.id, fixTaskId: fixTask.id });
+    await this.addAutopilotCheckpoint(queuedRun, "Goal-output review failed; queued fix iteration");
+    await this.persistAndBroadcast();
+    return "queued-fix";
+  }
+
+  private canAppendAutopilotTask(runId: string): boolean {
+    const run = this.requireAutopilotRun(runId);
+    return run.taskIds.length < run.writePolicy.maxTasks;
+  }
+
+  private nextAutopilotIteration(runId: string): number {
+    return this.state.autopilotTasks.filter((task) => task.runId === runId && (task.title.startsWith("Goal-output alignment review") || task.title.startsWith("Revise outputs to match goal"))).length + 1;
+  }
+
+  private appendAutopilotTask(runId: string, input: Pick<AutopilotTask, "stage" | "staffAgent" | "title" | "prompt">): AutopilotTask {
+    const run = this.requireAutopilotRun(runId);
+    const now = nowIso();
+    const task: AutopilotTask = {
+      id: randomId("aptask"),
+      runId: run.id,
+      projectId: run.projectId,
+      stage: input.stage,
+      staffAgent: input.staffAgent,
+      title: input.title,
+      prompt: input.prompt,
+      status: "queued",
+      attempts: 0,
+      maxAttempts: Math.max(1, run.writePolicy.maxRetries + 1),
+      artifactIds: [],
+      evidence: [],
+      createdAt: now,
+      updatedAt: now
+    };
+    this.state.autopilotTasks = [...this.state.autopilotTasks, task];
+    this.patchAutopilotRun(run.id, {
+      taskIds: uniqueStrings([...run.taskIds, task.id]),
+      updatedAt: now
+    });
+    return task;
+  }
+
+  private async runAutopilotTask(project: Project, run: AutopilotRun, task: AutopilotTask, signal: AbortSignal): Promise<void> {
+    let currentTask = task;
+    while (currentTask.attempts < currentTask.maxAttempts) {
+      if (signal.aborted) {
+        return;
+      }
+      const startedAt = nowIso();
+      currentTask = this.patchAutopilotTask(task.id, {
+        status: "running",
+        attempts: currentTask.attempts + 1,
+        startedAt: currentTask.startedAt || startedAt,
+        updatedAt: startedAt,
+        error: undefined
+      });
+      const activeRun = this.patchAutopilotRun(run.id, {
+        status: currentTask.stage === "review" ? "reviewing" : "running",
+        currentStage: currentTask.stage,
+        updatedAt: startedAt
+      });
+      await this.addAutopilotEvent(activeRun, "info", `${currentTask.title} started`, { taskId: currentTask.id, attempt: currentTask.attempts });
+      await this.addAutopilotCheckpoint(activeRun, `${currentTask.title} started`);
+      await this.persistAndBroadcast();
+
+      try {
+        const result = await this.runAutopilotTaskEngine(project, activeRun, currentTask, signal);
+        const artifacts = await this.artifactsFromGeneratedFiles(project, activeRun, currentTask, result.generatedFiles);
+        const artifactIds = artifacts.map((artifact) => artifact.id);
+        this.state.dataArtifacts = [
+          ...artifacts,
+          ...this.state.dataArtifacts.filter((artifact) => !artifactIds.includes(artifact.id))
+        ];
+        for (const artifact of artifacts) {
+          this.emitTyped({ type: "data_artifact", artifact });
+        }
+        const finishedAt = nowIso();
+        currentTask = this.patchAutopilotTask(currentTask.id, {
+          status: "completed",
+          output: result.text,
+          artifactIds: uniqueStrings([...currentTask.artifactIds, ...artifactIds]),
+          evidence: uniqueStrings([...currentTask.evidence, ...artifacts.map((artifact) => artifact.path), ...extractEvidencePaths(result.text)]),
+          updatedAt: finishedAt,
+          finishedAt
+        });
+        const completedRun = this.patchAutopilotRun(run.id, {
+          artifactIds: uniqueStrings([...activeRun.artifactIds, ...artifactIds]),
+          evidence: uniqueStrings([...activeRun.evidence, ...currentTask.evidence]),
+          updatedAt: finishedAt
+        });
+        await this.addAutopilotEvent(completedRun, "info", `${currentTask.title} completed`, { taskId: currentTask.id, artifacts: artifactIds.length });
+        await this.addAutopilotCheckpoint(completedRun, `${currentTask.title} completed`);
+        await this.persistAndBroadcast();
+        return;
+      } catch (error) {
+        if (signal.aborted) {
+          return;
+        }
+        const message = (error as Error).message;
+        const failedAt = nowIso();
+        currentTask = this.patchAutopilotTask(currentTask.id, {
+          status: currentTask.attempts >= currentTask.maxAttempts ? "blocked" : "failed",
+          error: message,
+          updatedAt: failedAt,
+          finishedAt: currentTask.attempts >= currentTask.maxAttempts ? failedAt : undefined
+        });
+        const level = currentTask.status === "blocked" ? "error" : "warning";
+        const currentRun = this.requireAutopilotRun(run.id);
+        await this.addAutopilotEvent(currentRun, level, `${currentTask.title} ${currentTask.status}`, { taskId: currentTask.id, error: message });
+        if (currentTask.status === "blocked") {
+          const blocked = this.patchAutopilotRun(run.id, {
+            status: "blocked",
+            error: message,
+            updatedAt: failedAt
+          });
+          await this.addAutopilotCheckpoint(blocked, `${currentTask.title} blocked: ${message}`);
+          await this.persistAndBroadcast();
+          return;
+        }
+        await this.addAutopilotCheckpoint(currentRun, `${currentTask.title} will retry: ${message}`);
+        await this.persistAndBroadcast();
+      }
+    }
+  }
+
+  private async runAutopilotTaskEngine(project: Project, run: AutopilotRun, task: AutopilotTask, signal: AbortSignal): Promise<{ text: string; generatedFiles: GeneratedFile[] }> {
+    const staff = this.resolveStaffSubagent(task.staffAgent);
+    const query = new QueryEngine({
+      id: randomId("query"),
+      jobId: `${run.id}:${task.id}`,
+      conversationId: `autopilot_${run.id}`,
+      dataDir: this.storage.getDataDir(),
+      cwd: project.rootPath,
+      modelConfig: this.state.modelConfig,
+      apiKey: this.state.modelSecret,
+      personality: this.state.personality,
+      subagent: staff,
+      messages: [{
+        id: randomId("msg"),
+        conversationId: `autopilot_${run.id}`,
+        role: "user",
+        text: this.autopilotTaskPrompt(run, task),
+        createdAt: nowIso()
+      }],
+      compactBoundaries: this.state.compactBoundaries,
+      memory: this.state.memory,
+      registry: this.toolRegistry,
+      toolContext: this.createToolExecutionContext(signal, `${run.id}:${task.id}`, 0, { project, policy: run.writePolicy }),
+      permissionMode: "bypassPermissions",
+      permissionRules: this.state.permissionRules,
+      signal,
+      maxTurns: 8,
+      requestPermission: (permission) => this.requestToolPermission(permission),
+      onSession: async (session) => {
+        this.upsertQuerySession(session);
+        await this.persistAndBroadcast();
+      },
+      onRuntimeEvent: async (event) => {
+        this.addRuntimeEvent(event);
+        await this.addAutopilotEvent(run, "info", event.message, { taskId: task.id, runtimeEvent: event });
+        await this.persistAndBroadcast();
+        this.emitTyped({ type: "query_event", event });
+      },
+      onMessageDelta: () => undefined,
+      onTrace: async (trace) => {
+        this.upsertTrace(trace);
+        await this.persistAndBroadcast();
+      },
+      onToolProgress: async (toolCall) => {
+        this.upsertToolCall(toolCall.jobId, toolCall);
+        await this.persistAndBroadcast();
+        this.emitTyped({ type: "tool_progress", toolCall });
+      },
+      onCompact: async (boundary) => {
+        this.upsertCompactBoundary(boundary);
+        await this.persistAndBroadcast();
+        this.emitTyped({ type: "compact", boundary });
+      },
+      onMemoryChanged: async (memory) => {
+        this.state.memory = memory;
+        await this.persistAndBroadcast();
+        this.emitTyped({ type: "memory_changed", memory });
+      },
+      onMemoryCandidate: async (candidate) => {
+        this.emitTyped({ type: "memory_candidate", candidate });
+      },
+      onPermissionTimeout: async (permission) => {
+        this.resolvePermission(permission.id, "denied");
+        await this.persistAndBroadcast();
+        this.emitTyped({ type: "permission_timeout", permission });
+      }
+    });
+    const result = await query.submitTurn();
+    return { text: result.text, generatedFiles: result.generatedFiles };
+  }
+
   private appendMessage(conversationId: string, message: ChatMessage): void {
     this.state.conversations = this.state.conversations.map((conversation) => {
       if (conversation.id !== conversationId) {
@@ -1230,6 +2121,267 @@ export class SupbotRuntime extends EventEmitter {
     }
   }
 
+  private requireProject(id: string): Project {
+    const project = this.state.projects.find((item) => item.id === id);
+    if (!project) {
+      throw new Error(`Project not found: ${id}`);
+    }
+    return project;
+  }
+
+  private requireAutopilotRun(id: string): AutopilotRun {
+    const run = this.state.autopilotRuns.find((item) => item.id === id);
+    if (!run) {
+      throw new Error(`Autopilot run not found: ${id}`);
+    }
+    return run;
+  }
+
+  private requireAutopilotTask(id: string): AutopilotTask {
+    const task = this.state.autopilotTasks.find((item) => item.id === id);
+    if (!task) {
+      throw new Error(`Autopilot task not found: ${id}`);
+    }
+    return task;
+  }
+
+  private patchAutopilotRun(id: string, patch: Partial<AutopilotRun>): AutopilotRun {
+    let next: AutopilotRun | undefined;
+    this.state.autopilotRuns = this.state.autopilotRuns.map((run) => {
+      if (run.id !== id) {
+        return run;
+      }
+      next = { ...run, ...patch, updatedAt: patch.updatedAt || nowIso() };
+      return next;
+    });
+    return next || this.requireAutopilotRun(id);
+  }
+
+  private patchAutopilotTask(id: string, patch: Partial<AutopilotTask>): AutopilotTask {
+    let next: AutopilotTask | undefined;
+    this.state.autopilotTasks = this.state.autopilotTasks.map((task) => {
+      if (task.id !== id) {
+        return task;
+      }
+      next = { ...task, ...patch, updatedAt: patch.updatedAt || nowIso() };
+      return next;
+    });
+    return next || this.requireAutopilotTask(id);
+  }
+
+  private async addAutopilotEvent(run: AutopilotRun, level: AutopilotEvent["level"], message: string, data?: unknown): Promise<AutopilotEvent> {
+    const event: AutopilotEvent = {
+      id: randomId("apevent"),
+      runId: run.id,
+      projectId: run.projectId,
+      level,
+      message,
+      createdAt: nowIso(),
+      data
+    };
+    this.state.autopilotEvents = [event, ...this.state.autopilotEvents].slice(0, 500);
+    this.emitTyped({ type: "autopilot_event", event });
+    return event;
+  }
+
+  private async addAutopilotCheckpoint(run: AutopilotRun, summary: string): Promise<AutopilotCheckpoint> {
+    const checkpoint: AutopilotCheckpoint = {
+      id: randomId("apcheck"),
+      runId: run.id,
+      projectId: run.projectId,
+      stage: run.currentStage || "clarify",
+      status: run.status,
+      summary,
+      taskIds: [...run.taskIds],
+      artifactIds: [...run.artifactIds],
+      createdAt: nowIso()
+    };
+    this.state.autopilotCheckpoints = [checkpoint, ...this.state.autopilotCheckpoints];
+    this.state.autopilotRuns = this.state.autopilotRuns.map((item) => item.id === run.id
+      ? { ...item, checkpointIds: uniqueStrings([checkpoint.id, ...item.checkpointIds]), updatedAt: nowIso() }
+      : item);
+    await this.writeAutopilotCheckpointFile(run, checkpoint);
+    return checkpoint;
+  }
+
+  private async writeAutopilotCheckpointFile(run: AutopilotRun, checkpoint: AutopilotCheckpoint): Promise<void> {
+    const runDir = join(run.projectRoot, ".supbot", "runs", run.id);
+    await mkdir(runDir, { recursive: true });
+    const payload = {
+      checkpoint,
+      run: this.state.autopilotRuns.find((item) => item.id === run.id) || run,
+      tasks: this.state.autopilotTasks.filter((task) => task.runId === run.id),
+      artifacts: this.state.dataArtifacts.filter((artifact) => artifact.runId === run.id)
+    };
+    await writeFile(join(runDir, "checkpoint.json"), `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  }
+
+  private async artifactsFromGeneratedFiles(project: Project, run: AutopilotRun, task: AutopilotTask, files: GeneratedFile[]): Promise<DataArtifact[]> {
+    const artifacts: DataArtifact[] = [];
+    for (const file of files) {
+      if (!pathIsInside(project.rootPath, file.path)) {
+        continue;
+      }
+      artifacts.push(await this.dataArtifactFromPath(project, run, task, file.path, task.title));
+    }
+    return artifacts;
+  }
+
+  private async dataArtifactFromPath(project: Project, run: AutopilotRun, task: Pick<AutopilotTask, "id" | "stage">, filePath: string, source: string): Promise<DataArtifact> {
+    const info = await stat(filePath);
+    const content = await readFile(filePath);
+    const text = content.toString("utf8");
+    return {
+      id: randomId("artifact"),
+      projectId: project.id,
+      runId: run.id,
+      taskId: task.id,
+      kind: artifactKindForPath(project.rootPath, filePath),
+      stage: task.stage,
+      name: basename(filePath),
+      path: filePath,
+      source,
+      size: info.size,
+      sha256: createHash("sha256").update(content).digest("hex"),
+      lineCount: text.length ? text.split(/\r?\n/).length : 0,
+      createdAt: nowIso()
+    };
+  }
+
+  private async writeAutopilotRunReportArtifact(run: AutopilotRun): Promise<DataArtifact> {
+    const project = this.requireProject(run.projectId);
+    const reportPath = join(project.rootPath, "reports", `autopilot-${run.id}-summary.md`);
+    const tasks = this.state.autopilotTasks.filter((task) => task.runId === run.id);
+    const artifacts = this.state.dataArtifacts.filter((artifact) => artifact.runId === run.id);
+    const content = [
+      `# ${run.title}`,
+      "",
+      "## Goal",
+      run.goal,
+      "",
+      "## Status",
+      run.status,
+      "",
+      "## Artifacts",
+      artifacts.length ? artifacts.map((artifact) => `- ${artifact.kind}: ${artifact.path}`).join("\n") : "- No artifacts recorded.",
+      "",
+      "## Stage Outputs",
+      tasks.map((task) => [
+        `### ${task.title}`,
+        `Status: ${task.status}`,
+        task.output || task.error || "No output."
+      ].join("\n\n")).join("\n\n"),
+      ""
+    ].join("\n");
+    await mkdir(dirname(reportPath), { recursive: true });
+    await writeFile(reportPath, content, "utf8");
+    return this.dataArtifactFromPath(project, run, { id: `${run.id}:summary`, stage: "review" }, reportPath, "autopilot summary");
+  }
+
+  private resolveStaffSubagent(name: string): SubagentConfig {
+    const key = name.toLowerCase();
+    const existing = this.state.subagents.find((item) => item.enabled && (item.id.toLowerCase() === key || item.name.toLowerCase() === key));
+    if (existing) {
+      return existing;
+    }
+    return {
+      id: key || "collector",
+      name: key || "collector",
+      description: "Autopilot data staff-agent",
+      systemPrompt: "You are a local data staff-agent. Work inside the approved project folders and return evidence-backed output.",
+      enabled: true
+    };
+  }
+
+  private buildGoalAlignmentReviewPrompt(runId: string): string {
+    const run = this.requireAutopilotRun(runId);
+    const artifacts = this.state.dataArtifacts
+      .filter((artifact) => artifact.runId === run.id)
+      .map((artifact) => `- ${artifact.kind} ${artifact.stage}: ${artifact.path}`)
+      .join("\n");
+    const outputs = this.state.autopilotTasks
+      .filter((task) => task.runId === run.id && task.status === "completed")
+      .map((task) => [
+        `## ${task.stage}: ${task.title}`,
+        task.output || "Completed without text output.",
+        task.artifactIds.length ? `Artifacts: ${task.artifactIds.join(", ")}` : "Artifacts: none"
+      ].join("\n"))
+      .join("\n\n");
+    return [
+      `Autopilot data run: ${run.title}`,
+      `Project root: ${run.projectRoot}`,
+      "Stage: review - Goal-output alignment review",
+      "",
+      "Goal:",
+      run.goal,
+      "",
+      "Existing artifacts:",
+      artifacts || "- None.",
+      "",
+      "Completed task outputs:",
+      outputs || "- None.",
+      "",
+      "Review instruction:",
+      "Compare the Goal against the produced artifacts, reports, analysis outputs, and task outputs.",
+      "Return PASS only if the current output fully satisfies the Goal.",
+      "Return FAIL if anything material is missing, stale, unsupported, or inconsistent with the Goal.",
+      "",
+      "Required response format:",
+      "First line must be exactly one of:",
+      "PASS",
+      "FAIL",
+      "Then provide concise evidence and, for FAIL, concrete fixes needed."
+    ].join("\n");
+  }
+
+  private buildGoalAlignmentFixPrompt(runId: string, reviewOutput: string): string {
+    const run = this.requireAutopilotRun(runId);
+    const artifacts = this.state.dataArtifacts
+      .filter((artifact) => artifact.runId === run.id)
+      .map((artifact) => `- ${artifact.kind} ${artifact.stage}: ${artifact.path}`)
+      .join("\n");
+    return [
+      `Autopilot data run: ${run.title}`,
+      `Project root: ${run.projectRoot}`,
+      "Stage: report - Revise outputs to match goal",
+      "",
+      "Goal:",
+      run.goal,
+      "",
+      "Latest goal-output review:",
+      reviewOutput,
+      "",
+      "Existing artifacts:",
+      artifacts || "- None.",
+      "",
+      "Fix instruction:",
+      "Address every review failure and update project artifacts so the final output matches the Goal.",
+      "Prefer updating reports and outputs in reports/ and outputs/ unless raw or processed data is genuinely incomplete.",
+      "Write any revised report or analysis file inside approved project write folders.",
+      "Mention every file changed and evidence path in the final answer."
+    ].join("\n");
+  }
+
+  private autopilotTaskPrompt(run: AutopilotRun, task: AutopilotTask): string {
+    const artifacts = this.state.dataArtifacts
+      .filter((artifact) => artifact.runId === run.id)
+      .map((artifact) => `- ${artifact.kind} ${artifact.stage}: ${artifact.path}`)
+      .join("\n");
+    const completed = this.state.autopilotTasks
+      .filter((item) => item.runId === run.id && item.status === "completed")
+      .map((item) => `- ${item.stage}: ${item.output?.slice(0, 800) || "completed"}`)
+      .join("\n");
+    return [
+      task.prompt,
+      "",
+      "Existing run artifacts:",
+      artifacts || "- None yet.",
+      "",
+      "Completed stage notes:",
+      completed || "- None yet."
+    ].join("\n");
+  }
+
   private findConversation(id: string): Conversation | undefined {
     return this.state.conversations.find((item) => item.id === id);
   }
@@ -1264,21 +2416,49 @@ export class SupbotRuntime extends EventEmitter {
     }
   }
 
-  private createToolExecutionContext(signal: AbortSignal, jobId: string, depth = 0) {
+  private async recoverAutopilotRunsOnStartup(): Promise<void> {
+    let changed = false;
+    for (const run of this.state.autopilotRuns) {
+      if (run.status !== "queued" && run.status !== "planning" && run.status !== "running" && run.status !== "reviewing") {
+        continue;
+      }
+      const next = this.patchAutopilotRun(run.id, {
+        status: "paused",
+        error: "Recovered after app restart. Resume the run to continue.",
+        updatedAt: nowIso()
+      });
+      await this.addAutopilotEvent(next, "warning", "Autopilot run recovered and paused after app restart");
+      await this.addAutopilotCheckpoint(next, "Recovered and paused after app restart");
+      changed = true;
+    }
+    if (changed) {
+      await this.storage.save(this.state);
+    }
+  }
+
+  private createToolExecutionContext(signal: AbortSignal, jobId: string, depth = 0, options: ProjectToolContextOptions = {}) {
     const job = this.findRootJob(jobId);
     const worktree = job?.worktreeId ? this.worktreeManager.get(job.worktreeId) : undefined;
-    const workspacePath = worktree?.path || this.rootDir;
+    const project = options.project;
+    const allowedWriteRoots = project ? this.projectManager.absoluteAllowedWriteRoots(project.rootPath, options.policy) : undefined;
+    const workspacePath = project?.rootPath || worktree?.path || this.rootDir;
     const host: LocalToolHost = {
       dataDir: this.storage.getDataDir(),
       workspacePath,
       cwd: workspacePath,
       worktreeId: worktree?.id,
+      projectId: project?.id,
+      projectRoot: project?.rootPath,
+      allowedWriteRoots,
       randomId,
       nowIso
     };
     return {
       signal,
       workspaceMode: job?.workspaceMode || "main",
+      projectId: project?.id,
+      projectRoot: project?.rootPath,
+      allowedWriteRoots,
       host,
       ensureIsolatedWorkspace: async (toolName: string) => this.ensureJobWorktree(jobId, toolName),
       subagents: this.state.subagents,
@@ -1296,7 +2476,7 @@ export class SupbotRuntime extends EventEmitter {
           permissionMode: this.state.permissionMode,
           permissionRules: this.state.permissionRules,
           randomId,
-          createToolContext: (childSignal, parentJobId, childDepth) => this.createToolExecutionContext(childSignal, parentJobId, childDepth),
+          createToolContext: (childSignal, parentJobId, childDepth) => this.createToolExecutionContext(childSignal, parentJobId, childDepth, options),
           requestPermission: (permission) => this.requestToolPermission(permission),
           onSession: async (session) => {
             this.upsertQuerySession(session);
@@ -1653,9 +2833,14 @@ export class SupbotRuntime extends EventEmitter {
         },
         registry: this.toolRegistry,
         context,
-        permissionMode: "bypassPermissions",
+        permissionMode: toolName === "ReadFile" ? "bypassPermissions" : this.state.permissionMode,
         permissionRules: this.state.permissionRules,
         requestPermission: (permission) => this.requestToolPermission(permission),
+        onPermissionTimeout: async (permission) => {
+          this.resolvePermission(permission.id, "denied");
+          await this.persistAndBroadcast();
+          this.emitTyped({ type: "permission_timeout", permission });
+        },
         onProgress: async (toolCall) => {
           this.upsertToolCall(job.id, toolCall);
           await this.persistAndBroadcast();
@@ -1703,6 +2888,106 @@ export class SupbotRuntime extends EventEmitter {
     });
   }
 
+  private async sendRemotePromptAndWait(input: SendPromptInput & { timeoutMs?: number; signal?: AbortSignal }): Promise<ReversePromptResult> {
+    const sent = await this.sendRemotePrompt(input);
+    const timeoutMs = Math.max(1_000, Math.min(300_000, Math.trunc(input.timeoutMs || 120_000)));
+    const startedAt = Date.now();
+    while (Date.now() - startedAt <= timeoutMs) {
+      if (input.signal?.aborted) {
+        throw new Error("Servstation reverse prompt was aborted.");
+      }
+      const job = this.findJob(sent.job.id);
+      if (job && (job.status === "completed" || job.status === "failed" || job.status === "canceled")) {
+        const assistant = this.findAssistantMessageForJob(job.conversationId, job.id);
+        return {
+          status: job.status,
+          conversationId: job.conversationId,
+          jobId: job.id,
+          assistantText: assistant?.text,
+          result: {
+            assistantText: assistant?.text,
+            generatedFiles: assistant?.generatedFiles || [],
+            progress: job.progress,
+            workspaceMode: job.workspaceMode
+          },
+          error: job.error
+        };
+      }
+      await delay(250);
+    }
+    return {
+      status: "failed",
+      conversationId: sent.job.conversationId,
+      jobId: sent.job.id,
+      error: "Timed out waiting for Supbot prompt result."
+    };
+  }
+
+  private async servstationA2AAccessToken(signal?: AbortSignal): Promise<string | undefined> {
+    if (this.state.servstationA2AConfig.authMode !== "oidc") {
+      return this.state.servstationA2ASecret;
+    }
+    const tokens = parseServstationOidcSecret(this.state.servstationA2AOidcSecret);
+    if (!tokens) {
+      return undefined;
+    }
+    if (oidcAccessTokenExpiringSoon(tokens)) {
+      await this.refreshServstationA2AOidcSession(signal);
+      return parseServstationOidcSecret(this.state.servstationA2AOidcSecret)?.accessToken;
+    }
+    return tokens.accessToken;
+  }
+
+  private async updateServstationReverseState(input: Partial<NonNullable<ServstationA2AConfig["reverse"]>>): Promise<void> {
+    this.assertLoaded();
+    const current = this.state.servstationA2AConfig.reverse || { enabled: false, status: "disconnected" as const };
+    const next = {
+      ...current,
+      ...input,
+      updatedAt: nowIso()
+    };
+    if (next.enabled === false) {
+      next.status = "disconnected";
+      next.connectedAt = undefined;
+    }
+    this.state.servstationA2AConfig = {
+      ...this.state.servstationA2AConfig,
+      reverse: next,
+      updatedAt: nowIso()
+    };
+    const event = this.createRuntimeEvent("servstation_a2a", `Servstation reverse A2A ${next.status}`, {
+      reverse: next
+    });
+    this.addRuntimeEvent(event);
+    await this.persistAndBroadcast();
+    this.emitTyped({ type: "servstation_a2a", config: this.redactServstationA2AConfig(), event });
+  }
+
+  private findAssistantMessageForJob(conversationId: string, jobId: string): ChatMessage | undefined {
+    const conversation = this.findConversation(conversationId);
+    return conversation?.messages
+      .filter((message) => message.role === "assistant" && message.jobId === jobId)
+      .at(-1);
+  }
+
+  private redactServstationA2AConfig(): ServstationA2AConfig {
+    return {
+      ...this.state.servstationA2AConfig,
+      bearerTokenSaved: Boolean(this.state.servstationA2ASecret),
+      oidc: this.redactServstationA2AOidcConfig()
+    };
+  }
+
+  private redactServstationA2AOidcConfig(): NonNullable<ServstationA2AConfig["oidc"]> {
+    const tokens = parseServstationOidcSecret(this.state.servstationA2AOidcSecret);
+    return {
+      ...(this.state.servstationA2AConfig.oidc || { refreshTokenSaved: false }),
+      accessTokenExpiresAt: tokens?.expiresAt || this.state.servstationA2AConfig.oidc?.accessTokenExpiresAt,
+      refreshTokenSaved: Boolean(tokens?.refreshToken),
+      userId: this.state.servstationA2AConfig.oidc?.userId || this.state.identityContext?.userId
+    };
+  }
+
   private async persistAndBroadcast(): Promise<void> {
     await this.storage.save(this.state);
     this.emitTyped({ type: "snapshot", snapshot: this.snapshot() });
@@ -1718,6 +3003,134 @@ export class SupbotRuntime extends EventEmitter {
     }
   }
 
+  private async listInstalledToolMarketProducts(): Promise<ToolMarketProduct[]> {
+    const root = join(this.storage.getDataDir(), "tool-market");
+    let originDirs: Array<{ name: string; isDirectory(): boolean }>;
+    try {
+      originDirs = await readdir(root, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return [];
+      }
+      throw error;
+    }
+    const products: ToolMarketProduct[] = [];
+    for (const originDir of originDirs.filter((entry) => entry.isDirectory())) {
+      const originPath = join(root, originDir.name);
+      const productDirs = await readdir(originPath, { withFileTypes: true }).catch(() => []);
+      for (const productDir of productDirs.filter((entry) => entry.isDirectory())) {
+        const product = await readInstalledToolMarketProduct(join(originPath, productDir.name));
+        if (product) {
+          products.push(product);
+        }
+      }
+    }
+    return products;
+  }
+
+  private async installToolMarketPackage(product: ToolMarketProduct, deployment: ToolMarketLocalDeployment): Promise<string> {
+    const installPath = this.localToolInstallDir(product, deployment);
+    const receiptPath = this.toolMarketInstallDir(product);
+    if (!pathIsInside(this.storage.getDataDir(), installPath) || !pathIsInside(this.storage.getDataDir(), receiptPath)) {
+      throw new Error(`Tool market product resolved outside local data directory: ${product.name}`);
+    }
+    await rm(installPath, { recursive: true, force: true });
+    await mkdir(installPath, { recursive: true });
+    for (const file of deployment.files || []) {
+      await writeToolMarketPackageFile(installPath, file);
+    }
+    await writeLocalToolScaffold(installPath, product, deployment);
+    const manifest = {
+      version: 1,
+      installedAt: nowIso(),
+      localKind: deployment.kind,
+      localPath: installPath,
+      product: {
+        id: product.id,
+        name: product.name,
+        type: product.type,
+        origin: product.origin || "local",
+        providerName: product.providerName,
+        description: product.description,
+        tags: product.tags,
+        priceLabel: product.priceLabel,
+        sourceHealth: product.sourceHealth,
+        purchased: product.purchased === true,
+        free: product.free
+      },
+      deployment: {
+        kind: deployment.kind,
+        capability: deployment.capability || product.capability,
+        commandTemplates: deployment.commandTemplates || product.commandTemplates || [],
+        mcpServer: deployment.mcpServer,
+        files: (deployment.files || []).map((file) => ({
+          path: file.path,
+          encoding: file.encoding || "utf8"
+        }))
+      }
+    };
+    await writeFile(join(installPath, "supbot-local-tool.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    await mkdir(receiptPath, { recursive: true });
+    await writeFile(join(receiptPath, "supbot-market-install.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    return installPath;
+  }
+
+  private upsertMarketMcpServer(product: ToolMarketProduct, deployment: ToolMarketLocalDeployment, installPath: string): McpServerConfig | undefined {
+    const input = deployment.mcpServer;
+    if (!input) {
+      return undefined;
+    }
+    const now = nowIso();
+    const id = marketMcpServerId(product, input);
+    const current = this.state.mcpServers.find((server) => server.id === id);
+    const command = materializeInstallPath(input.command, installPath).trim();
+    if (!command) {
+      throw new Error(`Tool market MCP product has no local command: ${product.name}`);
+    }
+    const server: McpServerConfig = {
+      id,
+      name: input.name.trim() || product.name,
+      command,
+      args: (input.args || []).map((arg) => materializeInstallPath(arg, installPath)),
+      cwd: input.cwd ? materializeInstallPath(input.cwd, installPath) : installPath,
+      env: input.env ? { ...input.env } : undefined,
+      requestTimeoutMs: normalizeMarketMcpTimeout(input.requestTimeoutMs),
+      enabled: input.enabled !== false,
+      autoConnect: Boolean(input.autoConnect),
+      createdAt: current?.createdAt || now,
+      updatedAt: now
+    };
+    this.state.mcpServers = [
+      server,
+      ...this.state.mcpServers.filter((item) => item.id !== server.id)
+    ];
+    this.mcpManager.setServers(this.state.mcpServers);
+    this.upsertMcpCapability();
+    return server;
+  }
+
+  private async removeMarketMcpServer(product: ToolMarketProduct, deployment: ToolMarketLocalDeployment): Promise<void> {
+    if (!deployment.mcpServer) {
+      return;
+    }
+    const serverId = marketMcpServerId(product, deployment.mcpServer);
+    if (!this.state.mcpServers.some((server) => server.id === serverId)) {
+      return;
+    }
+    await this.mcpManager.remove(serverId);
+    this.state.mcpServers = this.state.mcpServers.filter((server) => server.id !== serverId);
+    this.upsertMcpCapability();
+    await this.recordMcpEvent("Tool market MCP uninstalled locally", serverId, { productId: product.id });
+  }
+
+  private toolMarketInstallDir(product: ToolMarketProduct): string {
+    return join(this.storage.getDataDir(), "tool-market", product.origin || "local", marketInstallSlug(product.id));
+  }
+
+  private localToolInstallDir(product: ToolMarketProduct, deployment: ToolMarketLocalDeployment): string {
+    return join(this.storage.getDataDir(), localToolDirName(deployment.kind), marketInstallSlug(product.id));
+  }
+
   private async resolveMarketProduct(productId: string) {
     const local = findLocalToolMarketProduct(productId);
     if (local) {
@@ -1726,6 +3139,10 @@ export class SupbotRuntime extends EventEmitter {
     const cached = findMarketProduct(this.remoteMarketCache, productId);
     if (cached) {
       return cached;
+    }
+    const installed = findMarketProduct(await this.listInstalledToolMarketProducts(), productId);
+    if (installed) {
+      return installed;
     }
     if (this.state.toolMarketConfig.source === "local" || !this.state.toolMarketConfig.apiUrl.trim()) {
       return undefined;
@@ -1746,6 +3163,274 @@ export class SupbotRuntime extends EventEmitter {
 export async function ensureRuntimeDirs(dataDir: string): Promise<void> {
   await mkdir(join(dataDir, "generated-files"), { recursive: true });
   await mkdir(join(dataDir, "memory-backups"), { recursive: true });
+  await mkdir(join(dataDir, "tool-market"), { recursive: true });
+  await mkdir(join(dataDir, "tools"), { recursive: true });
+  await mkdir(join(dataDir, "skills"), { recursive: true });
+  await mkdir(join(dataDir, "plugins"), { recursive: true });
+  await mkdir(join(dataDir, "mcp"), { recursive: true });
+}
+
+async function writeToolMarketPackageFile(root: string, file: ToolMarketPackageFile): Promise<void> {
+  const target = resolveToolMarketPackagePath(root, file.path);
+  await mkdir(dirname(target), { recursive: true });
+  const content = file.encoding === "base64" ? Buffer.from(file.content, "base64") : file.content;
+  await writeFile(target, content);
+}
+
+async function writeLocalToolScaffold(root: string, product: ToolMarketProduct, deployment: ToolMarketLocalDeployment): Promise<void> {
+  const declaredFiles = new Set((deployment.files || []).map((file) => normalizePackagePath(file.path)));
+  const templates = deployment.commandTemplates || product.commandTemplates || [];
+  if (deployment.kind === "skill" && !declaredFiles.has("skill.md")) {
+    await writeFile(join(root, "SKILL.md"), renderSkillFile(product, templates), "utf8");
+  }
+  if (deployment.kind === "plugin") {
+    if (!declaredFiles.has(".codex-plugin/plugin.json")) {
+      await mkdir(join(root, ".codex-plugin"), { recursive: true });
+      await writeFile(join(root, ".codex-plugin", "plugin.json"), `${JSON.stringify({
+        id: marketInstallSlug(product.id),
+        name: product.name,
+        version: "1.0.0",
+        description: product.description
+      }, null, 2)}\n`, "utf8");
+    }
+    if (!declaredFiles.has("readme.md")) {
+      await writeFile(join(root, "README.md"), renderPluginReadme(product, templates), "utf8");
+    }
+  }
+  if (deployment.kind === "tool" && !declaredFiles.has("supbot-tool.json")) {
+    await writeFile(join(root, "supbot-tool.json"), `${JSON.stringify(localToolDescriptor(product, deployment), null, 2)}\n`, "utf8");
+  }
+  if (deployment.kind === "mcp" && !declaredFiles.has("supbot-mcp.json")) {
+    await writeFile(join(root, "supbot-mcp.json"), `${JSON.stringify(localToolDescriptor(product, deployment), null, 2)}\n`, "utf8");
+  }
+}
+
+function resolveToolMarketPackagePath(root: string, filePath: string): string {
+  if (isAbsolute(filePath)) {
+    throw new Error(`Tool market package file must be relative: ${filePath}`);
+  }
+  const target = resolve(root, filePath);
+  if (!pathIsInside(root, target)) {
+    throw new Error(`Tool market package file escapes install directory: ${filePath}`);
+  }
+  return target;
+}
+
+function defaultLocalDeployment(product: ToolMarketProduct): ToolMarketLocalDeployment {
+  return {
+    kind: product.type,
+    capability: product.capability,
+    commandTemplates: product.commandTemplates || []
+  };
+}
+
+function localToolDirName(kind: ToolMarketProduct["type"]): string {
+  switch (kind) {
+    case "skill":
+      return "skills";
+    case "plugin":
+      return "plugins";
+    case "mcp":
+      return "mcp";
+    default:
+      return "tools";
+  }
+}
+
+function normalizePackagePath(value: string): string {
+  return value.replace(/\\/g, "/").replace(/^\.\/+/, "").toLowerCase();
+}
+
+function renderSkillFile(product: ToolMarketProduct, templates: string[]): string {
+  return [
+    `# ${product.name}`,
+    "",
+    product.description,
+    "",
+    "## Source",
+    "",
+    `Installed locally from ${product.origin === "remote" ? "Tool Market" : "the built-in catalog"}.`,
+    "",
+    ...(templates.length ? [
+      "## Templates",
+      "",
+      ...templates.map((template) => `- ${JSON.stringify(template)}`),
+      ""
+    ] : [])
+  ].join("\n");
+}
+
+function renderPluginReadme(product: ToolMarketProduct, templates: string[]): string {
+  return [
+    `# ${product.name}`,
+    "",
+    product.description,
+    "",
+    "Installed as a local plugin package.",
+    "",
+    ...(templates.length ? [
+      "## Templates",
+      "",
+      ...templates.map((template) => `- ${JSON.stringify(template)}`),
+      ""
+    ] : [])
+  ].join("\n");
+}
+
+function localToolDescriptor(product: ToolMarketProduct, deployment: ToolMarketLocalDeployment): Record<string, unknown> {
+  return {
+    id: product.id,
+    name: product.name,
+    kind: deployment.kind,
+    description: product.description,
+    commandTemplates: deployment.commandTemplates || product.commandTemplates || [],
+    mcpServer: deployment.mcpServer
+  };
+}
+
+async function readInstalledToolMarketProduct(installPath: string): Promise<ToolMarketProduct | undefined> {
+  try {
+    const raw = await readFile(join(installPath, "supbot-market-install.json"), "utf8");
+    return installedManifestToProduct(JSON.parse(raw) as Record<string, unknown>);
+  } catch {
+    return undefined;
+  }
+}
+
+function installedManifestToProduct(manifest: Record<string, unknown>): ToolMarketProduct | undefined {
+  const product = objectRecord(manifest.product);
+  const deployment = objectRecord(manifest.deployment);
+  const id = stringRecordValue(product, "id");
+  const name = stringRecordValue(product, "name") || id;
+  if (!id || !name) {
+    return undefined;
+  }
+  const type = normalizeMarketProductType(stringRecordValue(product, "type"));
+  const description = stringRecordValue(product, "description") || "Installed local tool market product.";
+  const capability = manifestCapability(deployment.capability, {
+    id: `market.installed.${marketInstallSlug(id)}`,
+    name,
+    kind: type === "plugin" || type === "mcp" ? type : type === "skill" ? "skill" : "tool",
+    description,
+    enabled: true
+  });
+  const commandTemplates = stringArrayValue(deployment.commandTemplates);
+  const mcpServer = manifestMcpServer(deployment.mcpServer);
+  const tags = stringArrayValue(product.tags);
+  return {
+    id,
+    name,
+    type,
+    origin: stringRecordValue(product, "origin") === "remote" ? "remote" : "local",
+    providerName: stringRecordValue(product, "providerName") || "Tool Market",
+    description,
+    tags: tags.length ? tags : ["installed", type],
+    free: product.free === false ? false : true,
+    priceLabel: stringRecordValue(product, "priceLabel"),
+    purchased: product.purchased === true,
+    sourceHealth: stringRecordValue(product, "sourceHealth"),
+    capability,
+    commandTemplates,
+    localDeployment: {
+      kind: normalizeMarketProductType(stringRecordValue(deployment, "kind") || type),
+      capability,
+      ...(commandTemplates.length ? { commandTemplates } : {}),
+      ...(mcpServer ? { mcpServer } : {})
+    }
+  };
+}
+
+function uniqueMarketProducts(products: ToolMarketProduct[]): ToolMarketProduct[] {
+  const byId = new Map<string, ToolMarketProduct>();
+  for (const product of products) {
+    byId.set(product.id, product);
+  }
+  return [...byId.values()];
+}
+
+function normalizeMarketProductType(value: unknown): ToolMarketProduct["type"] {
+  return value === "skill" || value === "plugin" || value === "mcp" || value === "tool" ? value : "tool";
+}
+
+function objectRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function stringRecordValue(value: Record<string, unknown>, key: string): string | undefined {
+  const entry = value[key];
+  return typeof entry === "string" && entry.trim() ? entry.trim() : undefined;
+}
+
+function stringArrayValue(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim()) : [];
+}
+
+function manifestCapability(value: unknown, fallback: CapabilityDefinition): CapabilityDefinition {
+  const input = objectRecord(value);
+  return {
+    id: stringRecordValue(input, "id") || fallback.id,
+    name: stringRecordValue(input, "name") || fallback.name,
+    kind: normalizeCapabilityKind(input.kind, fallback.kind),
+    description: stringRecordValue(input, "description") || fallback.description,
+    enabled: input.enabled !== false
+  };
+}
+
+function normalizeCapabilityKind(value: unknown, fallback: CapabilityDefinition["kind"]): CapabilityDefinition["kind"] {
+  return value === "skill" || value === "tool" || value === "plugin" || value === "mcp" || value === "subagent" || value === "scheduler" || value === "storage"
+    ? value
+    : fallback;
+}
+
+function manifestMcpServer(value: unknown): ToolMarketMcpDeployment | undefined {
+  const input = objectRecord(value);
+  const name = stringRecordValue(input, "name");
+  const command = stringRecordValue(input, "command");
+  if (!name || !command) {
+    return undefined;
+  }
+  return {
+    id: stringRecordValue(input, "id"),
+    name,
+    command,
+    args: stringArrayValue(input.args),
+    cwd: stringRecordValue(input, "cwd"),
+    env: manifestEnv(input.env),
+    requestTimeoutMs: normalizeMarketMcpTimeout(input.requestTimeoutMs),
+    enabled: input.enabled !== false,
+    autoConnect: Boolean(input.autoConnect)
+  };
+}
+
+function manifestEnv(value: unknown): Record<string, string> | undefined {
+  const input = objectRecord(value);
+  const entries = Object.entries(input)
+    .filter(([key, entry]) => key.trim() && typeof entry === "string")
+    .map(([key, entry]) => [key.trim(), entry as string]);
+  return entries.length ? Object.fromEntries(entries) : undefined;
+}
+
+function marketMcpServerId(product: ToolMarketProduct, input: ToolMarketMcpDeployment): string {
+  return sanitizeMarketId(input.id || `market-${product.id}`);
+}
+
+function sanitizeMarketId(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "market-tool";
+}
+
+function marketInstallSlug(value: string): string {
+  return sanitizeMarketId(value);
+}
+
+function materializeInstallPath(value: string, installPath: string): string {
+  return value.replace(/\{(?:installDir|productDir)\}/g, installPath);
+}
+
+function normalizeMarketMcpTimeout(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+  return Math.min(120_000, Math.max(1_000, Math.round(value)));
 }
 
 export function redactModelConfig(config: ModelConfig, secret?: string): ModelConfig {
@@ -1788,6 +3473,88 @@ function requiredString(value: string, label: string): string {
   return trimmed;
 }
 
+function emptyToUndefined(value: string): string | undefined {
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function normalizeHttpUrl(value: string): string | undefined {
+  if (!value.trim()) {
+    return undefined;
+  }
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      throw new Error("Servstation A2A URL must use http or https.");
+    }
+    url.username = "";
+    url.password = "";
+    return url.toString().replace(/\/+$/, "");
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("http or https")) {
+      throw error;
+    }
+    throw new Error("Servstation A2A URL is invalid.");
+  }
+}
+
+function normalizeDataSources(sources: DataSourceSpec[]): DataSourceSpec[] {
+  return sources.map((source) => ({
+    id: source.id?.trim() || randomId("source"),
+    kind: normalizeDataSourceKind(source.kind),
+    label: source.label?.trim() || source.path || source.url || source.mcpToolName || source.shellCommand || "Data source",
+    path: source.path?.trim() || undefined,
+    paths: Array.isArray(source.paths) ? source.paths.filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim()) : undefined,
+    url: source.url?.trim() || undefined,
+    method: source.method === "POST" ? "POST" : source.method === "GET" ? "GET" : undefined,
+    headers: source.headers && typeof source.headers === "object" ? source.headers : undefined,
+    body: source.body,
+    mcpToolName: source.mcpToolName?.trim() || undefined,
+    shellCommand: source.shellCommand?.trim() || undefined
+  }));
+}
+
+function normalizeDataSourceKind(kind: DataSourceSpec["kind"]): DataSourceSpec["kind"] {
+  return kind === "localFiles" || kind === "folderScan" || kind === "httpApi" || kind === "webUrl" || kind === "mcpTool" || kind === "shellCommand" ? kind : "folderScan";
+}
+
+function artifactKindForPath(projectRoot: string, filePath: string): DataArtifactKind {
+  const rel = relative(projectRoot, filePath).replace(/\\/g, "/").toLowerCase();
+  if (rel.startsWith("datasets/raw/")) {
+    return "raw";
+  }
+  if (rel.startsWith("datasets/processed/")) {
+    return "processed";
+  }
+  if (rel.startsWith("reports/")) {
+    return "report";
+  }
+  if (rel.startsWith("outputs/")) {
+    return "analysis";
+  }
+  return "output";
+}
+
+function extractEvidencePaths(text: string): string[] {
+  const matches = text.match(/[A-Za-z]:[\\/][^\s`'")]+|(?:datasets|outputs|reports|\.supbot)[\\/][^\s`'")]+/g) || [];
+  return uniqueStrings(matches.map((item) => item.replace(/[.,;:]+$/, "")));
+}
+
+function goalReviewPassed(text: string): boolean {
+  const firstMeaningfulLine = text.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "";
+  if (/^PASS\b/i.test(firstMeaningfulLine)) {
+    return true;
+  }
+  if (/^FAIL\b/i.test(firstMeaningfulLine)) {
+    return false;
+  }
+  return /\bPASS\b/i.test(text) && !/\bFAIL\b/i.test(text);
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.filter((value) => typeof value === "string" && value.trim()).map((value) => value.trim()))];
+}
+
 function slug(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || randomId("subagent");
 }
@@ -1800,6 +3567,13 @@ function normalizePermissionMode(value: PermissionMode): PermissionMode {
   return value === "acceptEdits" || value === "bypassPermissions" || value === "plan" || value === "default" ? value : "default";
 }
 
+function pathIsInside(parent: string, child: string): boolean {
+  const resolvedParent = resolve(parent);
+  const resolvedChild = resolve(child);
+  const relativePath = relative(resolvedParent, resolvedChild);
+  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
+}
+
 function randomId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -1809,6 +3583,10 @@ function objectData(value: unknown): Record<string, unknown> {
     return { value };
   }
   return value as Record<string, unknown>;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function toolBlocksFromRecords(records: ToolCallRecord[]): ChatMessageBlock[] {

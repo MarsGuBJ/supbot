@@ -2,6 +2,7 @@
   "name": "supbot",
   "version": "0.1.0",
   "description": "Local single-user desktop agent.",
+  "author": "Supbot contributors",
   "main": "dist/main/index.js",
   "bin": {
     "supbot": "bin/supbot.js"
@@ -31,18 +32,20 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^5.0.2",
+    "@vitejs/plugin-react": "^6.0.2",
     "concurrently": "^9.2.0",
     "cross-env": "^7.0.3",
-    "electron": "36.9.5",
-    "electron-builder": "^26.0.12",
-    "esbuild": "^0.25.5",
-    "vite": "^6.0.11"
+    "electron": "^42.4.1",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.1",
+    "vite": "^8.0.16"
   },
   "build": {
     "appId": "local.supbot.desktop",
     "productName": "Supbot",
-    "electronVersion": "36.9.5",
+    "electronVersion": "42.4.1",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "copyright": "Copyright © 2026 Supbot contributors",
     "directories": {
       "output": "release"
     },
@@ -54,14 +57,30 @@
       "main": "dist/main/index.js"
     },
     "win": {
-      "target": "nsis"
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.ico",
+      "requestedExecutionLevel": "asInvoker",
+      "verifyUpdateCodeSignature": false,
+      "signtoolOptions": {
+        "publisherName": "Supbot"
+      }
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Supbot"
     },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "category": "Utility"
     }
   }

@@ -60,7 +60,7 @@ async function main() {
     const body = document.body.innerText;
     return {
       hasMarketTitle: body.includes('工具市场'),
-      hasLocalCatalog: body.includes('内置目录') || body.includes('本地目录') || body.includes('http://localhost:3000'),
+      hasLocalCatalog: body.includes('内置目录') || body.includes('本地目录') || body.includes('https://i-shu.com'),
       productCount: document.querySelectorAll('.market-product').length,
       hasInstallAction: [...document.querySelectorAll('.market-product-action')].some((item) => /安装|卸载/.test(item.textContent || '')),
       bodyStart: body.slice(0, 900)
@@ -76,8 +76,8 @@ async function main() {
     const inputs = [...document.querySelectorAll('input')].map((input) => input.value);
     return {
       hasMarketSource: body.includes('工具市场来源'),
-      hasTestApiUrl: inputs.some((value) => value.includes('localhost:3000')),
-      hasTestAccount: inputs.includes('subscriber@example.com'),
+      hasTestApiUrl: inputs.some((value) => value.includes('i-shu.com')),
+      hasTestAccount: inputs.includes('subscriber@toolsmarket.local'),
       hasPasswordLabel: body.includes('市场密码'),
       bodyStart: body.slice(0, 900)
     };

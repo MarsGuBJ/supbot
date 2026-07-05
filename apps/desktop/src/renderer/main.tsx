@@ -55,7 +55,9 @@ import zhCN from "antd/locale/zh_CN";
 import enUS from "antd/locale/en_US";
 import type {
   AgentJob,
+  AutopilotRun,
   Attachment,
+  CapabilityUpdateInput,
   ChatMessage,
   CompactBoundary,
   Conversation,
@@ -75,10 +77,12 @@ import type {
   PendingToolPermission,
   PermissionRule,
   PersonalityConfig,
+  Project,
   RemoteBridgeConfig,
   RuntimeEventRecord,
   RuntimeSnapshot,
   ScheduledJobInput,
+  ServstationA2AConfigUpdate,
   SubagentConfig,
   ToolCallRecord,
   ToolMarketCatalogItem,
@@ -100,7 +104,9 @@ import { loadLanguage, saveLanguage, translate, type Language } from "./i18n";
 import "./styles.css";
 
 type WorkspaceView = "chat" | "config" | "market";
-type DetailPanel = "history" | "tasks" | "memory" | "schedule" | "autopilot" | null;
+type DetailPanel = "memory" | "schedule" | "autopilot" | null;
+const defaultToolMarketApiUrl = "https://i-shu.com";
+const hiddenSlashCommandCapabilityIds = new Set(["tool.file", "tool.shell"]);
 
 const theme = {
   token: {
@@ -121,7 +127,7 @@ function App() {
   const [language, setLanguageState] = useState<Language>(() => loadLanguage());
   const [snapshot, setSnapshot] = useState<RuntimeSnapshot | null>(null);
   const [view, setView] = useState<WorkspaceView>("chat");
-  const [detailPanel, setDetailPanel] = useState<DetailPanel>("history");
+  const [detailPanel, setDetailPanel] = useState<DetailPanel>("memory");
   const [activeConversationId, setActiveConversationId] = useState("");
   const [prompt, setPrompt] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -139,6 +145,7 @@ function App() {
   const [userDataPath, setUserDataPath] = useState("");
   const [messageApi, contextHolder] = message.useMessage();
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const messageStackRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const t = useCallback((key: string, vars?: Record<string, string | number>) => translate(language, key, vars), [language]);
   const slashCommandList = useMemo(() => buildSlashCommands(t), [t]);
@@ -157,7 +164,12 @@ function App() {
     if (!element) {
       return;
     }
-    element.scrollTo({ top: element.scrollHeight, behavior });
+    const top = Math.max(0, element.scrollHeight - element.clientHeight);
+    if (behavior === "auto") {
+      element.scrollTop = top;
+      return;
+    }
+    element.scrollTo({ top, behavior });
   }, []);
 
   const setLanguage = (next: Language) => {
@@ -209,6 +221,12 @@ function App() {
       if (event.type === "query_event" || event.type === "subagent_event") {
         setSnapshot((current) => current ? applyRuntimeEvent(current, event.event) : current);
       }
+      if (event.type === "servstation_a2a") {
+        setSnapshot((current) => current ? {
+          ...applyRuntimeEvent(current, event.event!),
+          servstationA2A: { config: event.config }
+        } : current);
+      }
       if (event.type === "error") {
         message.error(event.message);
       }
@@ -216,10 +234,41 @@ function App() {
   }, [refresh]);
 
   useEffect(() => {
+    if (view !== "chat") {
+      return;
+    }
     shouldStickToBottomRef.current = true;
     const frame = window.requestAnimationFrame(() => scrollMessagesToBottom("auto"));
     return () => window.cancelAnimationFrame(frame);
-  }, [activeConversationId, scrollMessagesToBottom]);
+  }, [activeConversationId, scrollMessagesToBottom, view]);
+
+  useEffect(() => {
+    if (view !== "chat") {
+      return;
+    }
+    const scrollElement = scrollRef.current;
+    const stackElement = messageStackRef.current;
+    if (!scrollElement || !stackElement || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    let frame = 0;
+    const keepPinned = () => {
+      if (shouldStickToBottomRef.current) {
+        scrollElement.scrollTop = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
+      }
+    };
+    const schedulePin = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(keepPinned);
+    };
+    const observer = new ResizeObserver(schedulePin);
+    observer.observe(stackElement);
+    schedulePin();
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [activeConversationId, view]);
 
   useEffect(() => {
     if (!shouldStickToBottomRef.current) {
@@ -234,17 +283,17 @@ function App() {
     [snapshot?.conversations, activeConversationId]
   );
   const runningJob = useMemo(
-    () => snapshot?.jobs.find((job) => job.status === "queued" || job.status === "running"),
-    [snapshot?.jobs]
+    () => {
+      const conversationId = activeConversation?.id || activeConversationId;
+      if (!conversationId) {
+        return undefined;
+      }
+      return snapshot?.jobs.find((job) =>
+        job.conversationId === conversationId && (job.status === "queued" || job.status === "running")
+      );
+    },
+    [activeConversation?.id, activeConversationId, snapshot?.jobs]
   );
-  const capabilityCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const capability of snapshot?.capabilities || []) {
-      counts.set(capability.kind, (counts.get(capability.kind) || 0) + 1);
-    }
-    return [...counts.entries()];
-  }, [snapshot?.capabilities]);
-
   const startNewConversation = async () => {
     const conversation = await window.supbot.createConversation();
     setActiveConversationId(conversation.id);
@@ -267,10 +316,7 @@ function App() {
     if (command.action === "new" || command.action === "clear") {
       await startNewConversation();
     } else if (command.action === "history") {
-      setDetailPanel("history");
-      setView("chat");
-    } else if (command.action === "tasks") {
-      setDetailPanel("tasks");
+      setLeftCollapsed(false);
       setView("chat");
     } else if (command.action === "config") {
       openConfig("model");
@@ -317,16 +363,6 @@ function App() {
     await window.supbot.cancelJob(runningJob.id);
     await refresh();
   };
-
-  const approveToolPermission = useCallback(async (id: string) => {
-    await window.supbot.approveToolPermission(id);
-    await refresh();
-  }, [refresh]);
-
-  const denyToolPermission = useCallback(async (id: string) => {
-    await window.supbot.denyToolPermission(id);
-    await refresh();
-  }, [refresh]);
 
   const pickAttachments = async () => {
     const picked = await window.supbot.pickAttachments();
@@ -406,12 +442,12 @@ function App() {
           <section className={`workspace-grid ${leftCollapsed ? "left-collapsed" : ""} ${rightCollapsed ? "right-collapsed" : ""}`}>
             <LeftPanel
               snapshot={snapshot}
+              activeConversationId={activeConversation?.id || ""}
+              setActiveConversationId={setActiveConversationId}
               collapsed={leftCollapsed}
-              capabilityCounts={capabilityCounts}
-              openConfig={openConfig}
+              refresh={refresh}
+              startNewConversation={startNewConversation}
               t={t}
-              insertToolTemplate={(template) => setPrompt(template)}
-              insertSubagent={(subagent) => setPrompt((value) => `${value}${value ? " " : ""}@${subagent.name} `)}
             />
             <ChatPanel
               conversation={activeConversation}
@@ -427,26 +463,20 @@ function App() {
               copyLatest={copyLatest}
               compactConversation={compactActiveConversation}
               loadTranscript={loadActiveTranscript}
-              scrollRef={scrollRef}
-              onMessageScroll={updateMessageStickiness}
-              t={t}
-              slashCommands={slashCommandList}
+            scrollRef={scrollRef}
+            messageStackRef={messageStackRef}
+            onMessageScroll={updateMessageStickiness}
+            t={t}
+            slashCommands={slashCommandList}
             />
             <RightPanel
               snapshot={snapshot}
               activeConversationId={activeConversation?.id || ""}
-              setActiveConversationId={setActiveConversationId}
               panel={detailPanel}
               setPanel={setDetailPanel}
               collapsed={rightCollapsed}
               refresh={refresh}
               t={t}
-              cancelJob={async (id) => {
-                await window.supbot.cancelJob(id);
-                await refresh();
-              }}
-              approveToolPermission={approveToolPermission}
-              denyToolPermission={denyToolPermission}
               openSchedule={() => setScheduleOpen(true)}
             />
           </section>
@@ -591,81 +621,55 @@ function Topbar({
 
 function LeftPanel({
   snapshot,
+  activeConversationId,
+  setActiveConversationId,
   collapsed,
-  capabilityCounts,
-  openConfig,
-  t,
-  insertToolTemplate,
-  insertSubagent
+  refresh,
+  startNewConversation,
+  t
 }: {
   snapshot: RuntimeSnapshot;
+  activeConversationId: string;
+  setActiveConversationId: (id: string) => void;
   collapsed: boolean;
-  capabilityCounts: Array<[string, number]>;
-  openConfig: (tab: string) => void;
+  refresh: () => void;
+  startNewConversation: () => Promise<void>;
   t: (key: string, vars?: Record<string, string | number>) => string;
-  insertToolTemplate: (template: string) => void;
-  insertSubagent: (subagent: SubagentConfig) => void;
 }) {
+  const [creatingConversation, setCreatingConversation] = useState(false);
+  const createConversation = async () => {
+    setCreatingConversation(true);
+    try {
+      await startNewConversation();
+    } finally {
+      setCreatingConversation(false);
+    }
+  };
   return (
     <aside className={`side-panel ${collapsed ? "is-collapsed" : ""}`}>
       <div className="panel-scroll">
         <section className="panel-section">
           <div className="panel-heading">
-            <div className="section-title"><ToolOutlined /> {t("Capabilities")}</div>
-            <Button size="small" onClick={() => openConfig("capabilities")}>{t("Config")}</Button>
+            <div className="section-title"><ClockCircleOutlined /> {t("Conversation history")}</div>
+            <Tooltip title={t("New conversation")}>
+              <Button
+                size="small"
+                type="primary"
+                icon={<PlusOutlined />}
+                aria-label={t("New conversation")}
+                loading={creatingConversation}
+                onClick={() => void createConversation()}
+              />
+            </Tooltip>
           </div>
-          <div className="tag-row">
-            {capabilityCounts.map(([kind, count]) => <Tag key={kind}>{t(kind)}: {count}</Tag>)}
-          </div>
-          <div className="service-list">
-            <button className="service-item service-button" type="button" onClick={() => insertToolTemplate("/read ")}>
-              <div>
-                <div className="service-name">{t("Read local file")}</div>
-                <div className="muted mono">/read D:\path\file.txt</div>
-              </div>
-              <Tag>{t("tool")}</Tag>
-            </button>
-            <button className="service-item service-button" type="button" onClick={() => insertToolTemplate("/write note.txt\n")}>
-              <div>
-                <div className="service-name">{t("Write generated file")}</div>
-                <div className="muted mono">/write note.txt</div>
-              </div>
-              <Tag>{t("tool")}</Tag>
-            </button>
-            <button className="service-item service-button" type="button" onClick={() => insertToolTemplate("/shell ")}>
-              <div>
-                <div className="service-name">{t("Run shell command")}</div>
-                <div className="muted mono">/shell npm test</div>
-              </div>
-              <Tag color="gold">{t("local")}</Tag>
-            </button>
-            {snapshot.capabilities.slice(0, 6).map((capability) => (
-              <div className="service-item" key={capability.id}>
-                <div>
-                  <div className="service-name">{t(capability.name)}</div>
-                  <div className="muted">{t(capability.description)}</div>
-                </div>
-                <Tag color={capability.enabled ? "green" : "default"}>{t(capability.kind)}</Tag>
-              </div>
-            ))}
-          </div>
-        </section>
-        <section className="panel-section">
-          <div className="panel-heading">
-            <div className="section-title"><ThunderboltOutlined /> {t("Subagents")}</div>
-            <Button size="small" onClick={() => openConfig("subagents")}>{t("Edit")}</Button>
-          </div>
-          <div className="service-list">
-            {snapshot.subagents.map((subagent) => (
-              <button className="service-item service-button" key={subagent.id} type="button" onClick={() => insertSubagent(subagent)}>
-                <div>
-                  <div className="service-name">@{subagent.name}</div>
-                  <div className="muted">{t(subagent.description)}</div>
-                </div>
-                <Tag color={subagent.enabled ? "cyan" : "default"}>{subagent.enabled ? t("on") : t("off")}</Tag>
-              </button>
-            ))}
-          </div>
+          <HistoryPanel
+            conversations={snapshot.conversations}
+            activeConversationId={activeConversationId}
+            setActiveConversationId={setActiveConversationId}
+            refresh={refresh}
+            t={t}
+            embedded
+          />
         </section>
       </div>
     </aside>
@@ -687,6 +691,7 @@ function ChatPanel({
   compactConversation,
   loadTranscript,
   scrollRef,
+  messageStackRef,
   onMessageScroll,
   t,
   slashCommands
@@ -705,6 +710,7 @@ function ChatPanel({
   compactConversation: () => void;
   loadTranscript: () => void;
   scrollRef: React.RefObject<HTMLDivElement>;
+  messageStackRef: React.RefObject<HTMLDivElement>;
   onMessageScroll: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
   slashCommands: ReturnType<typeof buildSlashCommands>;
@@ -716,6 +722,22 @@ function ChatPanel({
     const query = prompt.trim().toLowerCase();
     return slashCommands.filter((item) => item.command.startsWith(query));
   }, [prompt, slashCommands]);
+
+  useEffect(() => {
+    const stream = scrollRef.current;
+    if (!stream) {
+      return;
+    }
+    const pin = () => {
+      stream.scrollTop = Math.max(0, stream.scrollHeight - stream.clientHeight);
+    };
+    const frame = window.requestAnimationFrame(pin);
+    const timer = window.setTimeout(pin, 80);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [conversation?.id, scrollRef]);
 
   return (
     <section className="chat-panel">
@@ -738,13 +760,15 @@ function ChatPanel({
         </Space>
       </div>
       <div className="message-stream" ref={scrollRef} onScroll={onMessageScroll}>
-        {!conversation || conversation.messages.length === 0 ? (
-          <div className="chat-empty">
-            <div className="brand-mark"><RobotOutlined /></div>
-            <Typography.Title level={3}>{t("Supbot is ready")}</Typography.Title>
-            <p className="muted">{t("Ask a question, attach local files, use /commands, or mention @research and @builder.")}</p>
-          </div>
-        ) : conversation.messages.map((item) => <MessageBubble key={item.id} message={item} t={t} />)}
+        <div className="message-stack" ref={messageStackRef}>
+          {!conversation || conversation.messages.length === 0 ? (
+            <div className="chat-empty">
+              <div className="brand-mark"><RobotOutlined /></div>
+              <Typography.Title level={3}>{t("Supbot is ready")}</Typography.Title>
+              <p className="muted">{t("Ask a question, attach local files, use /commands, or mention @research and @builder.")}</p>
+            </div>
+          ) : conversation.messages.map((item) => <MessageBubble key={item.id} message={item} t={t} />)}
+        </div>
       </div>
       <div className="composer">
         {attachments.length ? (
@@ -1053,62 +1077,161 @@ function formatToolPayload(value: unknown): string {
   }
 }
 
+function formatToolOutput(toolCall: ToolCallRecord): string {
+  const parts = toolCall.outputParts?.map((part) => [
+    `${part.type}${part.mimeType ? ` (${part.mimeType})` : ""}`,
+    part.text
+  ].join("\n")).join("\n\n");
+  return truncateText(parts || toolCall.output || "", 1200);
+}
+
+function compareCreatedAt(left: { createdAt: string }, right: { createdAt: string }): number {
+  return new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+}
+
+function shouldShowJobRuntimeEvent(event: RuntimeEventRecord, traceToolIds: Set<string>): boolean {
+  if (event.kind === "tool_use_start") {
+    const id = runtimeEventDataId(event);
+    return Boolean(id && !traceToolIds.has(id));
+  }
+  return jobTimelineRuntimeEventKinds.has(event.kind);
+}
+
+function runtimeEventDataId(event: RuntimeEventRecord): string {
+  if (!event.data || typeof event.data !== "object") {
+    return "";
+  }
+  const value = (event.data as { id?: unknown }).id;
+  return typeof value === "string" ? value : "";
+}
+
+const jobTimelineRuntimeEventKinds = new Set<RuntimeEventRecord["kind"]>([
+  "query_start",
+  "compact",
+  "permission_timeout",
+  "memory_recall",
+  "memory_candidate",
+  "memory_write",
+  "subagent_start",
+  "subagent_done",
+  "worktree_event",
+  "turn_complete",
+  "turn_failed"
+]);
+
+function jobRuntimeEventLabel(event: RuntimeEventRecord, t: (key: string, vars?: Record<string, string | number>) => string): string {
+  if (event.kind === "tool_use_start") {
+    return t("Tool call started");
+  }
+  return t(event.message || event.kind);
+}
+
+function jobRuntimeEventColor(kind: RuntimeEventRecord["kind"]): string {
+  if (kind === "turn_failed" || kind === "permission_timeout") {
+    return "red";
+  }
+  if (kind === "turn_complete" || kind === "memory_write") {
+    return "green";
+  }
+  if (kind === "compact" || kind === "worktree_event") {
+    return "blue";
+  }
+  if (kind === "memory_recall" || kind === "memory_candidate") {
+    return "purple";
+  }
+  return "cyan";
+}
+
+function toolStatusColor(status: ToolCallRecord["status"]): string {
+  switch (status) {
+    case "pending_permission":
+      return "gold";
+    case "running":
+      return "cyan";
+    case "completed":
+      return "green";
+    case "failed":
+    case "denied":
+      return "red";
+    default:
+      return "default";
+  }
+}
+
+function assistantPreviewForJob(snapshot: RuntimeSnapshot, job: AgentJob): string {
+  const conversation = snapshot.conversations.find((item) => item.id === job.conversationId);
+  const messages = (conversation?.messages || []).filter((message) => message.jobId === job.id && message.role === "assistant");
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const text = messages[index]?.text.trim() || "";
+    if (text && !isAssistantWaitingText(text)) {
+      return text;
+    }
+  }
+  return "";
+}
+
+function isAssistantWaitingText(text: string): boolean {
+  return text === "Supbot is thinking..." || /^@.+ is thinking\.\.\.$/.test(text);
+}
+
+function recentJobProgress(progress: string[]): string[] {
+  const result: string[] = [];
+  for (let index = progress.length - 1; index >= 0 && result.length < 5; index -= 1) {
+    const item = progress[index];
+    if (item && !result.includes(item)) {
+      result.push(item);
+    }
+  }
+  return result.reverse();
+}
+
 function RightPanel({
   snapshot,
   activeConversationId,
-  setActiveConversationId,
   panel,
   setPanel,
   collapsed,
   refresh,
   t,
-  cancelJob,
-  approveToolPermission,
-  denyToolPermission,
   openSchedule
 }: {
   snapshot: RuntimeSnapshot;
   activeConversationId: string;
-  setActiveConversationId: (id: string) => void;
   panel: DetailPanel;
   setPanel: (panel: DetailPanel) => void;
   collapsed: boolean;
   refresh: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
-  cancelJob: (id: string) => Promise<void>;
-  approveToolPermission: (id: string) => Promise<void>;
-  denyToolPermission: (id: string) => Promise<void>;
   openSchedule: () => void;
 }) {
   return (
     <aside className={`activity-panel ${collapsed ? "is-collapsed" : ""}`}>
       <Tabs
-        activeKey={panel || "history"}
+        activeKey={panel || "memory"}
         onChange={(key) => setPanel(key as DetailPanel)}
         items={[
-          { key: "history", label: t("History"), children: <HistoryPanel conversations={snapshot.conversations} activeConversationId={activeConversationId} setActiveConversationId={setActiveConversationId} refresh={refresh} t={t} /> },
-          { key: "tasks", label: t("Tasks"), children: <TasksPanel snapshot={snapshot} cancelJob={cancelJob} approveToolPermission={approveToolPermission} denyToolPermission={denyToolPermission} t={t} /> },
           { key: "memory", label: t("Memory"), children: <MemoryPanel snapshot={snapshot} activeConversationId={activeConversationId} refresh={refresh} t={t} /> },
           { key: "schedule", label: t("Schedule"), children: <SchedulePanel snapshot={snapshot} openSchedule={openSchedule} refresh={refresh} t={t} /> },
-          { key: "autopilot", label: t("Autopilot"), children: <AutopilotPanel t={t} /> }
+          { key: "autopilot", label: t("Autopilot"), children: <AutopilotPanel snapshot={snapshot} refresh={refresh} t={t} /> }
         ]}
       />
     </aside>
   );
 }
 
-function HistoryPanel({ conversations, activeConversationId, setActiveConversationId, refresh, t }: {
+function HistoryPanel({ conversations, activeConversationId, setActiveConversationId, refresh, t, embedded = false }: {
   conversations: Conversation[];
   activeConversationId: string;
   setActiveConversationId: (id: string) => void;
   refresh: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
+  embedded?: boolean;
 }) {
   return (
-    <div className="activity-list">
+    <div className={`activity-list history-list ${embedded ? "is-embedded" : ""}`}>
       {conversations.map((conversation) => (
-        <div className={`activity-item ${conversation.id === activeConversationId ? "is-active" : ""}`} key={conversation.id}>
-          <button type="button" onClick={() => setActiveConversationId(conversation.id)}>
+        <div className={`activity-item history-item ${conversation.id === activeConversationId ? "is-active" : ""}`} key={conversation.id}>
+          <button className="history-item-content" type="button" onClick={() => setActiveConversationId(conversation.id)}>
             <strong>{conversationTitle(conversation, t("New conversation"))}</strong>
             <span className="muted">{formatDateTime(conversation.lastMessageAt || conversation.updatedAt)} · {conversation.messages.length} {t(conversation.messages.length === 1 ? "message" : "messages")}</span>
           </button>
@@ -1148,29 +1271,173 @@ function TasksPanel({
       <ToolApprovalsPanel snapshot={snapshot} approveToolPermission={approveToolPermission} denyToolPermission={denyToolPermission} t={t} />
       <WorktreesPanel snapshot={snapshot} t={t} />
       <RemoteBridgePanel snapshot={snapshot} t={t} />
-      {jobs.map((job) => (
-        <div className="activity-item stacked" key={job.id}>
-          <div className="activity-head">
-            <strong>{job.prompt.slice(0, 70)}</strong>
-            <Tag color={statusColor(job.status)}>{statusLabel(job.status, t)}</Tag>
-          </div>
-          <div className="muted">{formatDateTime(job.createdAt)}</div>
-          {job.workspaceMode ? (
-            <div className="tag-row">
-              <Tag color={job.workspaceMode === "isolated" ? "cyan" : job.workspaceMode === "readOnly" ? "purple" : "default"}>{t(job.workspaceMode)}</Tag>
-              {job.diffStatus ? <Tag>{t(job.diffStatus)}</Tag> : null}
+      {jobs.map((job) => {
+        const isActiveJob = job.status === "queued" || job.status === "running";
+        return (
+          <div className={`activity-item stacked job-item ${isActiveJob ? "is-running" : ""}`} key={job.id}>
+            <div className="activity-head">
+              <strong>{job.prompt.slice(0, 70)}</strong>
+              <div className="job-status-group">
+                {isActiveJob ? (
+                  <span className="job-running-indicator" aria-label={statusLabel(job.status, t)}>
+                    <span />
+                    <span />
+                    <span />
+                  </span>
+                ) : null}
+                <Tag color={statusColor(job.status)}>{statusLabel(job.status, t)}</Tag>
+              </div>
             </div>
-          ) : null}
-          <div className="job-progress">
-            {job.progress.slice(-3).map((item, index) => <span key={`${job.id}-${index}`}>{t(item)}</span>)}
+            {isActiveJob ? <div className="job-running-bar" aria-hidden="true" /> : null}
+            <div className="muted">{formatDateTime(job.createdAt)}</div>
+            {job.workspaceMode ? (
+              <div className="tag-row">
+                <Tag color={job.workspaceMode === "isolated" ? "cyan" : job.workspaceMode === "readOnly" ? "purple" : "default"}>{t(job.workspaceMode)}</Tag>
+                {job.diffStatus ? <Tag>{t(job.diffStatus)}</Tag> : null}
+              </div>
+            ) : null}
+            <JobExecutionTimeline snapshot={snapshot} job={job} t={t} />
+            {isActiveJob ? (
+              <Button size="small" danger icon={<StopOutlined />} onClick={() => void cancelJob(job.id)}>{t("Cancel")}</Button>
+            ) : null}
           </div>
-          {job.status === "queued" || job.status === "running" ? (
-            <Button size="small" danger icon={<StopOutlined />} onClick={() => void cancelJob(job.id)}>{t("Cancel")}</Button>
-          ) : null}
-        </div>
-      ))}
+        );
+      })}
       {!jobs.length ? <Empty description={t("No jobs yet")} /> : null}
     </div>
+  );
+}
+
+function JobExecutionTimeline({ snapshot, job, t }: {
+  snapshot: RuntimeSnapshot;
+  job: AgentJob;
+  t: (key: string, vars?: Record<string, string | number>) => string;
+}) {
+  const isActiveJob = job.status === "queued" || job.status === "running";
+  const [expanded, setExpanded] = useState(isActiveJob || job.status === "failed");
+  useEffect(() => {
+    if (isActiveJob || job.status === "failed") {
+      setExpanded(true);
+    }
+  }, [isActiveJob, job.status]);
+
+  const trace = snapshot.agentLoopTraces.find((item) => item.jobId === job.id);
+  const toolCalls = (trace?.toolCalls || []).slice().sort(compareCreatedAt);
+  const traceToolIds = new Set(toolCalls.map((item) => item.id));
+  const events = snapshot.runtimeEvents
+    .filter((event) => event.jobId === job.id && shouldShowJobRuntimeEvent(event, traceToolIds))
+    .slice()
+    .sort(compareCreatedAt)
+    .slice(-8);
+  const permissions = snapshot.pendingToolPermissions.filter((permission) => permission.jobId === job.id);
+  const assistantText = assistantPreviewForJob(snapshot, job);
+  const progress = recentJobProgress(job.progress);
+  const showWaiting = isActiveJob && !assistantText && !toolCalls.length && !permissions.length;
+  const itemCount = events.length + toolCalls.length + permissions.length + (assistantText ? 1 : 0) + progress.length + (showWaiting ? 1 : 0);
+
+  return (
+    <details
+      className={`job-execution ${isActiveJob ? "is-live" : ""}`}
+      open={expanded}
+      onToggle={(event) => setExpanded(event.currentTarget.open)}
+    >
+      <summary>
+        <span>{t(isActiveJob ? "Execution log" : "Execution summary")}</span>
+        <Tag>{itemCount || 1}</Tag>
+      </summary>
+      <div className="job-execution-list">
+        {events.map((event) => (
+          <div className={`job-execution-row kind-${event.kind}`} key={event.id}>
+            <span className="job-execution-dot" />
+            <div className="job-execution-body">
+              <div className="job-execution-head">
+                <strong>{jobRuntimeEventLabel(event, t)}</strong>
+                <Tag color={jobRuntimeEventColor(event.kind)}>{t(event.kind)}</Tag>
+              </div>
+              <small>{formatDateTime(event.createdAt)}</small>
+            </div>
+          </div>
+        ))}
+
+        {showWaiting ? (
+          <div className="job-execution-row is-waiting">
+            <span className="job-execution-dot">
+              <span />
+            </span>
+            <div className="job-execution-body">
+              <div className="job-execution-head">
+                <strong>{t("Waiting for model response...")}</strong>
+                <Tag color="cyan">{statusLabel(job.status, t)}</Tag>
+              </div>
+              <div className="job-execution-skeleton" aria-hidden="true" />
+            </div>
+          </div>
+        ) : null}
+
+        {assistantText ? (
+          <div className="job-execution-row kind-message_delta">
+            <span className="job-execution-dot" />
+            <div className="job-execution-body">
+              <div className="job-execution-head">
+                <strong>{t("Assistant output")}</strong>
+                <Tag color={isActiveJob ? "cyan" : "green"}>{isActiveJob ? t("running") : t("completed")}</Tag>
+              </div>
+              <pre>{truncateText(assistantText, 700)}</pre>
+            </div>
+          </div>
+        ) : null}
+
+        {toolCalls.map((toolCall) => (
+          <div className={`job-execution-row tool-status-${toolCall.status}`} key={toolCall.id}>
+            <span className="job-execution-dot" />
+            <div className="job-execution-body">
+              <div className="job-execution-head">
+                <strong>{toolCall.toolName}</strong>
+                <Tag color={toolStatusColor(toolCall.status)}>{t(toolCall.status)}</Tag>
+              </div>
+              <small>{formatDateTime(toolCall.updatedAt)}</small>
+              <details className="job-execution-payload">
+                <summary>{t("Input")}</summary>
+                <pre>{formatToolPayload(toolCall.input)}</pre>
+              </details>
+              {toolCall.output || toolCall.outputParts?.length ? (
+                <details className="job-execution-payload">
+                  <summary>{t("Output")}</summary>
+                  <pre>{formatToolOutput(toolCall)}</pre>
+                </details>
+              ) : null}
+              {toolCall.error ? <pre className="job-execution-error">{truncateText(toolCall.error, 700)}</pre> : null}
+            </div>
+          </div>
+        ))}
+
+        {permissions.map((permission) => (
+          <div className="job-execution-row tool-status-pending_permission" key={permission.id}>
+            <span className="job-execution-dot" />
+            <div className="job-execution-body">
+              <div className="job-execution-head">
+                <strong>{permission.toolName}</strong>
+                <Tag color="gold">{t("pending_permission")}</Tag>
+              </div>
+              <span>{permission.summary}</span>
+              {permission.executionPath ? <small className="mono">{permission.executionPath}</small> : null}
+            </div>
+          </div>
+        ))}
+
+        {progress.map((item, index) => (
+          <div className="job-execution-row kind-progress" key={`${job.id}-progress-${index}-${item}`}>
+            <span className="job-execution-dot" />
+            <div className="job-execution-body">
+              <div className="job-execution-head">
+                <strong>{t("Progress")}</strong>
+              </div>
+              <span>{t(item)}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -1237,8 +1504,13 @@ function WorktreesPanel({ snapshot, t }: { snapshot: RuntimeSnapshot; t: (key: s
 
 function RemoteBridgePanel({ snapshot, t }: { snapshot: RuntimeSnapshot; t: (key: string, vars?: Record<string, string | number>) => string }) {
   const [saving, setSaving] = useState(false);
+  const [savingA2A, setSavingA2A] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
   const config = snapshot.remoteBridge.config;
+  const outbound = snapshot.servstationA2A.config;
+  const oidc = outbound.oidc;
+  const reverse = outbound.reverse;
+  const identity = snapshot.identityContext;
   const update = async (patch: Partial<RemoteBridgeConfig>) => {
     setSaving(true);
     try {
@@ -1248,6 +1520,91 @@ function RemoteBridgePanel({ snapshot, t }: { snapshot: RuntimeSnapshot; t: (key
       messageApi.error((error as Error).message);
     } finally {
       setSaving(false);
+    }
+  };
+  const updateA2A = async (patch: ServstationA2AConfigUpdate) => {
+    setSavingA2A(true);
+    try {
+      await window.supbot.updateServstationA2AConfig({
+        baseUrl: patch.baseUrl ?? outbound.baseUrl ?? identity?.servstationUrl,
+        agentInstanceId: patch.agentInstanceId ?? outbound.agentInstanceId ?? identity?.agentInstanceId,
+        ...patch
+      });
+      messageApi.success(t("Servstation A2A updated."));
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    } finally {
+      setSavingA2A(false);
+    }
+  };
+  const loginOidc = async () => {
+    setSavingA2A(true);
+    try {
+      await window.supbot.loginServstationOidc({
+        baseUrl: outbound.baseUrl || identity?.servstationUrl || "https://zstupu.com",
+        issuerUrl: oidc?.issuerUrl,
+        clientId: oidc?.clientId,
+        scope: oidc?.scope,
+        redirectUri: oidc?.redirectUri
+      });
+      messageApi.success(t("Servstation OIDC signed in."));
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    } finally {
+      setSavingA2A(false);
+    }
+  };
+  const refreshOidc = async () => {
+    setSavingA2A(true);
+    try {
+      await window.supbot.refreshServstationOidc();
+      messageApi.success(t("Servstation OIDC refreshed."));
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    } finally {
+      setSavingA2A(false);
+    }
+  };
+  const logoutOidc = async () => {
+    setSavingA2A(true);
+    try {
+      await window.supbot.logoutServstationOidc();
+      messageApi.success(t("Servstation OIDC signed out."));
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    } finally {
+      setSavingA2A(false);
+    }
+  };
+  const connectReverse = async () => {
+    setSavingA2A(true);
+    try {
+      if (!oidc?.refreshTokenSaved) {
+        await window.supbot.loginServstationOidc({
+          baseUrl: outbound.baseUrl || identity?.servstationUrl || "https://zstupu.com",
+          issuerUrl: oidc?.issuerUrl,
+          clientId: oidc?.clientId,
+          scope: oidc?.scope,
+          redirectUri: oidc?.redirectUri
+        });
+      }
+      await window.supbot.connectServstationReverseBridge();
+      messageApi.success(t("Connected to remote staff-agent."));
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    } finally {
+      setSavingA2A(false);
+    }
+  };
+  const disconnectReverse = async () => {
+    setSavingA2A(true);
+    try {
+      await window.supbot.disconnectServstationReverseBridge();
+      messageApi.success(t("Disconnected from remote staff-agent."));
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    } finally {
+      setSavingA2A(false);
     }
   };
   return (
@@ -1260,9 +1617,48 @@ function RemoteBridgePanel({ snapshot, t }: { snapshot: RuntimeSnapshot; t: (key
       <div className="tag-row">
         <Tag>{config.host}:{config.port}</Tag>
         <Tag color={config.tokenSaved ? "green" : "gold"}>{config.tokenSaved ? t("Token saved") : t("No token")}</Tag>
+        {config.allowRemoteBind ? <Tag color="orange">{t("Remote bind opt-in")}</Tag> : null}
         {config.pairingCode ? <Tag color="blue">{config.pairingCode}</Tag> : null}
       </div>
       <small>{t("Remote bridge is read-only for tools, permissions, and worktree apply/discard.")}</small>
+      {identity ? (
+        <div className="remote-session">
+          <span>{identity.tenantId}/{identity.organizationId}/{identity.departmentId}/{identity.userId}</span>
+          <Tag color="blue">{identity.source || "identity"}</Tag>
+          {identity.agentInstanceId ? <Tag>{identity.agentInstanceId}</Tag> : null}
+        </div>
+      ) : (
+        <small>{t("No Servstation identity is paired yet.")}</small>
+      )}
+      <Divider />
+      <div className="activity-head">
+        <div className="section-title"><ApiOutlined /> {t("Servstation outbound A2A")}</div>
+        <Switch checked={outbound.enabled} loading={savingA2A} onChange={(checked) => void updateA2A({ enabled: checked })} />
+      </div>
+      <div className="tag-row">
+        <Tag color={outbound.enabled ? "green" : "default"}>{outbound.enabled ? t("enabled") : t("disabled")}</Tag>
+        <Tag>{outbound.baseUrl || identity?.servstationUrl || t("No Servstation URL")}</Tag>
+        <Tag>{outbound.agentInstanceId || identity?.agentInstanceId || t("No agent id")}</Tag>
+        <Tag color={outbound.bearerTokenSaved ? "green" : "gold"}>{outbound.authMode}</Tag>
+        <Tag color={reverse?.status === "connected" ? "green" : reverse?.status === "error" ? "red" : "default"}>{t(`reverse:${reverse?.status || "disconnected"}`)}</Tag>
+        {oidc?.refreshTokenSaved ? <Tag color="green">{t("OIDC token saved")}</Tag> : null}
+        {oidc?.userId ? <Tag>{oidc.userId}</Tag> : null}
+        {oidc?.accessTokenExpiresAt ? <Tag>{t("Expires: {time}", { time: formatDateTime(oidc.accessTokenExpiresAt) })}</Tag> : null}
+        {reverse?.peerId ? <Tag>{reverse.peerId}</Tag> : null}
+      </div>
+      <Space wrap size="small">
+        <Button size="small" type="primary" loading={savingA2A} onClick={() => void loginOidc()}>{t("Sign in with Servstation")}</Button>
+        <Button size="small" icon={<ReloadOutlined />} loading={savingA2A} disabled={!oidc?.refreshTokenSaved} onClick={() => void refreshOidc()}>{t("Refresh OIDC")}</Button>
+        <Button size="small" danger disabled={!oidc?.refreshTokenSaved} onClick={() => void logoutOidc()}>{t("Sign out")}</Button>
+        {reverse?.enabled ? (
+          <Button size="small" danger loading={savingA2A} onClick={() => void disconnectReverse()}>{t("Disconnect remote")}</Button>
+        ) : (
+          <Button size="small" type="primary" loading={savingA2A} onClick={() => void connectReverse()}>{t("Connect remote")}</Button>
+        )}
+      </Space>
+      <small>{t("Servstation A2A exposes servstation_connect, servstation_prompt, and read-only reverse prompt execution.")}</small>
+      {reverse?.lastHeartbeatAt ? <small>{t("Last heartbeat: {time}", { time: formatDateTime(reverse.lastHeartbeatAt) })}</small> : null}
+      {reverse?.lastError ? <small>{reverse.lastError}</small> : null}
       {snapshot.remoteBridge.sessions.slice(0, 3).map((session) => (
         <div className="remote-session" key={session.id}>
           <span>{session.name}</span>
@@ -1960,15 +2356,264 @@ function SchedulePanel({ snapshot, openSchedule, refresh, t }: { snapshot: Runti
   );
 }
 
-function AutopilotPanel({ t }: { t: (key: string, vars?: Record<string, string | number>) => string }) {
+function AutopilotPanel({ snapshot, refresh, t }: { snapshot: RuntimeSnapshot; refresh: () => void; t: (key: string, vars?: Record<string, string | number>) => string }) {
+  const [messageApi, contextHolder] = message.useMessage();
+  const [projectForm] = Form.useForm();
+  const [runForm] = Form.useForm();
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [projectModalOpen, setProjectModalOpen] = useState(false);
+  const [pickingProjectFolder, setPickingProjectFolder] = useState(false);
+  const [startingRun, setStartingRun] = useState(false);
+  const [selectedRunId, setSelectedRunId] = useState(snapshot.autopilotRuns[0]?.id || "");
+  const selectedRun = snapshot.autopilotRuns.find((run) => run.id === selectedRunId) || snapshot.autopilotRuns[0];
+  const selectedProject = selectedRun ? snapshot.projects.find((project) => project.id === selectedRun.projectId) : snapshot.projects[0];
+  const runTasks = selectedRun ? snapshot.autopilotTasks.filter((task) => task.runId === selectedRun.id) : [];
+  const runArtifacts = selectedRun ? snapshot.dataArtifacts.filter((artifact) => artifact.runId === selectedRun.id) : [];
+  const runEvents = selectedRun ? snapshot.autopilotEvents.filter((event) => event.runId === selectedRun.id).slice(0, 8) : [];
+
+  useEffect(() => {
+    if (!selectedRunId && snapshot.autopilotRuns[0]?.id) {
+      setSelectedRunId(snapshot.autopilotRuns[0].id);
+    }
+  }, [selectedRunId, snapshot.autopilotRuns]);
+
+  const projectOptions = snapshot.projects.map((project) => ({ label: project.name, value: project.id }));
+  const runOptions = snapshot.autopilotRuns.map((run) => ({ label: `${run.title} (${run.status})`, value: run.id }));
+
+  const createProject = async (values: { rootPath: string; name?: string }) => {
+    setCreatingProject(true);
+    try {
+      const project = await window.supbot.createProjectFromFolder(values);
+      runForm.setFieldValue("projectId", project.id);
+      await refresh();
+      projectForm.resetFields();
+      setProjectModalOpen(false);
+      messageApi.success(t("Project registered."));
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    } finally {
+      setCreatingProject(false);
+    }
+  };
+
+  const pickProjectFolder = async () => {
+    setPickingProjectFolder(true);
+    try {
+      const folder = await window.supbot.pickProjectFolder();
+      if (folder) {
+        projectForm.setFieldValue("rootPath", folder);
+      }
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    } finally {
+      setPickingProjectFolder(false);
+    }
+  };
+
+  const startRun = async (values: { projectId: string; title?: string; goal: string }) => {
+    setStartingRun(true);
+    try {
+      const run = await window.supbot.startAutopilotDataRun({
+        projectId: values.projectId,
+        title: values.title,
+        goal: values.goal,
+        dataSources: []
+      });
+      setSelectedRunId(run.id);
+      await refresh();
+      messageApi.success(t("Autopilot data run started."));
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    } finally {
+      setStartingRun(false);
+    }
+  };
+
+  const controlRun = async (action: "pause" | "resume" | "cancel") => {
+    if (!selectedRun) {
+      return;
+    }
+    try {
+      if (action === "pause") {
+        await window.supbot.pauseAutopilotRun(selectedRun.id);
+      } else if (action === "resume") {
+        await window.supbot.resumeAutopilotRun(selectedRun.id);
+      } else {
+        await window.supbot.cancelAutopilotRun(selectedRun.id);
+      }
+      await refresh();
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    }
+  };
+
   return (
-    <div className="autopilot-card">
-      <ThunderboltOutlined />
-      <Typography.Title level={4}>{t("Autopilot surface")}</Typography.Title>
-      <p className="muted">{t("The local runtime has the job/event model ready. Continuous autonomous driving is intentionally left off in the first local MVP.")}</p>
-      <Alert type="info" showIcon message={t("Use scheduled prompts and subagents for the first version's automation loop.")} />
+    <div className="autopilot-workbench">
+      {contextHolder}
+      <div className="autopilot-hero">
+        <div>
+          <span className="eyebrow">{t("DATA AUTOPILOT")}</span>
+          <Typography.Title level={4}>{t("Project data runs")}</Typography.Title>
+        </div>
+        <Tag color={snapshot.status === "running" ? "cyan" : "default"}>{t(snapshot.status)}</Tag>
+      </div>
+
+      <div className="autopilot-grid">
+        <section className="autopilot-panel">
+          <div className="autopilot-panel-head">
+            <div className="section-title"><FolderOpenOutlined /> {t("Project")}</div>
+            <Button className="autopilot-new-project-button" size="small" type="primary" icon={<PlusOutlined />} onClick={() => setProjectModalOpen(true)}>{t("New project")}</Button>
+          </div>
+          <div className="autopilot-project-list">
+            {snapshot.projects.length ? snapshot.projects.slice(0, 4).map((project) => (
+              <button className="autopilot-project-row" type="button" key={project.id} onClick={() => runForm.setFieldValue("projectId", project.id)}>
+                <strong>{project.name}</strong>
+                <span className="muted mono">{project.rootPath}</span>
+              </button>
+            )) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("No projects yet")} />}
+          </div>
+        </section>
+
+        <section className="autopilot-panel">
+          <div className="section-title"><ThunderboltOutlined /> {t("New data run")}</div>
+          <Form form={runForm} layout="vertical" onFinish={(values) => void startRun(values)} initialValues={{ projectId: selectedProject?.id }}>
+            <Form.Item name="projectId" label={t("Project")} rules={[{ required: true }]}>
+              <Select options={projectOptions} placeholder={t("Choose project")} />
+            </Form.Item>
+            <Form.Item name="title" label={t("Title")}>
+              <Input />
+            </Form.Item>
+            <Form.Item name="goal" label={t("Goal")} rules={[{ required: true }]}>
+              <Input.TextArea rows={5} />
+            </Form.Item>
+            <Button block type="primary" icon={<ThunderboltOutlined />} htmlType="submit" loading={startingRun} disabled={!snapshot.projects.length}>{t("Start run")}</Button>
+          </Form>
+        </section>
+      </div>
+
+      <section className="autopilot-panel autopilot-run-panel">
+        <div className="autopilot-run-monitor-card">
+          <div className="section-title"><FileTextOutlined /> {t("Run monitor")}</div>
+          <Select
+            className="autopilot-run-select"
+            value={selectedRun?.id ?? undefined}
+            onChange={setSelectedRunId}
+            options={runOptions}
+            placeholder={t("No runs yet")}
+            disabled={!runOptions.length}
+          />
+        </div>
+        {selectedRun ? (
+          <>
+            <div className="autopilot-run-header">
+              <div>
+                <strong>{selectedRun.title}</strong>
+                <div className="muted">{selectedProject?.name || selectedRun.projectId}</div>
+              </div>
+              <Space>
+                <Tag color={autopilotStatusColor(selectedRun.status)}>{t(selectedRun.status)}</Tag>
+                <Button size="small" onClick={() => void controlRun("pause")} disabled={selectedRun.status !== "running" && selectedRun.status !== "reviewing"}>{t("Pause")}</Button>
+                <Button size="small" onClick={() => void controlRun("resume")} disabled={!["paused", "blocked", "failed"].includes(selectedRun.status)}>{t("Resume")}</Button>
+                <Popconfirm title={t("Cancel run?")} onConfirm={() => void controlRun("cancel")}>
+                  <Button size="small" danger disabled={["completed", "canceled"].includes(selectedRun.status)}>{t("Cancel")}</Button>
+                </Popconfirm>
+              </Space>
+            </div>
+            <div className="autopilot-stage-list">
+              {runTasks.map((task) => (
+                <div className="autopilot-stage-row" key={task.id}>
+                  <Tag color={taskStatusColor(task.status)}>{t(task.status)}</Tag>
+                  <div>
+                    <strong>{task.title}</strong>
+                    <span className="muted">@{task.staffAgent} 路 {task.stage} 路 {task.artifactIds.length} {t("artifacts")}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="autopilot-run-columns">
+              <div>
+                <div className="section-title">{t("Artifacts")}</div>
+                {runArtifacts.length ? runArtifacts.slice(0, 8).map((artifact) => (
+                  <div className="autopilot-artifact" key={artifact.id}>
+                    <Tag>{artifact.kind}</Tag>
+                    <span className="mono">{artifact.path}</span>
+                  </div>
+                )) : <span className="muted">{t("No artifacts yet")}</span>}
+              </div>
+              <div>
+                <div className="section-title">{t("Events")}</div>
+                {runEvents.length ? runEvents.map((event) => (
+                  <div className="autopilot-event" key={event.id}>
+                    <Tag color={event.level === "error" ? "red" : event.level === "warning" ? "gold" : "cyan"}>{event.level}</Tag>
+                    <span>{event.message}</span>
+                  </div>
+                )) : <span className="muted">{t("No events yet")}</span>}
+              </div>
+            </div>
+          </>
+        ) : null}
+      </section>
+      <Modal
+        open={projectModalOpen}
+        title={t("New project")}
+        okText={t("Register project")}
+        cancelText={t("Cancel")}
+        confirmLoading={creatingProject}
+        onCancel={() => {
+          projectForm.resetFields();
+          setProjectModalOpen(false);
+        }}
+        onOk={() => projectForm.submit()}
+      >
+        <Form form={projectForm} layout="vertical" onFinish={(values) => void createProject(values)}>
+          <Form.Item label={t("Project folder")} required>
+            <div className="autopilot-folder-picker">
+              <Form.Item name="rootPath" noStyle rules={[{ required: true }]}>
+                <Input readOnly placeholder={t("Choose project folder")} onClick={() => void pickProjectFolder()} />
+              </Form.Item>
+              <Tooltip title={t("Choose folder")}>
+                <Button
+                  aria-label={t("Choose folder")}
+                  icon={<FolderOpenOutlined />}
+                  onClick={() => void pickProjectFolder()}
+                  loading={pickingProjectFolder}
+                />
+              </Tooltip>
+            </div>
+          </Form.Item>
+          <Form.Item name="name" label={t("Name")}>
+            <Input />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
+}
+
+function autopilotStatusColor(status: AutopilotRun["status"]): string {
+  if (status === "completed") {
+    return "green";
+  }
+  if (status === "failed" || status === "blocked" || status === "canceled") {
+    return "red";
+  }
+  if (status === "paused") {
+    return "gold";
+  }
+  return "cyan";
+}
+
+function taskStatusColor(status: string): string {
+  if (status === "completed") {
+    return "green";
+  }
+  if (status === "failed" || status === "blocked") {
+    return "red";
+  }
+  if (status === "running") {
+    return "cyan";
+  }
+  return "default";
 }
 
 function ConfigWorkspace({
@@ -2189,6 +2834,13 @@ function StorageCard({ userDataPath, t }: { userDataPath: string; t: (key: strin
       </div>
       <Divider />
       <Alert
+        type={userDataPath ? "info" : "warning"}
+        showIcon
+        message={t("Credential storage")}
+        description={t("Supbot uses the operating system safe storage when available. If the app reports file storage for a credential, treat that fallback as local obfuscation rather than strong encryption.")}
+      />
+      <Divider />
+      <Alert
         type="info"
         showIcon
         message={t("Local tool commands")}
@@ -2246,7 +2898,7 @@ function ToolMarketConfigCard({ snapshot, refresh, t }: {
           <Tag color={config.accessTokenSaved ? "green" : "default"}>{config.accessTokenSaved ? t("Token saved") : t("No token")}</Tag>
         </Space>
       </div>
-      <Form form={form} layout="vertical" initialValues={{ source: "hybrid", apiUrl: "http://localhost:3000/subscriber/market/api", accountEmail: "subscriber@example.com" }} onFinish={(values) => void save(values as ToolMarketConfigUpdate)}>
+      <Form form={form} layout="vertical" initialValues={{ source: "hybrid", apiUrl: defaultToolMarketApiUrl, accountEmail: "subscriber@toolsmarket.local" }} onFinish={(values) => void save(values as ToolMarketConfigUpdate)}>
         <Form.Item label={t("Source")} name="source">
           <Segmented
             options={[
@@ -2256,14 +2908,14 @@ function ToolMarketConfigCard({ snapshot, refresh, t }: {
             ]}
           />
         </Form.Item>
-        <Form.Item label={t("Market API URL")} name="apiUrl" tooltip={t("Compatible with the servstation subscriber market API returning { items: [...] }.")}>
-          <Input placeholder="http://localhost:3000/subscriber/market/api" />
+        <Form.Item label={t("Market API URL")} name="apiUrl" tooltip={t("Use the i-shu.com tool market or a compatible catalog API returning { items: [...] }.")}>
+          <Input placeholder={defaultToolMarketApiUrl} />
         </Form.Item>
         <Form.Item label={t("Market account email")} name="accountEmail">
-          <Input placeholder="subscriber@example.com" />
+          <Input placeholder="subscriber@toolsmarket.local" />
         </Form.Item>
         <Form.Item label={t("Market password")} name="password" extra={config.passwordSaved ? t("Leave blank to keep the existing password.") : t("Optional when the market allows anonymous catalog access.")}>
-          <Input.Password autoComplete="new-password" placeholder="market123" />
+          <Input.Password autoComplete="new-password" placeholder="Password" />
         </Form.Item>
         <Form.Item name="clearPassword" valuePropName="checked">
           <Switch checkedChildren={t("Clear saved password")} unCheckedChildren={t("Keep saved password")} />
@@ -2744,7 +3396,12 @@ function PersonalityCard({ snapshot, refresh, t }: { snapshot: RuntimeSnapshot; 
 
 function CapabilitiesCard({ snapshot, refresh, t }: { snapshot: RuntimeSnapshot; refresh: () => void; t: (key: string, vars?: Record<string, string | number>) => string }) {
   const [ruleForm] = Form.useForm<{ toolName: string; behavior: PermissionRule["behavior"] }>();
+  const [capabilityForm] = Form.useForm<CapabilityUpdateInput>();
   const [ruleFilter, setRuleFilter] = useState("all");
+  const [editingCapability, setEditingCapability] = useState<RuntimeSnapshot["capabilities"][number] | null>(null);
+  const [savingCapability, setSavingCapability] = useState(false);
+  const [deletingCapabilityId, setDeletingCapabilityId] = useState("");
+  const [messageApi, contextHolder] = message.useMessage();
   const toolOptions = [
     { label: t("All tools"), value: "*" },
     { label: "ReadFile", value: "ReadFile" },
@@ -2765,8 +3422,46 @@ function CapabilitiesCard({ snapshot, refresh, t }: { snapshot: RuntimeSnapshot;
     ruleForm.resetFields();
     await refresh();
   };
+  const beginEditCapability = (capability: RuntimeSnapshot["capabilities"][number]) => {
+    setEditingCapability(capability);
+    capabilityForm.setFieldsValue({
+      name: capability.name,
+      description: capability.description,
+      enabled: capability.enabled
+    });
+  };
+  const saveCapability = async (values: CapabilityUpdateInput) => {
+    if (!editingCapability) {
+      return;
+    }
+    setSavingCapability(true);
+    try {
+      await window.supbot.updateCapability(editingCapability.id, values);
+      setEditingCapability(null);
+      capabilityForm.resetFields();
+      await refresh();
+      messageApi.success(t("Capability saved."));
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    } finally {
+      setSavingCapability(false);
+    }
+  };
+  const deleteCapability = async (id: string) => {
+    setDeletingCapabilityId(id);
+    try {
+      await window.supbot.deleteCapability(id);
+      await refresh();
+      messageApi.success(t("Capability deleted."));
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    } finally {
+      setDeletingCapabilityId("");
+    }
+  };
   return (
     <div className="settings-stack">
+      {contextHolder}
       <div className="settings-card">
         <div className="panel-heading">
           <div className="section-title"><ToolOutlined /> {t("Permission mode")}</div>
@@ -2781,8 +3476,7 @@ function CapabilitiesCard({ snapshot, refresh, t }: { snapshot: RuntimeSnapshot;
           options={[
             { label: t("default"), value: "default" },
             { label: t("acceptEdits"), value: "acceptEdits" },
-            { label: t("plan"), value: "plan" },
-            { label: t("bypassPermissions"), value: "bypassPermissions" }
+            { label: t("plan"), value: "plan" }
           ]}
         />
         <Divider />
@@ -2835,16 +3529,56 @@ function CapabilitiesCard({ snapshot, refresh, t }: { snapshot: RuntimeSnapshot;
         </div>
       </div>
       <div className="capability-grid">
-        {snapshot.capabilities.map((capability) => (
+        {filterVisibleCapabilities(snapshot.capabilities).map((capability) => (
           <div className="capability-card" key={capability.id}>
             <div className="activity-head">
-              <strong>{t(capability.name)}</strong>
-              <Tag color={capability.enabled ? "green" : "default"}>{t(capability.kind)}</Tag>
+              <div>
+                <strong>{t(capability.name)}</strong>
+                <div className="muted mono">{capability.id}</div>
+              </div>
+              <Space wrap>
+                <Tag color={capability.enabled ? "green" : "default"}>{t(capability.kind)}</Tag>
+              </Space>
             </div>
-            <p className="muted">{t(capability.description)}</p>
+            <p className="muted">{truncateText(t(capability.description), 50)}</p>
+            <div className="capability-card-actions">
+              <Button size="small" onClick={() => beginEditCapability(capability)}>{t("Edit")}</Button>
+              <Popconfirm title={t("Delete capability?")} onConfirm={() => void deleteCapability(capability.id)}>
+                <Button size="small" danger icon={<DeleteOutlined />} loading={deletingCapabilityId === capability.id}>{t("Delete")}</Button>
+              </Popconfirm>
+            </div>
           </div>
         ))}
       </div>
+      <Modal
+        open={Boolean(editingCapability)}
+        title={t("Edit capability")}
+        onCancel={() => {
+          setEditingCapability(null);
+          capabilityForm.resetFields();
+        }}
+        onOk={() => capabilityForm.submit()}
+        okText={t("Save")}
+        confirmLoading={savingCapability}
+      >
+        {editingCapability ? (
+          <div className="capability-modal-meta">
+            <div><span>{t("Capability ID")}</span><strong className="mono">{editingCapability.id}</strong></div>
+            <div><span>{t("Kind")}</span><strong>{t(editingCapability.kind)}</strong></div>
+          </div>
+        ) : null}
+        <Form form={capabilityForm} layout="vertical" onFinish={(values) => void saveCapability(values)}>
+          <Form.Item label={t("Name")} name="name" rules={[{ required: true }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item label={t("Description")} name="description">
+            <Input.TextArea rows={4} />
+          </Form.Item>
+          <Form.Item label={t("Enabled")} name="enabled" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 }
@@ -3119,6 +3853,15 @@ function formatMcpToolList(server: McpServerSnapshot, tools: RuntimeSnapshot["mc
 function formatJsonSnippet(value: unknown, limit = 2400): string {
   const text = JSON.stringify(value, null, 2) || "";
   return text.length > limit ? `${text.slice(0, limit)}\n[truncated]` : text;
+}
+
+function filterVisibleCapabilities(capabilities: RuntimeSnapshot["capabilities"] | undefined): RuntimeSnapshot["capabilities"] {
+  return (capabilities || []).filter((capability) => !hiddenSlashCommandCapabilityIds.has(capability.id));
+}
+
+function truncateText(value: string, maxLength: number): string {
+  const chars = Array.from(value);
+  return chars.length > maxLength ? `${chars.slice(0, maxLength).join("")}...` : value;
 }
 
 function mcpStatusColor(state: string): string {

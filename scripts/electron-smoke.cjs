@@ -18,7 +18,11 @@ seedSmokeState(smokeUserDataDir, smokeMcpServerPath);
 
 const child = spawn(electron, [`--remote-debugging-port=${port}`, "."], {
   cwd: appDir,
-  env: { ...process.env, SUPBOT_USER_DATA_DIR: smokeUserDataDir },
+  env: {
+    ...process.env,
+    ELECTRON_MIRROR: process.env.ELECTRON_MIRROR || "https://npmmirror.com/mirrors/electron/",
+    SUPBOT_USER_DATA_DIR: smokeUserDataDir
+  },
   windowsHide: true,
   stdio: ["ignore", "pipe", "pipe"]
 });
@@ -29,13 +33,43 @@ child.stderr.on("data", (chunk) => {
 });
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const smokeDeadline = setTimeout(() => {
+  console.error("Electron smoke timed out.", { stderr: stderr.slice(0, 1200) });
+  child.kill();
+  process.exit(1);
+}, 90_000);
+
+function step(name) {
+  console.error(`[smoke] ${name}`);
+}
+
+function waitForWebSocketOpen(ws, label) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out opening WebSocket for ${label}`));
+    }, 5000);
+    const cleanup = () => {
+      clearTimeout(timer);
+      ws.removeEventListener("open", onOpen);
+      ws.removeEventListener("error", onError);
+    };
+    const onOpen = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error(`WebSocket failed for ${label}`));
+    };
+    ws.addEventListener("open", onOpen);
+    ws.addEventListener("error", onError);
+  });
+}
 
 async function evaluate(wsUrl, expression) {
   const ws = new WebSocket(wsUrl);
-  await new Promise((resolve, reject) => {
-    ws.onopen = resolve;
-    ws.onerror = reject;
-  });
+  await waitForWebSocketOpen(ws, "evaluate");
   let id = 1;
   const send = (method, params) => new Promise((resolve, reject) => {
     const messageId = id++;
@@ -59,15 +93,44 @@ async function evaluate(wsUrl, expression) {
   return result.result.result.value;
 }
 
+async function waitForMessageStreamAtBottom(wsUrl) {
+  let latest = null;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    latest = await evaluate(
+      wsUrl,
+      `(() => {
+        const stream = document.querySelector(".message-stream");
+        if (!stream) return null;
+        return {
+          distanceFromBottom: stream.scrollHeight - stream.scrollTop - stream.clientHeight,
+          scrollTop: stream.scrollTop,
+          scrollHeight: stream.scrollHeight,
+          clientHeight: stream.clientHeight
+        };
+      })()`
+    );
+    if (latest && latest.distanceFromBottom <= 2) {
+      return latest;
+    }
+    await sleep(150);
+  }
+  return latest;
+}
+
 async function main() {
+  step("waiting for Electron");
   await sleep(5000);
+  step("fetching DevTools pages");
   const pages = await fetch(`http://127.0.0.1:${port}/json/list`).then((response) => response.json());
   const page = pages.find((item) => item.type === "page") || pages[0];
   if (!page) {
     throw new Error("No Electron page exposed through DevTools.");
   }
+  step(`using page ${page.url}`);
   const diagnostics = await collectDiagnostics(page.webSocketDebuggerUrl);
+  step("checking rendered shell");
   const rootChildren = await evaluate(page.webSocketDebuggerUrl, "document.getElementById('root')?.children.length ?? -1");
+  await waitForMessageStreamAtBottom(page.webSocketDebuggerUrl);
   const bodyText = await evaluate(page.webSocketDebuggerUrl, "document.body.innerText");
   const bodyHtml = await evaluate(page.webSocketDebuggerUrl, "document.body.innerHTML");
   const layoutMetrics = await evaluate(
@@ -130,57 +193,90 @@ async function main() {
   if (!rootChildren || !hasSupbot || !hasDefaultChinese) {
     throw new Error("Electron renderer did not render the Supbot workspace.");
   }
+  const securityWarning = diagnostics.events.find((event) => {
+    const text = `${event.args || ""} ${event.text || ""}`;
+    return text.includes("Electron Security Warning") || text.includes("Insecure Content-Security-Policy");
+  });
+  if (securityWarning) {
+    throw new Error(`Electron security warning emitted: ${JSON.stringify(securityWarning)}`);
+  }
   if (!toolUi?.hasToolCard || !toolUi?.hasToolResult || !toolUi.hasToolResultParts || !toolUi.hasToolResultPartTypes || !toolUi.hasTruncatedMarker) {
     throw new Error("Tool call cards did not render in the chat stream.");
   }
-  await evaluate(
+  const securityIpc = await evaluate(
+    page.webSocketDebuggerUrl,
+    `Promise.all([
+      window.supbot.setPermissionMode("bypassPermissions").then(() => "allowed", (error) => String(error.message || error)),
+      window.supbot.openFile(${JSON.stringify(path.join(os.tmpdir(), "supbot-smoke-forbidden.txt"))}).then(() => "allowed", (error) => String(error.message || error))
+    ]).then(([permissionMode, openFile]) => ({ permissionMode, openFile }))`
+  );
+  if (!securityIpc?.permissionMode.includes("bypassPermissions") || !securityIpc?.openFile.includes("Supbot can only open")) {
+    throw new Error(`Renderer IPC security checks failed: ${JSON.stringify(securityIpc)}`);
+  }
+  const rightPanelTasks = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => {
-      const tasksTab = [...document.querySelectorAll('[role="tab"]')].find((el) => el.textContent?.includes("任务") || el.textContent?.includes("Tasks"));
-      tasksTab?.click();
-      return Boolean(tasksTab);
+      const tabs = [...document.querySelectorAll('.activity-panel [role="tab"]')];
+      const taskTab = tabs.find((el) => el.textContent?.includes("任务") || el.textContent?.includes("Tasks"));
+      return {
+        hasTaskTab: Boolean(taskTab),
+        tabLabels: tabs.map((el) => el.textContent || "")
+      };
+    })()`
+  );
+  if (rightPanelTasks?.hasTaskTab) {
+    throw new Error(`Right panel still renders a tasks tab: ${JSON.stringify(rightPanelTasks)}`);
+  }
+  const autopilotClick = await evaluate(
+    page.webSocketDebuggerUrl,
+    `(() => {
+      const autopilotTab = document.querySelector('#rc-tabs-0-tab-autopilot') ||
+        [...document.querySelectorAll('.activity-panel [role="tab"]')].find((el) => el.textContent?.includes("Autopilot") || el.textContent?.includes("自动驾驶"));
+      autopilotTab?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      return { clickedAutopilot: Boolean(autopilotTab), text: autopilotTab?.textContent || "" };
     })()`
   );
   await sleep(300);
-  const pendingBeforeDeny = await evaluate(
+  const autopilotUi = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => ({
-      hasPendingPermission: document.body.innerText.includes("smoke pending shell"),
-      pendingCount: document.querySelectorAll(".tool-approval").length
+      hasPanel: Boolean(document.querySelector(".autopilot-workbench")),
+      hasIcon: Boolean(document.querySelector(".autopilot-workbench .anticon-thunderbolt")),
+      hasNewProjectButton: Boolean(document.querySelector(".autopilot-new-project-button")),
+      hasInlineProjectForm: Boolean(document.querySelector(".autopilot-workbench .autopilot-folder-picker input[readonly]")),
+      hasProjectFolderIpc: typeof window.supbot?.pickProjectFolder === "function",
+      hasRunMonitor: Boolean(document.querySelector(".autopilot-run-panel")),
+      hasRunMonitorCard: Boolean(document.querySelector(".autopilot-run-monitor-card")),
+      hasRunSelect: Boolean(document.querySelector(".autopilot-run-monitor-card .autopilot-run-select .ant-select-selector")),
+      hasEmptyRunInfo: document.body.innerText.includes("Register a project and start a data run."),
+      hasDataSourceControls: Boolean(document.querySelector(".autopilot-source-row, .autopilot-source-kind, .autopilot-source-value, [name='sourceKind'], [name='sourceValue']")),
+      hasProjectText: document.body.innerText.includes("Project data runs") || document.body.innerText.includes("DATA AUTOPILOT"),
+      hasStartRunText: document.body.innerText.includes("Start run"),
+      hasSurfaceText: document.body.innerText.includes("Autopilot surface") || document.body.innerText.includes("自动驾驶面板"),
+      hasAutomationLoopText: document.body.innerText.includes("automation loop") || document.body.innerText.includes("自动化循环")
     }))()`
   );
-  if (!pendingBeforeDeny?.hasPendingPermission || pendingBeforeDeny.pendingCount !== 1) {
-    throw new Error("Pending tool approval did not render in the tasks panel.");
-  }
-  const permissionAfterDeny = await evaluate(
+  const projectModalUi = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => {
-      const deny = document.querySelector(".tool-approval button.ant-btn-dangerous") ||
-        [...document.querySelectorAll(".tool-approval button")].find((el) => el.textContent?.includes("拒绝") || el.textContent?.includes("Deny"));
-      deny?.click();
-      return { clicked: Boolean(deny) };
+      document.querySelector(".autopilot-new-project-button")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      return new Promise((resolve) => {
+        window.setTimeout(() => {
+          const result = {
+            hasModal: Boolean(document.querySelector(".ant-modal")),
+            hasFolderPicker: Boolean(document.querySelector(".ant-modal .autopilot-folder-picker input[readonly]")),
+            hasFolderButton: Boolean(document.querySelector(".ant-modal .autopilot-folder-picker .anticon-folder-open")),
+            hasRegisterText: document.body.innerText.includes("Register project") || document.body.innerText.includes("注册项目")
+          };
+          document.querySelector(".ant-modal-close")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+          resolve(result);
+        }, 150);
+      });
     })()`
   );
-  let pendingAfterDeny = 1;
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    await sleep(100);
-    pendingAfterDeny = await evaluate(page.webSocketDebuggerUrl, `document.querySelectorAll(".tool-approval").length`);
-    if (pendingAfterDeny === 0) {
-      break;
-    }
-  }
-  if (!permissionAfterDeny?.clicked || pendingAfterDeny !== 0) {
-    throw new Error("Tool approval deny action did not clear the pending permission.");
-  }
-  const runtimeVisibility = await evaluate(
-    page.webSocketDebuggerUrl,
-    `(() => ({
-      hasCompactHistory: Boolean(document.querySelector(".compact-history-item")) && document.body.innerText.includes("Smoke compact summary"),
-      hasRuntimeSession: document.body.innerText.includes("Main agent")
-    }))()`
-  );
-  if (!runtimeVisibility?.hasCompactHistory || !runtimeVisibility?.hasRuntimeSession) {
-    throw new Error("Runtime compact history/session UI did not render.");
+  console.log(JSON.stringify({ autopilotClick, autopilotUi, projectModalUi }, null, 2));
+  if (!autopilotClick?.clickedAutopilot || !autopilotUi?.hasPanel || !autopilotUi.hasIcon || !autopilotUi.hasNewProjectButton || autopilotUi.hasInlineProjectForm || !autopilotUi.hasProjectFolderIpc || !autopilotUi.hasRunMonitor || !autopilotUi.hasRunMonitorCard || !autopilotUi.hasRunSelect || autopilotUi.hasEmptyRunInfo || autopilotUi.hasDataSourceControls || !autopilotUi.hasProjectText || !autopilotUi.hasStartRunText || !projectModalUi?.hasModal || !projectModalUi.hasFolderPicker || !projectModalUi.hasFolderButton || !projectModalUi.hasRegisterText) {
+    throw new Error(`Autopilot panel did not render correctly: ${JSON.stringify({ autopilotClick, autopilotUi, projectModalUi })}`);
   }
   const memoryClick = await evaluate(
     page.webSocketDebuggerUrl,
@@ -192,6 +288,7 @@ async function main() {
     })()`
   );
   await sleep(600);
+  step("checking memory panel");
   const memoryInitial = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => ({
@@ -497,21 +594,53 @@ async function main() {
   if (!chatClick?.clickedChat) {
     throw new Error("Could not return to the chat workspace after config smoke checks.");
   }
-  if (!layoutMetrics || layoutMetrics.bodyOverflowY !== "hidden" || layoutMetrics.documentScrollHeight > layoutMetrics.viewport + 2) {
+  const finalLayoutMetrics = await evaluate(
+    page.webSocketDebuggerUrl,
+    `(() => {
+      const rectFor = (selector) => {
+        const el = document.querySelector(selector);
+        if (!el) return null;
+        const rect = el.getBoundingClientRect();
+        const style = getComputedStyle(el);
+        return {
+          bottom: rect.bottom,
+          clientHeight: el.clientHeight,
+          height: rect.height,
+          overflowY: style.overflowY,
+          position: style.position,
+          distanceFromBottom: el.scrollHeight - el.scrollTop - el.clientHeight,
+          scrollTop: el.scrollTop,
+          scrollHeight: el.scrollHeight,
+          top: rect.top
+        };
+      };
+      return {
+        bodyOverflowY: getComputedStyle(document.body).overflowY,
+        documentScrollHeight: document.documentElement.scrollHeight,
+        viewport: window.innerHeight,
+        chat: rectFor(".chat-panel"),
+        composer: rectFor(".composer"),
+        leftScroll: rectFor(".panel-scroll"),
+        messageStream: rectFor(".message-stream"),
+        rightScroll: rectFor(".activity-list")
+      };
+    })()`
+  );
+  if (!finalLayoutMetrics || finalLayoutMetrics.bodyOverflowY !== "hidden" || finalLayoutMetrics.documentScrollHeight > finalLayoutMetrics.viewport + 2) {
     throw new Error("Window-level scrolling is still enabled.");
   }
-  if (!layoutMetrics.chat || !layoutMetrics.composer || Math.abs(layoutMetrics.composer.bottom - layoutMetrics.chat.bottom) > 2) {
+  if (!finalLayoutMetrics.chat || !finalLayoutMetrics.composer || Math.abs(finalLayoutMetrics.composer.bottom - finalLayoutMetrics.chat.bottom) > 2) {
     throw new Error("Composer is not anchored to the bottom of the chat panel.");
   }
-  if (layoutMetrics.composer.position === "fixed") {
+  if (finalLayoutMetrics.composer.position === "fixed") {
     throw new Error("Composer is still fixed to the window instead of the chat panel.");
   }
   for (const key of ["leftScroll", "messageStream", "rightScroll"]) {
-    if (!layoutMetrics[key] || layoutMetrics[key].overflowY !== "auto") {
+    if (!finalLayoutMetrics[key] || finalLayoutMetrics[key].overflowY !== "auto") {
       throw new Error(`${key} does not expose an independent scrollbar region.`);
     }
   }
-  if (layoutMetrics.messageStream.distanceFromBottom > 2) {
+  if (finalLayoutMetrics.messageStream.distanceFromBottom > 2) {
     throw new Error("Message stream did not start at the bottom.");
   }
   const scrollAfterRefresh = await evaluate(
@@ -550,10 +679,7 @@ async function main() {
 
 async function collectDiagnostics(wsUrl) {
   const ws = new WebSocket(wsUrl);
-  await new Promise((resolve, reject) => {
-    ws.onopen = resolve;
-    ws.onerror = reject;
-  });
+  await waitForWebSocketOpen(ws, "diagnostics");
   const events = [];
   ws.addEventListener("message", (event) => {
     const data = JSON.parse(event.data);
@@ -606,6 +732,7 @@ main()
     process.exitCode = 1;
   })
   .finally(() => {
+    clearTimeout(smokeDeadline);
     child.kill();
     fs.rmSync(smokeUserDataDir, { recursive: true, force: true });
   });
@@ -678,8 +805,8 @@ function seedSmokeState(userDataDir, smokeMcpServerPath) {
     },
     toolMarketConfig: {
       source: "hybrid",
-      apiUrl: "http://localhost:3000/subscriber/market/api",
-      accountEmail: "subscriber@example.com",
+      apiUrl: "https://i-shu.com",
+      accountEmail: "subscriber@toolsmarket.local",
       accessTokenSaved: false,
       passwordSaved: false
     },

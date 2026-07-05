@@ -2,6 +2,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { randomBytes } from "node:crypto";
 import type {
+  IdentityContext,
+  RemoteBridgeCallerMetadata,
   RemoteBridgeAuditRecord,
   RemoteBridgeConfig,
   RemoteBridgeSession,
@@ -11,6 +13,8 @@ import type {
   WorktreeDiffSummary
 } from "@supbot/shared";
 
+const maxRequestBodyBytes = 64 * 1024;
+
 interface RemoteBridgeHost {
   randomId(prefix: string): string;
   nowIso(): string;
@@ -18,6 +22,8 @@ interface RemoteBridgeHost {
   loadTranscript(conversationId: string): Promise<TranscriptLoadResult>;
   getWorktreeDiff(id: string): Promise<WorktreeDiffSummary>;
   sendRemotePrompt(input: SendPromptInput): Promise<unknown>;
+  getIdentityContext(): IdentityContext | undefined;
+  updateIdentityContext(input: IdentityContext): Promise<IdentityContext>;
   onAudit(record: RemoteBridgeAuditRecord): Promise<void> | void;
   onEvent(message: string, data?: unknown): Promise<void> | void;
 }
@@ -37,7 +43,7 @@ export class RemoteBridgeManager {
     sessions: RemoteBridgeSession[];
     audit: RemoteBridgeAuditRecord[];
   }): Promise<void> {
-    this.config = { ...input.config, tokenSaved: Boolean(input.token) };
+    this.config = { ...input.config, host: normalizeHost(input.config.host, input.config.allowRemoteBind), tokenSaved: Boolean(input.token) };
     this.token = input.token;
     this.sessions = [...input.sessions];
     this.audit = [...input.audit];
@@ -56,11 +62,13 @@ export class RemoteBridgeManager {
 
   async update(update: Partial<RemoteBridgeConfig> & { token?: string; clearToken?: boolean }): Promise<{ config: RemoteBridgeConfig; token?: string }> {
     const nextToken = update.clearToken ? undefined : update.token?.trim() || this.token || createBridgeToken();
+    const allowRemoteBind = update.allowRemoteBind ?? this.config.allowRemoteBind;
     this.config = {
       ...this.config,
       ...update,
       port: normalizePort(update.port ?? this.config.port),
-      host: update.host?.trim() || this.config.host || "127.0.0.1",
+      host: normalizeHost(update.host || this.config.host, allowRemoteBind),
+      allowRemoteBind,
       tokenSaved: Boolean(nextToken),
       pairingCode: update.enabled ? shortPairingCode(nextToken) : undefined,
       updatedAt: this.host.nowIso()
@@ -149,11 +157,23 @@ export class RemoteBridgeManager {
     let statusCode = 200;
     let message = "ok";
     let sessionId: string | undefined;
+    let caller = callerMetadataFromRequest(request);
     try {
       const session = this.authenticate(request);
       sessionId = session.id;
       if (method === "GET" && path === "/snapshot") {
         return this.sendJson(response, this.readOnlySnapshot());
+      }
+      if (method === "GET" && path === "/identity") {
+        return this.sendJson(response, { identityContext: this.host.getIdentityContext() });
+      }
+      if (method === "PUT" && path === "/identity") {
+        const body = await readJson(request);
+        caller = callerMetadataFromRequest(request, body);
+        const identity = body.identityContext && typeof body.identityContext === "object"
+          ? body.identityContext
+          : body;
+        return this.sendJson(response, { identityContext: await this.host.updateIdentityContext(identity as IdentityContext) });
       }
       if (method === "GET" && path.startsWith("/transcript/")) {
         const conversationId = decodeURIComponent(path.slice("/transcript/".length));
@@ -165,6 +185,7 @@ export class RemoteBridgeManager {
       }
       if (method === "POST" && path === "/prompt") {
         const body = await readJson(request);
+        caller = callerMetadataFromRequest(request, body);
         const prompt = typeof body.prompt === "string" ? body.prompt : "";
         if (!prompt.trim()) {
           throw httpError(400, "prompt is required");
@@ -172,7 +193,8 @@ export class RemoteBridgeManager {
         return this.sendJson(response, await this.host.sendRemotePrompt({
           conversationId: typeof body.conversationId === "string" ? body.conversationId : undefined,
           prompt,
-          workspaceMode: "readOnly"
+          workspaceMode: "readOnly",
+          remoteCaller: caller
         } as SendPromptInput));
       }
       throw httpError(404, "Not found");
@@ -189,7 +211,12 @@ export class RemoteBridgeManager {
         ok: statusCode < 400,
         statusCode,
         message,
-        remoteAddress
+        remoteAddress,
+        requestId: caller.requestId,
+        agentInstanceId: caller.agentInstanceId,
+        peerId: caller.peerId,
+        caller,
+        identity: this.host.getIdentityContext()
       });
       await this.host.onAudit(record);
     }
@@ -254,7 +281,8 @@ export function defaultRemoteBridgeConfig(tokenSaved: boolean): RemoteBridgeConf
     enabled: false,
     host: "127.0.0.1",
     port: 47831,
-    tokenSaved
+    tokenSaved,
+    allowRemoteBind: false
   };
 }
 
@@ -268,15 +296,99 @@ function shortPairingCode(token?: string): string | undefined {
 
 async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {
   let raw = "";
+  let size = 0;
   for await (const chunk of request) {
-    raw += chunk.toString();
+    const text = chunk.toString();
+    size += Buffer.byteLength(text);
+    if (size > maxRequestBodyBytes) {
+      throw httpError(413, "Request body is too large");
+    }
+    raw += text;
   }
-  return raw.trim() ? JSON.parse(raw) as Record<string, unknown> : {};
+  try {
+    const parsed = raw.trim() ? JSON.parse(raw) as unknown : {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw httpError(400, "JSON body must be an object");
+    }
+    return parsed as Record<string, unknown>;
+  } catch (error) {
+    if ((error as HttpError).statusCode) {
+      throw error;
+    }
+    throw httpError(400, "Invalid JSON body");
+  }
 }
 
 function normalizePort(value: unknown): number {
   const port = typeof value === "number" && Number.isFinite(value) ? Math.round(value) : 47831;
   return port === 0 ? 0 : Math.min(65535, Math.max(1024, port));
+}
+
+function normalizeHost(value: unknown, allowRemoteBind = false): string {
+  const host = typeof value === "string" && value.trim() ? value.trim().toLowerCase() : "127.0.0.1";
+  if (host === "localhost" || host === "::1" || host === "127.0.0.1") {
+    return host;
+  }
+  return allowRemoteBind ? host : "127.0.0.1";
+}
+
+function callerMetadataFromRequest(request: IncomingMessage, body?: Record<string, unknown>): RemoteBridgeCallerMetadata {
+  const bodyUserContext = body?.userContext && typeof body.userContext === "object" ? body.userContext as Partial<IdentityContext> : undefined;
+  const headerUserContext = identityContextFromHeaders(request);
+  return {
+    requestId: firstString(body?.requestId) ?? headerValue(request, "x-a2a-request-id") ?? headerValue(request, "x-request-id"),
+    agentInstanceId: firstString(body?.agentInstanceId) ?? headerValue(request, "x-servstation-agent-id") ?? headerValue(request, "x-agent-instance-id"),
+    peerId: firstString(body?.peerId) ?? headerValue(request, "x-a2a-peer-id"),
+    clientId: firstString(body?.clientId) ?? headerValue(request, "x-a2a-client-id"),
+    userContext: bodyUserContext
+      ? identityContextFromObject(bodyUserContext)
+      : headerUserContext
+  };
+}
+
+function identityContextFromHeaders(request: IncomingMessage): IdentityContext | undefined {
+  const context = identityContextFromObject({
+    tenantId: headerValue(request, "x-tenant-id"),
+    organizationId: headerValue(request, "x-organization-id"),
+    departmentId: headerValue(request, "x-department-id"),
+    userId: headerValue(request, "x-user-id"),
+    roleIds: headerValue(request, "x-role-ids")?.split(",").map((item) => item.trim()).filter(Boolean),
+    source: "servstation"
+  });
+  return context;
+}
+
+function identityContextFromObject(value: Partial<IdentityContext>): IdentityContext | undefined {
+  const tenantId = firstString(value.tenantId);
+  const organizationId = firstString(value.organizationId);
+  const departmentId = firstString(value.departmentId);
+  const userId = firstString(value.userId);
+  if (!tenantId || !organizationId || !departmentId || !userId) {
+    return undefined;
+  }
+  return {
+    tenantId,
+    organizationId,
+    departmentId,
+    userId,
+    roleIds: Array.isArray(value.roleIds) ? value.roleIds.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim()) : [],
+    source: value.source === "manual" ? "manual" : "servstation",
+    agentInstanceId: firstString(value.agentInstanceId),
+    servstationUrl: firstString(value.servstationUrl),
+    updatedAt: firstString(value.updatedAt)
+  };
+}
+
+function headerValue(request: IncomingMessage, name: string): string | undefined {
+  const value = request.headers[name.toLowerCase()];
+  if (Array.isArray(value)) {
+    return value[0];
+  }
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function firstString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 interface HttpError extends Error {

@@ -11,6 +11,7 @@ npm install
 npm run build
 npm run test
 npm run smoke:electron
+npm run verify:release
 npm run dev
 ```
 
@@ -48,3 +49,10 @@ rebuilt from source.
 Use `npm run verify` before staging or handing off changes. The initial Git
 setup intentionally does not create a baseline commit, so a fresh `git status`
 will show source files as untracked until you decide what to stage.
+
+## Windows production release
+
+The first production target is a local, single-user Windows desktop app. Use
+`npm run verify:release` before publishing a Windows installer and follow
+[docs/production-windows.md](docs/production-windows.md) for the release,
+upgrade, rollback, data, and security checklist.

@@ -1,4 +1,5 @@
 export { generateReply, normalizeChatCompletionsUrl } from "./modelClient";
+export { AutopilotOrchestrator } from "./autopilotOrchestrator";
 export { JsonFileStorage, createInitialState, type RuntimeState, type StorageAdapter } from "./storage";
 export { ensureRuntimeDirs, redactModelConfig, redactToolMarketConfig, resolveMentionedSubagent, SupbotRuntime } from "./runtime";
 export { ContextManager } from "./contextManager";
@@ -13,5 +14,9 @@ export { ToolRegistry, type ToolDefinition, type ToolExecutionContext, type Tool
 export { TranscriptStore, type TranscriptEntry } from "./transcriptStore";
 export { fetchRemoteToolMarketProducts, findLocalToolMarketProduct, listLocalToolMarket, listToolMarketCatalog, localToolMarketProducts } from "./toolMarket";
 export { McpManager } from "./mcpManager";
+export { ProjectManager, pathIsInside as pathIsInsideProject, projectSandboxRoots, resolveProjectWriteTarget } from "./projectManager";
 export { RemoteBridgeManager } from "./remoteBridgeManager";
+export { ServstationA2AProvider } from "./servstationA2AProvider";
+export { ServstationReverseBridgeClient } from "./servstationReverseBridgeClient";
+export { identityContextFromAccessToken, oidcTokenSetFromTokenResponse } from "./servstationOidc";
 export { WorktreeManager, ensureGitWorktreeReady } from "./worktreeManager";

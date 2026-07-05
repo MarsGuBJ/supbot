@@ -21,7 +21,7 @@ export type ScheduleKind = "once" | "daily" | "cron";
 export type ToolMarketProductType = "tool" | "skill" | "plugin" | "mcp";
 export type ToolMarketSource = "local" | "remote" | "hybrid";
 
-export const defaultToolMarketApiUrl = "http://localhost:3000/subscriber/market/api";
+export const defaultToolMarketApiUrl = "https://i-shu.com";
 
 export interface ModelConfig {
   providerName: string;
@@ -81,9 +81,33 @@ export interface SubagentConfig {
 export interface CapabilityDefinition {
   id: string;
   name: string;
-  kind: "skill" | "tool" | "subagent" | "scheduler" | "storage";
+  kind: "skill" | "tool" | "plugin" | "mcp" | "subagent" | "scheduler" | "storage";
   description: string;
   enabled: boolean;
+}
+
+export interface CapabilityUpdateInput {
+  name?: string;
+  description?: string;
+  enabled?: boolean;
+}
+
+export interface ToolMarketPackageFile {
+  path: string;
+  content: string;
+  encoding?: "utf8" | "base64";
+}
+
+export interface ToolMarketMcpDeployment extends McpServerInput {
+  id?: string;
+}
+
+export interface ToolMarketLocalDeployment {
+  kind: ToolMarketProductType;
+  files?: ToolMarketPackageFile[];
+  capability?: CapabilityDefinition;
+  mcpServer?: ToolMarketMcpDeployment;
+  commandTemplates?: string[];
 }
 
 export interface ToolMarketProduct {
@@ -100,6 +124,7 @@ export interface ToolMarketProduct {
   sourceHealth?: string;
   capability: CapabilityDefinition;
   commandTemplates?: string[];
+  localDeployment?: ToolMarketLocalDeployment;
 }
 
 export interface ToolMarketCatalogItem extends ToolMarketProduct {
@@ -296,8 +321,114 @@ export interface RemoteBridgeConfig {
   host: string;
   port: number;
   tokenSaved: boolean;
+  allowRemoteBind?: boolean;
   pairingCode?: string;
   updatedAt?: string;
+}
+
+export interface IdentityContext {
+  tenantId: string;
+  organizationId: string;
+  departmentId: string;
+  userId: string;
+  roleIds: string[];
+  source?: "manual" | "servstation";
+  agentInstanceId?: string;
+  servstationUrl?: string;
+  updatedAt?: string;
+}
+
+export type ServstationA2AAuthMode = "identityHeaders" | "bearer" | "oidc";
+
+export interface ServstationA2AOidcConfig {
+  issuerUrl?: string;
+  clientId?: string;
+  scope?: string;
+  redirectUri?: string;
+  accessTokenExpiresAt?: string;
+  refreshTokenSaved: boolean;
+  userId?: string;
+}
+
+export type ServstationA2AReverseStatus = "disconnected" | "connecting" | "connected" | "error";
+
+export interface ServstationA2AReverseConfig {
+  enabled: boolean;
+  status: ServstationA2AReverseStatus;
+  peerId?: string;
+  clientInstanceId?: string;
+  connectedAt?: string;
+  lastHeartbeatAt?: string;
+  lastError?: string;
+  updatedAt?: string;
+}
+
+export interface ServstationA2AConfig {
+  enabled: boolean;
+  baseUrl?: string;
+  authMode: ServstationA2AAuthMode;
+  bearerTokenSaved: boolean;
+  oidc?: ServstationA2AOidcConfig;
+  reverse?: ServstationA2AReverseConfig;
+  agentInstanceId?: string;
+  updatedAt?: string;
+}
+
+export interface ServstationA2AConfigUpdate {
+  enabled?: boolean;
+  baseUrl?: string;
+  authMode?: ServstationA2AAuthMode;
+  bearerToken?: string;
+  clearBearerToken?: boolean;
+  agentInstanceId?: string;
+  oidcIssuerUrl?: string;
+  oidcClientId?: string;
+  oidcScope?: string;
+  oidcRedirectUri?: string;
+  reverseEnabled?: boolean;
+  reverseClientInstanceId?: string;
+}
+
+export interface ServstationA2AOidcTokenSet {
+  accessToken: string;
+  refreshToken?: string;
+  idToken?: string;
+  tokenType?: string;
+  scope?: string;
+  expiresAt?: string;
+  issuerUrl: string;
+  clientId: string;
+}
+
+export interface ServstationA2AOidcSessionUpdate {
+  baseUrl?: string;
+  issuerUrl: string;
+  clientId: string;
+  scope?: string;
+  redirectUri?: string;
+  tokens: ServstationA2AOidcTokenSet;
+  identityContext?: IdentityContext;
+}
+
+export interface ServstationA2AOidcLoginInput {
+  baseUrl?: string;
+  issuerUrl?: string;
+  clientId?: string;
+  scope?: string;
+  redirectUri?: string;
+}
+
+export interface ServstationA2AOidcLoginResult {
+  config: ServstationA2AConfig;
+  identityContext?: IdentityContext;
+}
+
+export interface RemoteBridgeCallerMetadata {
+  requestId?: string;
+  agentInstanceId?: string;
+  peerId?: string;
+  clientId?: string;
+  userContext?: IdentityContext;
 }
 
 export interface RemoteBridgeSession {
@@ -319,6 +450,11 @@ export interface RemoteBridgeAuditRecord {
   message: string;
   createdAt: string;
   remoteAddress?: string;
+  requestId?: string;
+  agentInstanceId?: string;
+  peerId?: string;
+  caller?: RemoteBridgeCallerMetadata;
+  identity?: IdentityContext;
 }
 
 export type MemoryScope = "global" | "conversation" | "subagent";
@@ -693,6 +829,7 @@ export type RuntimeEventKind =
   | "mcp_server"
   | "worktree_event"
   | "remote_bridge"
+  | "servstation_a2a"
   | "turn_complete"
   | "turn_failed";
 
@@ -793,9 +930,167 @@ export interface ScheduledJob {
   nextRunAt?: string;
 }
 
+export type ProjectStatus = "active" | "archived" | "error";
+
+export interface Project {
+  id: string;
+  name: string;
+  rootPath: string;
+  metadataPath: string;
+  status: ProjectStatus;
+  createdAt: string;
+  updatedAt: string;
+  lastRunAt?: string;
+  error?: string;
+}
+
+export interface ProjectCreateInput {
+  rootPath: string;
+  name?: string;
+}
+
+export interface ProjectUpdateInput {
+  name?: string;
+  status?: ProjectStatus;
+}
+
+export type DataSourceKind = "localFiles" | "folderScan" | "httpApi" | "webUrl" | "mcpTool" | "shellCommand";
+
+export interface DataSourceSpec {
+  id: string;
+  kind: DataSourceKind;
+  label: string;
+  path?: string;
+  paths?: string[];
+  url?: string;
+  method?: "GET" | "POST";
+  headers?: Record<string, string>;
+  body?: string;
+  mcpToolName?: string;
+  shellCommand?: string;
+}
+
+export type DataArtifactKind = "raw" | "processed" | "analysis" | "report" | "output";
+
+export type AutopilotStage = "clarify" | "inventory" | "collect" | "process" | "analyze" | "report" | "review";
+
+export interface DataArtifact {
+  id: string;
+  projectId: string;
+  runId: string;
+  taskId?: string;
+  kind: DataArtifactKind;
+  stage: AutopilotStage;
+  name: string;
+  path: string;
+  source: string;
+  size: number;
+  sha256?: string;
+  lineCount?: number;
+  createdAt: string;
+}
+
+export interface AutopilotWritePolicy {
+  mode: "projectSandbox";
+  allowedWriteRoots: string[];
+  allowNetwork: boolean;
+  allowMcp: boolean;
+  maxRuntimeMinutes: number;
+  maxTasks: number;
+  maxRetries: number;
+}
+
+export type AutopilotRunStatus = "queued" | "planning" | "running" | "paused" | "blocked" | "reviewing" | "completed" | "failed" | "canceled";
+
+export type AutopilotTaskStatus = "queued" | "running" | "completed" | "failed" | "blocked" | "skipped";
+
+export interface AutopilotTask {
+  id: string;
+  runId: string;
+  projectId: string;
+  stage: AutopilotStage;
+  staffAgent: string;
+  title: string;
+  prompt: string;
+  status: AutopilotTaskStatus;
+  attempts: number;
+  maxAttempts: number;
+  artifactIds: string[];
+  evidence: string[];
+  output?: string;
+  error?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AutopilotCheckpoint {
+  id: string;
+  runId: string;
+  projectId: string;
+  stage: AutopilotStage;
+  status: AutopilotRunStatus;
+  summary: string;
+  taskIds: string[];
+  artifactIds: string[];
+  createdAt: string;
+}
+
+export interface AutopilotEvent {
+  id: string;
+  runId: string;
+  projectId: string;
+  taskId?: string;
+  level: "info" | "warning" | "error";
+  message: string;
+  createdAt: string;
+  data?: unknown;
+}
+
+export interface AutopilotRun {
+  id: string;
+  projectId: string;
+  projectRoot: string;
+  title: string;
+  goal: string;
+  status: AutopilotRunStatus;
+  currentStage?: AutopilotStage;
+  writePolicy: AutopilotWritePolicy;
+  dataSources: DataSourceSpec[];
+  taskIds: string[];
+  artifactIds: string[];
+  checkpointIds: string[];
+  evidence: string[];
+  reportPath?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+}
+
+export interface AutopilotStartDataRunInput {
+  projectId: string;
+  goal: string;
+  title?: string;
+  dataSources?: DataSourceSpec[];
+  writePolicy?: Partial<AutopilotWritePolicy>;
+}
+
+export interface AutopilotRunReport {
+  run: AutopilotRun;
+  project?: Project;
+  tasks: AutopilotTask[];
+  artifacts: DataArtifact[];
+  checkpoints: AutopilotCheckpoint[];
+  events: AutopilotEvent[];
+}
+
 export interface RuntimeSnapshot {
   status: RuntimeStatus;
   agentName: string;
+  identityContext?: IdentityContext;
   modelConfig: ModelConfig;
   toolMarketConfig: ToolMarketConfig;
   personality: PersonalityConfig;
@@ -804,6 +1099,12 @@ export interface RuntimeSnapshot {
   conversations: Conversation[];
   jobs: AgentJob[];
   scheduledJobs: ScheduledJob[];
+  projects: Project[];
+  autopilotRuns: AutopilotRun[];
+  autopilotTasks: AutopilotTask[];
+  autopilotEvents: AutopilotEvent[];
+  autopilotCheckpoints: AutopilotCheckpoint[];
+  dataArtifacts: DataArtifact[];
   pendingToolPermissions: PendingToolPermission[];
   agentLoopTraces: AgentLoopTrace[];
   querySessions: QuerySession[];
@@ -820,6 +1121,9 @@ export interface RuntimeSnapshot {
     sessions: RemoteBridgeSession[];
     audit: RemoteBridgeAuditRecord[];
   };
+  servstationA2A: {
+    config: ServstationA2AConfig;
+  };
 }
 
 export type SupbotEvent =
@@ -835,8 +1139,12 @@ export type SupbotEvent =
   | { type: "memory_changed"; memory: MemorySnapshot }
   | { type: "permission_timeout"; permission: PendingToolPermission }
   | { type: "subagent_event"; event: RuntimeEventRecord }
+  | { type: "project_changed"; project: Project }
+  | { type: "autopilot_event"; event: AutopilotEvent }
+  | { type: "data_artifact"; artifact: DataArtifact }
   | { type: "worktree_event"; worktree: TaskWorktree; event: RuntimeEventRecord }
   | { type: "remote_bridge"; config: RemoteBridgeConfig; event?: RuntimeEventRecord }
+  | { type: "servstation_a2a"; config: ServstationA2AConfig; event?: RuntimeEventRecord }
   | { type: "error"; message: string };
 
 export interface SendPromptInput {
@@ -844,6 +1152,7 @@ export interface SendPromptInput {
   prompt: string;
   attachments?: Attachment[];
   workspaceMode?: WorkspaceMode;
+  remoteCaller?: RemoteBridgeCallerMetadata;
 }
 
 export interface SendPromptResult {
@@ -878,7 +1187,7 @@ export const defaultModelConfig: ModelConfig = {
 export const defaultToolMarketConfig: ToolMarketConfig = {
   source: "hybrid",
   apiUrl: defaultToolMarketApiUrl,
-  accountEmail: "subscriber@example.com",
+  accountEmail: "subscriber@toolsmarket.local",
   accessTokenSaved: false,
   passwordSaved: false
 };

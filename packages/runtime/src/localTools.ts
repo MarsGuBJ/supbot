@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { GeneratedFile } from "@supbot/shared";
+import { resolveProjectWriteTarget } from "./projectManager";
 
 export interface LocalToolResult {
   text: string;
@@ -13,6 +14,9 @@ export interface LocalToolHost {
   workspacePath?: string;
   cwd?: string;
   worktreeId?: string;
+  projectId?: string;
+  projectRoot?: string;
+  allowedWriteRoots?: string[];
   randomId(prefix: string): string;
   nowIso(): string;
   shellTimeoutMs?: number;
@@ -26,8 +30,10 @@ export async function readLocalFile(filePath: string): Promise<LocalToolResult> 
 }
 
 export async function writeLocalFile(target: string, content: string, host: LocalToolHost): Promise<LocalToolResult> {
-  const outputRoot = host.workspacePath || join(host.dataDir, "generated-files");
-  const outputPath = isAbsolute(target) ? target : join(outputRoot, target);
+  const outputRoot = host.projectRoot || host.workspacePath || join(host.dataDir, "generated-files");
+  const outputPath = host.projectRoot && host.allowedWriteRoots?.length
+    ? resolveProjectWriteTarget(host.projectRoot, target, host.allowedWriteRoots)
+    : resolveLocalWritePath(outputRoot, target);
   await mkdir(dirname(outputPath), { recursive: true });
   await writeFile(outputPath, content, "utf8");
   const info = await stat(outputPath);
@@ -42,6 +48,16 @@ export async function writeLocalFile(target: string, content: string, host: Loca
     text: `Wrote ${generatedFile.name} (${generatedFile.size} bytes)\n${outputPath}`,
     generatedFiles: [generatedFile]
   };
+}
+
+function resolveLocalWritePath(outputRoot: string, target: string): string {
+  const rootPath = resolve(outputRoot);
+  const outputPath = isAbsolute(target) ? resolve(target) : resolve(rootPath, target);
+  const relativePath = relative(rootPath, outputPath);
+  if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    throw new Error(`WriteFile target must stay inside ${rootPath}.`);
+  }
+  return outputPath;
 }
 
 export async function runShellCommand(command: string, signal: AbortSignal, timeoutMs = 60_000, cwd?: string): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {

@@ -1,9 +1,14 @@
 /// <reference types="vite/client" />
 
 import type {
+  AutopilotRun,
+  AutopilotRunReport,
+  AutopilotStartDataRunInput,
   Attachment,
+  CapabilityUpdateInput,
   Conversation,
   GeneratedFile,
+  IdentityContext,
   MemoryAddInput,
   MemoryFact,
   MemoryImportInput,
@@ -34,6 +39,9 @@ import type {
   PermissionMode,
   PermissionRule,
   PersonalityConfig,
+  Project,
+  ProjectCreateInput,
+  ProjectUpdateInput,
   RemoteBridgeAuditRecord,
   RemoteBridgeConfig,
   RemoteBridgeSession,
@@ -42,6 +50,10 @@ import type {
   ScheduledJobInput,
   SendPromptInput,
   SendPromptResult,
+  ServstationA2AConfig,
+  ServstationA2AConfigUpdate,
+  ServstationA2AOidcLoginInput,
+  ServstationA2AOidcLoginResult,
   SubagentConfig,
   SupbotEvent,
   ToolMarketCatalogItem,
@@ -67,6 +79,16 @@ declare global {
       removePermissionRule(id: string): Promise<void>;
       compactConversation(conversationId: string): Promise<import("@supbot/shared").CompactBoundary>;
       loadTranscript(conversationId: string): Promise<TranscriptLoadResult>;
+      createProjectFromFolder(input: ProjectCreateInput): Promise<Project>;
+      listProjects(): Promise<Project[]>;
+      pickProjectFolder(): Promise<string>;
+      openProject(id: string): Promise<Project>;
+      updateProject(id: string, input: ProjectUpdateInput): Promise<Project>;
+      startAutopilotDataRun(input: AutopilotStartDataRunInput): Promise<AutopilotRun>;
+      pauseAutopilotRun(id: string): Promise<AutopilotRun>;
+      resumeAutopilotRun(id: string): Promise<AutopilotRun>;
+      cancelAutopilotRun(id: string): Promise<AutopilotRun>;
+      getAutopilotRunReport(id: string): Promise<AutopilotRunReport>;
       listWorktrees(): Promise<TaskWorktree[]>;
       getWorktreeDiff(id: string): Promise<import("@supbot/shared").WorktreeDiffSummary>;
       applyWorktree(id: string): Promise<TaskWorktree>;
@@ -77,6 +99,15 @@ declare global {
       listRemoteBridgeSessions(): Promise<RemoteBridgeSession[]>;
       revokeRemoteBridgeSession(id: string): Promise<RemoteBridgeSession>;
       listRemoteBridgeAudit(): Promise<RemoteBridgeAuditRecord[]>;
+      getIdentityContext(): Promise<IdentityContext | undefined>;
+      updateIdentityContext(input: IdentityContext): Promise<IdentityContext>;
+      getServstationA2AConfig(): Promise<ServstationA2AConfig>;
+      updateServstationA2AConfig(input: ServstationA2AConfigUpdate): Promise<ServstationA2AConfig>;
+      loginServstationOidc(input?: ServstationA2AOidcLoginInput): Promise<ServstationA2AOidcLoginResult>;
+      refreshServstationOidc(): Promise<ServstationA2AConfig>;
+      logoutServstationOidc(): Promise<ServstationA2AConfig>;
+      connectServstationReverseBridge(): Promise<ServstationA2AConfig>;
+      disconnectServstationReverseBridge(): Promise<ServstationA2AConfig>;
       listMemory(query?: MemorySearchQuery): Promise<MemorySearchResult[]>;
       searchMemory(query?: MemorySearchQuery): Promise<MemorySearchResult[]>;
       addMemory(input: MemoryAddInput): Promise<MemoryPage | MemoryFact>;
@@ -95,6 +126,8 @@ declare global {
       testModelConfig(input?: Partial<ModelConfigUpdate>): Promise<ModelTestResult>;
       updateToolMarketConfig(input: ToolMarketConfigUpdate): Promise<ToolMarketConfig>;
       updatePersonality(input: PersonalityConfig): Promise<PersonalityConfig>;
+      updateCapability(id: string, input: CapabilityUpdateInput): Promise<import("@supbot/shared").CapabilityDefinition>;
+      deleteCapability(id: string): Promise<void>;
       saveSubagent(input: SubagentConfig): Promise<SubagentConfig>;
       deleteSubagent(id: string): Promise<void>;
       listToolMarket(query?: ToolMarketQuery): Promise<ToolMarketCatalogItem[]>;

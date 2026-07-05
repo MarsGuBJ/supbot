@@ -3,22 +3,31 @@ import { dirname, join } from "node:path";
 import {
   type AgentJob,
   type AgentLoopTrace,
+  type AutopilotCheckpoint,
+  type AutopilotEvent,
+  type AutopilotRun,
+  type AutopilotTask,
   type CapabilityDefinition,
   type CompactBoundary,
   type Conversation,
+  type DataArtifact,
   defaultModelConfig,
   defaultPersonality,
   defaultToolMarketConfig,
   type ChatMessage,
+  type IdentityContext,
   type McpServerConfig,
   type MemorySnapshot,
   type ModelConfig,
   type PendingToolPermission,
   type PermissionMode,
   type PermissionRule,
+  type Project,
   type RemoteBridgeAuditRecord,
   type RemoteBridgeConfig,
   type RemoteBridgeSession,
+  type ServstationA2AConfig,
+  type ServstationA2AOidcConfig,
   type PersonalityConfig,
   type QuerySession,
   type RuntimeEventRecord,
@@ -30,6 +39,7 @@ import {
 
 export interface RuntimeState {
   agentName: string;
+  identityContext?: IdentityContext;
   modelConfig: ModelConfig;
   modelSecret?: string;
   toolMarketConfig: ToolMarketConfig;
@@ -37,10 +47,17 @@ export interface RuntimeState {
   toolMarketPasswordSecret?: string;
   personality: PersonalityConfig;
   capabilities: CapabilityDefinition[];
+  deletedCapabilityIds: string[];
   subagents: SubagentConfig[];
   conversations: Conversation[];
   jobs: AgentJob[];
   scheduledJobs: ScheduledJob[];
+  projects: Project[];
+  autopilotRuns: AutopilotRun[];
+  autopilotTasks: AutopilotTask[];
+  autopilotEvents: AutopilotEvent[];
+  autopilotCheckpoints: AutopilotCheckpoint[];
+  dataArtifacts: DataArtifact[];
   pendingToolPermissions: PendingToolPermission[];
   agentLoopTraces: AgentLoopTrace[];
   querySessions: QuerySession[];
@@ -55,6 +72,9 @@ export interface RuntimeState {
   remoteBridgeSecret?: string;
   remoteBridgeSessions: RemoteBridgeSession[];
   remoteBridgeAudit: RemoteBridgeAuditRecord[];
+  servstationA2AConfig: ServstationA2AConfig;
+  servstationA2ASecret?: string;
+  servstationA2AOidcSecret?: string;
 }
 
 export interface StorageAdapter {
@@ -91,6 +111,13 @@ const defaultCapabilities: CapabilityDefinition[] = [
     kind: "storage",
     description: "Track artifacts created by local agent jobs.",
     enabled: true
+  },
+  {
+    id: "tool.autopilot-data",
+    name: "Project data autopilot",
+    kind: "storage",
+    description: "Run supervised project-based data collection, processing, analysis, and reporting workflows.",
+    enabled: true
   }
 ];
 
@@ -108,20 +135,56 @@ const defaultSubagents: SubagentConfig[] = [
     description: "Focuses on implementation plans, code edits, and verification steps.",
     systemPrompt: "You are a local builder subagent. Turn the task into concrete implementation steps and call out risks.",
     enabled: true
+  },
+  {
+    id: "collector",
+    name: "collector",
+    description: "Collects source data for project-based data runs.",
+    systemPrompt: "You are a local data collection staff-agent. Gather source data into approved project data folders, record sources, and keep outputs concise.",
+    enabled: true
+  },
+  {
+    id: "processor",
+    name: "processor",
+    description: "Cleans, deduplicates, and transforms collected data.",
+    systemPrompt: "You are a local data processing staff-agent. Clean, deduplicate, transform, and summarize data artifacts inside approved project output folders.",
+    enabled: true
+  },
+  {
+    id: "analyst",
+    name: "analyst",
+    description: "Analyzes processed data and extracts evidence-backed findings.",
+    systemPrompt: "You are a local data analysis staff-agent. Produce evidence-backed findings from project data artifacts and cite the files you used.",
+    enabled: true
+  },
+  {
+    id: "reviewer",
+    name: "reviewer",
+    description: "Reviews data-run outputs against the goal and evidence ledger.",
+    systemPrompt: "You are a local data review staff-agent. Check whether the run output satisfies the goal, identify unsupported claims, and request fixes when evidence is missing.",
+    enabled: true
   }
 ];
 
 export function createInitialState(): RuntimeState {
   return {
     agentName: "Supbot Local Agent",
+    identityContext: undefined,
     modelConfig: { ...defaultModelConfig },
     toolMarketConfig: { ...defaultToolMarketConfig },
     personality: { ...defaultPersonality, traits: [...defaultPersonality.traits] },
     capabilities: defaultCapabilities.map((item) => ({ ...item })),
+    deletedCapabilityIds: [],
     subagents: defaultSubagents.map((item) => ({ ...item })),
     conversations: [],
     jobs: [],
     scheduledJobs: [],
+    projects: [],
+    autopilotRuns: [],
+    autopilotTasks: [],
+    autopilotEvents: [],
+    autopilotCheckpoints: [],
+    dataArtifacts: [],
     pendingToolPermissions: [],
     agentLoopTraces: [],
     querySessions: [],
@@ -139,7 +202,19 @@ export function createInitialState(): RuntimeState {
       tokenSaved: false
     },
     remoteBridgeSessions: [],
-    remoteBridgeAudit: []
+    remoteBridgeAudit: [],
+    servstationA2AConfig: {
+      enabled: false,
+      authMode: "identityHeaders",
+      bearerTokenSaved: false,
+      oidc: {
+        refreshTokenSaved: false
+      },
+      reverse: {
+        enabled: false,
+        status: "disconnected"
+      }
+    }
   };
 }
 
@@ -192,6 +267,7 @@ function normalizeState(input: Partial<RuntimeState>): RuntimeState {
   const initial = createInitialState();
   return {
     agentName: stringOr(input.agentName, initial.agentName),
+    identityContext: normalizeIdentityContext(input.identityContext),
     modelConfig: {
       ...initial.modelConfig,
       ...(input.modelConfig || {}),
@@ -206,11 +282,18 @@ function normalizeState(input: Partial<RuntimeState>): RuntimeState {
       ...(input.personality || {}),
       traits: Array.isArray(input.personality?.traits) ? input.personality.traits.filter((item) => typeof item === "string") : initial.personality.traits
     },
-    capabilities: mergeDefaultCapabilities(Array.isArray(input.capabilities) ? input.capabilities : [], initial.capabilities),
+    capabilities: mergeDefaultCapabilities(Array.isArray(input.capabilities) ? input.capabilities : [], initial.capabilities, normalizeDeletedCapabilityIds(input.deletedCapabilityIds)),
+    deletedCapabilityIds: normalizeDeletedCapabilityIds(input.deletedCapabilityIds),
     subagents: Array.isArray(input.subagents) ? input.subagents : initial.subagents,
     conversations: Array.isArray(input.conversations) ? input.conversations.map(normalizeConversation) : [],
     jobs: Array.isArray(input.jobs) ? input.jobs : [],
     scheduledJobs: Array.isArray(input.scheduledJobs) ? input.scheduledJobs : [],
+    projects: Array.isArray(input.projects) ? input.projects.map(normalizeProject).filter(Boolean) as Project[] : [],
+    autopilotRuns: Array.isArray(input.autopilotRuns) ? input.autopilotRuns.map(normalizeAutopilotRun).filter(Boolean) as AutopilotRun[] : [],
+    autopilotTasks: Array.isArray(input.autopilotTasks) ? input.autopilotTasks.map(normalizeAutopilotTask).filter(Boolean) as AutopilotTask[] : [],
+    autopilotEvents: Array.isArray(input.autopilotEvents) ? input.autopilotEvents.map(normalizeAutopilotEvent).filter(Boolean) as AutopilotEvent[] : [],
+    autopilotCheckpoints: Array.isArray(input.autopilotCheckpoints) ? input.autopilotCheckpoints.map(normalizeAutopilotCheckpoint).filter(Boolean) as AutopilotCheckpoint[] : [],
+    dataArtifacts: Array.isArray(input.dataArtifacts) ? input.dataArtifacts.map(normalizeDataArtifact).filter(Boolean) as DataArtifact[] : [],
     pendingToolPermissions: Array.isArray(input.pendingToolPermissions) ? input.pendingToolPermissions : [],
     agentLoopTraces: Array.isArray(input.agentLoopTraces) ? input.agentLoopTraces : [],
     querySessions: Array.isArray(input.querySessions) ? input.querySessions : [],
@@ -224,7 +307,10 @@ function normalizeState(input: Partial<RuntimeState>): RuntimeState {
     remoteBridgeConfig: normalizeRemoteBridgeConfig(input.remoteBridgeConfig, Boolean(input.remoteBridgeSecret)),
     remoteBridgeSecret: typeof input.remoteBridgeSecret === "string" ? input.remoteBridgeSecret : undefined,
     remoteBridgeSessions: Array.isArray(input.remoteBridgeSessions) ? input.remoteBridgeSessions.map(normalizeRemoteBridgeSession).filter(Boolean) as RemoteBridgeSession[] : [],
-    remoteBridgeAudit: Array.isArray(input.remoteBridgeAudit) ? input.remoteBridgeAudit.map(normalizeRemoteBridgeAudit).filter(Boolean) as RemoteBridgeAuditRecord[] : []
+    remoteBridgeAudit: Array.isArray(input.remoteBridgeAudit) ? input.remoteBridgeAudit.map(normalizeRemoteBridgeAudit).filter(Boolean) as RemoteBridgeAuditRecord[] : [],
+    servstationA2AConfig: normalizeServstationA2AConfig(input.servstationA2AConfig, Boolean(input.servstationA2ASecret), Boolean(input.servstationA2AOidcSecret)),
+    servstationA2ASecret: typeof input.servstationA2ASecret === "string" ? input.servstationA2ASecret : undefined,
+    servstationA2AOidcSecret: typeof input.servstationA2AOidcSecret === "string" ? input.servstationA2AOidcSecret : undefined
   };
 }
 
@@ -275,6 +361,141 @@ function normalizeConversation(conversation: Conversation): Conversation {
   };
 }
 
+function normalizeProject(project: Project): Project | undefined {
+  if (!project || typeof project !== "object" || typeof project.id !== "string" || typeof project.rootPath !== "string") {
+    return undefined;
+  }
+  const now = new Date().toISOString();
+  return {
+    id: project.id,
+    name: typeof project.name === "string" && project.name.trim() ? project.name : project.id,
+    rootPath: project.rootPath,
+    metadataPath: typeof project.metadataPath === "string" ? project.metadataPath : "",
+    status: project.status === "archived" || project.status === "error" ? project.status : "active",
+    createdAt: typeof project.createdAt === "string" ? project.createdAt : now,
+    updatedAt: typeof project.updatedAt === "string" ? project.updatedAt : now,
+    lastRunAt: typeof project.lastRunAt === "string" ? project.lastRunAt : undefined,
+    error: typeof project.error === "string" ? project.error : undefined
+  };
+}
+
+function normalizeAutopilotRun(run: AutopilotRun): AutopilotRun | undefined {
+  if (!run || typeof run !== "object" || typeof run.id !== "string" || typeof run.projectId !== "string") {
+    return undefined;
+  }
+  const now = new Date().toISOString();
+  return {
+    id: run.id,
+    projectId: run.projectId,
+    projectRoot: typeof run.projectRoot === "string" ? run.projectRoot : "",
+    title: typeof run.title === "string" && run.title.trim() ? run.title : "Data run",
+    goal: typeof run.goal === "string" ? run.goal : "",
+    status: normalizeAutopilotRunStatus(run.status),
+    currentStage: normalizeAutopilotStage(run.currentStage),
+    writePolicy: {
+      mode: "projectSandbox",
+      allowedWriteRoots: Array.isArray(run.writePolicy?.allowedWriteRoots) ? run.writePolicy.allowedWriteRoots.filter((item): item is string => typeof item === "string") : [],
+      allowNetwork: run.writePolicy?.allowNetwork !== false,
+      allowMcp: run.writePolicy?.allowMcp !== false,
+      maxRuntimeMinutes: normalizePositiveNumber(run.writePolicy?.maxRuntimeMinutes, 120),
+      maxTasks: normalizePositiveNumber(run.writePolicy?.maxTasks, 16),
+      maxRetries: normalizePositiveNumber(run.writePolicy?.maxRetries, 1)
+    },
+    dataSources: Array.isArray(run.dataSources) ? run.dataSources : [],
+    taskIds: Array.isArray(run.taskIds) ? run.taskIds.filter((item): item is string => typeof item === "string") : [],
+    artifactIds: Array.isArray(run.artifactIds) ? run.artifactIds.filter((item): item is string => typeof item === "string") : [],
+    checkpointIds: Array.isArray(run.checkpointIds) ? run.checkpointIds.filter((item): item is string => typeof item === "string") : [],
+    evidence: Array.isArray(run.evidence) ? run.evidence.filter((item): item is string => typeof item === "string") : [],
+    reportPath: typeof run.reportPath === "string" ? run.reportPath : undefined,
+    error: typeof run.error === "string" ? run.error : undefined,
+    createdAt: typeof run.createdAt === "string" ? run.createdAt : now,
+    updatedAt: typeof run.updatedAt === "string" ? run.updatedAt : now,
+    startedAt: typeof run.startedAt === "string" ? run.startedAt : undefined,
+    finishedAt: typeof run.finishedAt === "string" ? run.finishedAt : undefined
+  };
+}
+
+function normalizeAutopilotTask(task: AutopilotTask): AutopilotTask | undefined {
+  if (!task || typeof task !== "object" || typeof task.id !== "string" || typeof task.runId !== "string") {
+    return undefined;
+  }
+  const now = new Date().toISOString();
+  return {
+    id: task.id,
+    runId: task.runId,
+    projectId: typeof task.projectId === "string" ? task.projectId : "",
+    stage: normalizeAutopilotStage(task.stage) || "clarify",
+    staffAgent: typeof task.staffAgent === "string" ? task.staffAgent : "collector",
+    title: typeof task.title === "string" ? task.title : "Autopilot task",
+    prompt: typeof task.prompt === "string" ? task.prompt : "",
+    status: normalizeAutopilotTaskStatus(task.status),
+    attempts: normalizeNonNegativeNumber(task.attempts, 0),
+    maxAttempts: normalizePositiveNumber(task.maxAttempts, 2),
+    artifactIds: Array.isArray(task.artifactIds) ? task.artifactIds.filter((item): item is string => typeof item === "string") : [],
+    evidence: Array.isArray(task.evidence) ? task.evidence.filter((item): item is string => typeof item === "string") : [],
+    output: typeof task.output === "string" ? task.output : undefined,
+    error: typeof task.error === "string" ? task.error : undefined,
+    startedAt: typeof task.startedAt === "string" ? task.startedAt : undefined,
+    finishedAt: typeof task.finishedAt === "string" ? task.finishedAt : undefined,
+    createdAt: typeof task.createdAt === "string" ? task.createdAt : now,
+    updatedAt: typeof task.updatedAt === "string" ? task.updatedAt : now
+  };
+}
+
+function normalizeAutopilotEvent(event: AutopilotEvent): AutopilotEvent | undefined {
+  if (!event || typeof event !== "object" || typeof event.id !== "string" || typeof event.runId !== "string") {
+    return undefined;
+  }
+  return {
+    id: event.id,
+    runId: event.runId,
+    projectId: typeof event.projectId === "string" ? event.projectId : "",
+    taskId: typeof event.taskId === "string" ? event.taskId : undefined,
+    level: event.level === "warning" || event.level === "error" ? event.level : "info",
+    message: typeof event.message === "string" ? event.message : "",
+    createdAt: typeof event.createdAt === "string" ? event.createdAt : new Date().toISOString(),
+    data: event.data
+  };
+}
+
+function normalizeAutopilotCheckpoint(checkpoint: AutopilotCheckpoint): AutopilotCheckpoint | undefined {
+  if (!checkpoint || typeof checkpoint !== "object" || typeof checkpoint.id !== "string" || typeof checkpoint.runId !== "string") {
+    return undefined;
+  }
+  return {
+    id: checkpoint.id,
+    runId: checkpoint.runId,
+    projectId: typeof checkpoint.projectId === "string" ? checkpoint.projectId : "",
+    stage: normalizeAutopilotStage(checkpoint.stage) || "clarify",
+    status: normalizeAutopilotRunStatus(checkpoint.status),
+    summary: typeof checkpoint.summary === "string" ? checkpoint.summary : "",
+    taskIds: Array.isArray(checkpoint.taskIds) ? checkpoint.taskIds.filter((item): item is string => typeof item === "string") : [],
+    artifactIds: Array.isArray(checkpoint.artifactIds) ? checkpoint.artifactIds.filter((item): item is string => typeof item === "string") : [],
+    createdAt: typeof checkpoint.createdAt === "string" ? checkpoint.createdAt : new Date().toISOString()
+  };
+}
+
+function normalizeDataArtifact(artifact: DataArtifact): DataArtifact | undefined {
+  if (!artifact || typeof artifact !== "object" || typeof artifact.id !== "string" || typeof artifact.path !== "string") {
+    return undefined;
+  }
+  return {
+    id: artifact.id,
+    projectId: typeof artifact.projectId === "string" ? artifact.projectId : "",
+    runId: typeof artifact.runId === "string" ? artifact.runId : "",
+    taskId: typeof artifact.taskId === "string" ? artifact.taskId : undefined,
+    kind: artifact.kind === "raw" || artifact.kind === "processed" || artifact.kind === "analysis" || artifact.kind === "report" ? artifact.kind : "output",
+    stage: normalizeAutopilotStage(artifact.stage) || "collect",
+    name: typeof artifact.name === "string" ? artifact.name : artifact.id,
+    path: artifact.path,
+    source: typeof artifact.source === "string" ? artifact.source : "autopilot",
+    size: typeof artifact.size === "number" && Number.isFinite(artifact.size) ? artifact.size : 0,
+    sha256: typeof artifact.sha256 === "string" ? artifact.sha256 : undefined,
+    lineCount: typeof artifact.lineCount === "number" && Number.isFinite(artifact.lineCount) ? artifact.lineCount : undefined,
+    createdAt: typeof artifact.createdAt === "string" ? artifact.createdAt : new Date().toISOString()
+  };
+}
+
 function normalizeMessage(message: ChatMessage): ChatMessage {
   if (message.role !== "assistant" || !message.text.startsWith("Local fallback")) {
     return message;
@@ -294,12 +515,22 @@ function normalizeMessage(message: ChatMessage): ChatMessage {
   };
 }
 
-function mergeDefaultCapabilities(current: CapabilityDefinition[], defaults: CapabilityDefinition[]): CapabilityDefinition[] {
+function mergeDefaultCapabilities(current: CapabilityDefinition[], defaults: CapabilityDefinition[], deletedIds: string[] = []): CapabilityDefinition[] {
   const byId = new Map(current.map((item) => [item.id, item]));
+  const deleted = new Set(deletedIds);
   for (const item of defaults) {
+    if (deleted.has(item.id)) {
+      continue;
+    }
     byId.set(item.id, { ...item, enabled: byId.get(item.id)?.enabled ?? item.enabled });
   }
   return [...byId.values()];
+}
+
+function normalizeDeletedCapabilityIds(value: unknown): string[] {
+  return Array.isArray(value)
+    ? [...new Set(value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim()))]
+    : [];
 }
 
 function stringOr(value: unknown, fallback: string): string {
@@ -371,6 +602,32 @@ function normalizeDiffStatus(value: unknown): TaskWorktree["diffStatus"] {
   return value === "none" || value === "dirty" || value === "applied" || value === "discarded" || value === "unavailable" ? value : "unavailable";
 }
 
+function normalizeAutopilotRunStatus(value: unknown): AutopilotRun["status"] {
+  return value === "queued" || value === "planning" || value === "running" || value === "paused" || value === "blocked" || value === "reviewing" || value === "completed" || value === "failed" || value === "canceled"
+    ? value
+    : "queued";
+}
+
+function normalizeAutopilotTaskStatus(value: unknown): AutopilotTask["status"] {
+  return value === "queued" || value === "running" || value === "completed" || value === "failed" || value === "blocked" || value === "skipped"
+    ? value
+    : "queued";
+}
+
+function normalizeAutopilotStage(value: unknown): AutopilotTask["stage"] | undefined {
+  return value === "clarify" || value === "inventory" || value === "collect" || value === "process" || value === "analyze" || value === "report" || value === "review"
+    ? value
+    : undefined;
+}
+
+function normalizePositiveNumber(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value) : fallback;
+}
+
+function normalizeNonNegativeNumber(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.round(value) : fallback;
+}
+
 function normalizeRemoteBridgeConfig(value: unknown, tokenSaved: boolean): RemoteBridgeConfig {
   const input = value as Partial<RemoteBridgeConfig> | undefined;
   const port = typeof input?.port === "number" && Number.isFinite(input.port) ? Math.round(input.port) : 47831;
@@ -379,9 +636,101 @@ function normalizeRemoteBridgeConfig(value: unknown, tokenSaved: boolean): Remot
     host: typeof input?.host === "string" && input.host.trim() ? input.host.trim() : "127.0.0.1",
     port: port === 0 ? 0 : Math.min(65535, Math.max(1024, port)),
     tokenSaved,
+    allowRemoteBind: Boolean(input?.allowRemoteBind),
     pairingCode: typeof input?.pairingCode === "string" ? input.pairingCode : undefined,
     updatedAt: typeof input?.updatedAt === "string" ? input.updatedAt : undefined
   };
+}
+
+function normalizeServstationA2AConfig(value: unknown, bearerTokenSaved: boolean, oidcTokenSaved = false): ServstationA2AConfig {
+  const input = value as Partial<ServstationA2AConfig> | undefined;
+  const baseUrl = typeof input?.baseUrl === "string" && input.baseUrl.trim() ? normalizeHttpUrl(input.baseUrl) : undefined;
+  return {
+    enabled: Boolean(input?.enabled),
+    baseUrl: baseUrl || undefined,
+    authMode: input?.authMode === "bearer" || input?.authMode === "oidc" ? input.authMode : "identityHeaders",
+    bearerTokenSaved,
+    oidc: normalizeServstationA2AOidcConfig(input?.oidc, oidcTokenSaved),
+    reverse: normalizeServstationA2AReverseConfig(input?.reverse),
+    agentInstanceId: typeof input?.agentInstanceId === "string" && input.agentInstanceId.trim() ? input.agentInstanceId.trim() : undefined,
+    updatedAt: typeof input?.updatedAt === "string" ? input.updatedAt : undefined
+  };
+}
+
+function normalizeServstationA2AReverseConfig(value: unknown): NonNullable<ServstationA2AConfig["reverse"]> {
+  const input = value as Partial<NonNullable<ServstationA2AConfig["reverse"]>> | undefined;
+  const status = input?.status === "connecting" || input?.status === "connected" || input?.status === "error"
+    ? input.status
+    : "disconnected";
+  return {
+    enabled: Boolean(input?.enabled),
+    status: input?.enabled ? status : "disconnected",
+    peerId: typeof input?.peerId === "string" && input.peerId.trim() ? input.peerId.trim() : undefined,
+    clientInstanceId: typeof input?.clientInstanceId === "string" && input.clientInstanceId.trim() ? input.clientInstanceId.trim() : undefined,
+    connectedAt: typeof input?.connectedAt === "string" ? input.connectedAt : undefined,
+    lastHeartbeatAt: typeof input?.lastHeartbeatAt === "string" ? input.lastHeartbeatAt : undefined,
+    lastError: typeof input?.lastError === "string" && input.lastError.trim() ? input.lastError.trim() : undefined,
+    updatedAt: typeof input?.updatedAt === "string" ? input.updatedAt : undefined
+  };
+}
+
+function normalizeServstationA2AOidcConfig(value: unknown, refreshTokenSaved: boolean): ServstationA2AOidcConfig {
+  const input = value as Partial<ServstationA2AOidcConfig> | undefined;
+  return {
+    issuerUrl: typeof input?.issuerUrl === "string" && input.issuerUrl.trim() ? normalizeHttpUrl(input.issuerUrl) : undefined,
+    clientId: typeof input?.clientId === "string" && input.clientId.trim() ? input.clientId.trim() : undefined,
+    scope: typeof input?.scope === "string" && input.scope.trim() ? input.scope.trim() : undefined,
+    redirectUri: typeof input?.redirectUri === "string" && input.redirectUri.trim() ? normalizeHttpUrl(input.redirectUri) : undefined,
+    accessTokenExpiresAt: typeof input?.accessTokenExpiresAt === "string" ? input.accessTokenExpiresAt : undefined,
+    refreshTokenSaved,
+    userId: typeof input?.userId === "string" && input.userId.trim() ? input.userId.trim() : undefined
+  };
+}
+
+export function normalizeIdentityContext(value: unknown): IdentityContext | undefined {
+  const input = value as Partial<IdentityContext> | undefined;
+  if (
+    !input ||
+    typeof input.tenantId !== "string" ||
+    typeof input.organizationId !== "string" ||
+    typeof input.departmentId !== "string" ||
+    typeof input.userId !== "string"
+  ) {
+    return undefined;
+  }
+  const tenantId = input.tenantId.trim();
+  const organizationId = input.organizationId.trim();
+  const departmentId = input.departmentId.trim();
+  const userId = input.userId.trim();
+  if (!tenantId || !organizationId || !departmentId || !userId) {
+    return undefined;
+  }
+  const source = input.source === "servstation" ? "servstation" : input.source === "manual" ? "manual" : undefined;
+  return {
+    tenantId,
+    organizationId,
+    departmentId,
+    userId,
+    roleIds: Array.isArray(input.roleIds) ? input.roleIds.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim()) : [],
+    source,
+    agentInstanceId: typeof input.agentInstanceId === "string" && input.agentInstanceId.trim() ? input.agentInstanceId.trim() : undefined,
+    servstationUrl: typeof input.servstationUrl === "string" && input.servstationUrl.trim() ? input.servstationUrl.trim() : undefined,
+    updatedAt: typeof input.updatedAt === "string" ? input.updatedAt : undefined
+  };
+}
+
+function normalizeHttpUrl(value: string): string {
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return "";
+    }
+    url.username = "";
+    url.password = "";
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return "";
+  }
 }
 
 function normalizeRemoteBridgeSession(value: RemoteBridgeSession): RemoteBridgeSession | undefined {
@@ -411,6 +760,25 @@ function normalizeRemoteBridgeAudit(value: RemoteBridgeAuditRecord): RemoteBridg
     statusCode: typeof value.statusCode === "number" ? value.statusCode : 0,
     message: typeof value.message === "string" ? value.message : "",
     createdAt: typeof value.createdAt === "string" ? value.createdAt : new Date().toISOString(),
-    remoteAddress: typeof value.remoteAddress === "string" ? value.remoteAddress : undefined
+    remoteAddress: typeof value.remoteAddress === "string" ? value.remoteAddress : undefined,
+    requestId: typeof value.requestId === "string" ? value.requestId : undefined,
+    agentInstanceId: typeof value.agentInstanceId === "string" ? value.agentInstanceId : undefined,
+    peerId: typeof value.peerId === "string" ? value.peerId : undefined,
+    caller: normalizeCallerMetadata(value.caller),
+    identity: normalizeIdentityContext(value.identity)
+  };
+}
+
+function normalizeCallerMetadata(value: unknown) {
+  const input = value as RemoteBridgeAuditRecord["caller"] | undefined;
+  if (!input || typeof input !== "object") {
+    return undefined;
+  }
+  return {
+    requestId: typeof input.requestId === "string" ? input.requestId : undefined,
+    agentInstanceId: typeof input.agentInstanceId === "string" ? input.agentInstanceId : undefined,
+    peerId: typeof input.peerId === "string" ? input.peerId : undefined,
+    clientId: typeof input.clientId === "string" ? input.clientId : undefined,
+    userContext: normalizeIdentityContext(input.userContext)
   };
 }

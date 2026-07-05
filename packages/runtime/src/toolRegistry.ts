@@ -19,6 +19,9 @@ export interface ToolExecutionContext {
   signal: AbortSignal;
   host: LocalToolHost;
   workspaceMode?: "main" | "isolated" | "readOnly";
+  projectId?: string;
+  projectRoot?: string;
+  allowedWriteRoots?: string[];
   ensureIsolatedWorkspace?(toolName: string): Promise<LocalToolHost | undefined>;
   subagents: SubagentConfig[];
   runSubagent(input: { subagentType?: string; prompt: string; signal: AbortSignal }): Promise<ToolExecutionResult>;
