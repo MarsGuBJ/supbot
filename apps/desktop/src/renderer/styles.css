@@ -201,6 +201,12 @@ button {
   background: rgba(9, 16, 24, 0.54);
 }
 
+.side-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .activity-panel {
   border-right: 0;
   border-left: 1px solid var(--line);
@@ -209,12 +215,14 @@ button {
 }
 
 .side-panel.is-collapsed .panel-scroll,
+.side-panel.is-collapsed .server-agent-connect,
 .activity-panel.is-collapsed .ant-tabs {
   display: none;
 }
 
 .panel-scroll {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 14px;
 }
@@ -225,6 +233,23 @@ button {
   border-bottom: 1px solid var(--line);
   padding: 0 0 18px;
   margin-bottom: 18px;
+}
+
+.server-agent-connect {
+  border-top: 1px solid var(--line);
+  padding: 14px;
+  background: rgba(9, 16, 24, 0.7);
+}
+
+.server-agent-button {
+  min-height: 40px;
+  font-weight: 800;
+}
+
+.server-agent-button.is-connected {
+  color: #99f6e4;
+  border-color: rgba(20, 184, 166, 0.62);
+  background: rgba(20, 184, 166, 0.1);
 }
 
 .section-title {
@@ -1751,6 +1776,558 @@ button {
   overflow-wrap: anywhere;
 }
 
+.server-agent-workspace {
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 14px;
+  padding: 18px;
+  overflow: hidden;
+  background: rgba(5, 10, 16, 0.44);
+}
+
+.server-agent-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.server-agent-header h2 {
+  margin: 4px 0 8px;
+  font-size: 24px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.server-agent-tabs {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.server-agent-tabs,
+.server-agent-tabs .ant-tabs-content-holder,
+.server-agent-tabs .ant-tabs-content,
+.server-agent-tabs .ant-tabs-tabpane {
+  height: 100%;
+  min-height: 0;
+}
+
+.server-agent-message-grid,
+.server-agent-flow-grid {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  gap: 14px;
+}
+
+.server-agent-message-grid {
+  grid-template-columns: minmax(260px, 0.34fr) minmax(0, 1fr);
+}
+
+.server-agent-conversations,
+.server-agent-chat,
+.server-agent-flow-column {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--line);
+  background: rgba(10, 18, 27, 0.72);
+}
+
+.server-agent-conversations,
+.server-agent-flow-column {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  padding: 14px;
+}
+
+.server-agent-conversation-list,
+.server-agent-job-list,
+.server-agent-schedule-list,
+.server-agent-event-list {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.server-agent-conversation {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(7, 16, 24, 0.6);
+}
+
+.server-agent-conversation.is-active {
+  border-color: rgba(20, 184, 166, 0.62);
+  background: rgba(20, 184, 166, 0.12);
+}
+
+.server-agent-conversation button {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.server-agent-conversation strong,
+.server-agent-conversation span,
+.server-agent-conversation small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.server-agent-conversation span,
+.server-agent-conversation small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.server-agent-chat {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  overflow: hidden;
+}
+
+.server-agent-chat-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 58px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(13, 23, 32, 0.68);
+}
+
+.server-agent-chat-title strong {
+  overflow-wrap: anywhere;
+}
+
+.server-agent-message-stream {
+  min-height: 0;
+  overflow: auto;
+  padding: 18px;
+}
+
+.server-agent-composer,
+.attachment-strip {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--line);
+  background: rgba(9, 16, 24, 0.74);
+}
+
+.attachment-strip {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.server-agent-flow-grid {
+  grid-template-columns: minmax(300px, 0.9fr) minmax(320px, 1fr);
+}
+
+.server-agent-job,
+.server-agent-autopilot {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(7, 16, 24, 0.6);
+}
+
+.server-agent-job strong,
+.server-agent-job .muted {
+  overflow-wrap: anywhere;
+}
+
+.server-agent-job pre {
+  max-height: 220px;
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 12px/1.45 var(--mono);
+  color: #d7f7f2;
+}
+
+.server-agent-autopilot {
+  align-content: start;
+}
+
+.server-agent-engine-workspace {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 12px;
+  overflow: hidden;
+}
+
+.server-agent-engine-grid {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(300px, 0.42fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.server-agent-engine-list-panel,
+.server-agent-engine-detail-panel,
+.server-agent-engine-card {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--line);
+  background: rgba(10, 18, 27, 0.72);
+}
+
+.server-agent-engine-list-panel,
+.server-agent-engine-detail-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  overflow: hidden;
+}
+
+.server-agent-engine-list-panel {
+  grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.server-agent-engine-detail-panel {
+  grid-template-rows: minmax(0, 0.9fr) minmax(0, 1.1fr);
+}
+
+.server-agent-engine-panel-section,
+.server-agent-engine-card {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.server-agent-engine-panel-section {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  padding-bottom: 12px;
+}
+
+.server-agent-engine-panel-section:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.server-agent-engine-section-head,
+.server-agent-engine-execution-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.server-agent-engine-section-head strong,
+.server-agent-engine-execution-title strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.server-agent-engine-list {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.server-agent-engine-card {
+  padding: 14px;
+  overflow: auto;
+}
+
+.server-agent-engine-body,
+.server-agent-engine-input-section,
+.server-agent-engine-input-view {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.server-agent-engine-body {
+  color: #d7f7f2;
+  overflow-wrap: anywhere;
+}
+
+.server-agent-engine-json,
+.server-agent-engine-input-json {
+  max-height: 220px;
+  margin: 0;
+  overflow: auto;
+  padding: 10px;
+  color: #d7f7f2;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(7, 16, 24, 0.54);
+  font: 12px/1.45 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.server-agent-engine-input-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.22fr) minmax(0, 1fr);
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(7, 16, 24, 0.48);
+}
+
+.server-agent-engine-input-label {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.server-agent-engine-input-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.server-agent-engine-timeline {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.server-agent-engine-timeline-event {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(7, 16, 24, 0.44);
+}
+
+.server-agent-engine-timeline-event span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.hidden-file-input {
+  display: none;
+}
+
+.server-agent-mail-workspace {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  overflow: hidden;
+}
+
+.server-agent-mail-toolbar,
+.server-agent-mail-panel-head,
+.server-agent-mail-detail-head,
+.server-agent-mail-account-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.server-agent-mail-toolbar h3,
+.server-agent-mail-detail-head h4 {
+  margin: 0;
+}
+
+.server-agent-mail-workspace .ant-tabs {
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.server-agent-mail-workspace .ant-tabs-content-holder,
+.server-agent-mail-workspace .ant-tabs-content,
+.server-agent-mail-workspace .ant-tabs-tabpane {
+  min-height: 0;
+  height: 100%;
+}
+
+.server-agent-mail-grid {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(280px, 0.42fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.server-agent-mail-list-panel,
+.server-agent-mail-detail-panel,
+.server-agent-mail-account-panel,
+.server-agent-mail-account-card {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--line);
+  background: rgba(10, 18, 27, 0.72);
+}
+
+.server-agent-mail-list-panel,
+.server-agent-mail-detail-panel,
+.server-agent-mail-account-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  padding: 14px;
+  overflow: hidden;
+}
+
+.server-agent-mail-list,
+.server-agent-mail-account-grid {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.server-agent-mail-list-item {
+  display: grid;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  padding: 11px;
+  color: var(--text);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(7, 16, 24, 0.6);
+  text-align: left;
+  cursor: pointer;
+}
+
+.server-agent-mail-list-item:hover,
+.server-agent-mail-list-item.is-selected {
+  border-color: rgba(20, 184, 166, 0.62);
+  background: rgba(20, 184, 166, 0.12);
+}
+
+.server-agent-mail-list-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.server-agent-mail-list-item.is-unread strong {
+  color: #99f6e4;
+}
+
+.server-agent-mail-list-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.server-agent-mail-list-line strong,
+.server-agent-mail-list-line span,
+.server-agent-mail-preview {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.server-agent-mail-list-line span,
+.server-agent-mail-preview {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.server-agent-mail-body {
+  min-height: 0;
+  max-height: 100%;
+  margin: 0;
+  overflow: auto;
+  padding: 12px;
+  color: #d7f7f2;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(7, 16, 24, 0.54);
+  font: 13px/1.55 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.server-agent-mail-attachments,
+.server-agent-mail-account-meta,
+.server-agent-mail-test-result {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.server-agent-mail-account-panel {
+  height: 100%;
+}
+
+.server-agent-mail-account-grid {
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.server-agent-mail-account-card {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.server-agent-mail-account-title strong,
+.server-agent-mail-account-title span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.server-agent-mail-account-title span,
+.server-agent-mail-account-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.server-agent-mail-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.server-agent-mail-empty {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  text-align: center;
+}
+
+.danger-text {
+  color: var(--red);
+  overflow-wrap: anywhere;
+}
+
 .transcript-loading {
   min-height: 140px;
   display: grid;
@@ -1906,7 +2483,30 @@ button {
 
   .memory-search-row,
   .memory-form-grid,
-  .mcp-form-grid {
+  .mcp-form-grid,
+  .server-agent-message-grid,
+  .server-agent-flow-grid,
+  .server-agent-engine-grid,
+  .server-agent-engine-input-row,
+  .server-agent-mail-grid,
+  .server-agent-mail-form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .server-agent-workspace {
+    overflow: auto;
+  }
+
+  .server-agent-header,
+  .server-agent-composer,
+  .server-agent-mail-toolbar,
+  .server-agent-mail-panel-head,
+  .server-agent-mail-detail-head,
+  .server-agent-mail-account-title,
+  .server-agent-engine-section-head,
+  .server-agent-engine-execution-title,
+  .server-agent-engine-timeline-event {
+    flex-direction: column;
+    align-items: stretch;
   }
 }

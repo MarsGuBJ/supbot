@@ -47,6 +47,17 @@ interface ReverseRegisterResponse {
   peer?: { id?: string };
   streamUrl?: string;
   heartbeatMs?: number;
+  clientHeartbeatTimeoutMs?: number;
+}
+
+interface ReversePeerLink {
+  id?: string;
+  connectionMode?: string;
+  clientInstanceId?: string;
+}
+
+interface ReversePeerListResponse {
+  peers?: ReversePeerLink[];
 }
 
 interface ReverseInvocationEvent {
@@ -70,24 +81,40 @@ export class ServstationReverseBridgeClient {
   private loop?: Promise<void>;
   private stopped = true;
   private retryDelayMs = 1_000;
+  private wakeRetry?: () => void;
+  private restartAfterLoop = false;
 
   constructor(private readonly host: ReverseBridgeHost) {}
 
   start(): void {
     if (this.loop) {
+      this.stopped = false;
+      this.retryDelayMs = 1_000;
+      this.wakeRetry?.();
+      if (this.controller?.signal.aborted) {
+        this.restartAfterLoop = true;
+      }
       return;
     }
+    this.restartAfterLoop = false;
     this.stopped = false;
     this.retryDelayMs = 1_000;
     this.loop = this.runLoop().finally(() => {
+      const shouldRestart = this.restartAfterLoop && !this.stopped;
       this.loop = undefined;
+      this.restartAfterLoop = false;
+      if (shouldRestart) {
+        this.start();
+      }
     });
   }
 
   async stop(disable = true): Promise<void> {
+    this.restartAfterLoop = false;
     this.stopped = true;
     this.controller?.abort();
     this.controller = undefined;
+    this.wakeRetry?.();
     await this.host.updateReverseState({
       ...(disable ? { enabled: false } : {}),
       status: "disconnected",
@@ -113,7 +140,7 @@ export class ServstationReverseBridgeClient {
           connectedAt: undefined,
           lastError: (error as Error).message
         });
-        await sleep(this.retryDelayMs);
+        await this.waitBeforeRetry(this.retryDelayMs);
         this.retryDelayMs = Math.min(30_000, Math.round(this.retryDelayMs * 1.8));
       }
     }
@@ -129,20 +156,7 @@ export class ServstationReverseBridgeClient {
     const clientInstanceId = config.reverse?.clientInstanceId || this.host.randomId("supbot_client");
     await this.host.updateReverseState({ enabled: true, status: "connecting", clientInstanceId });
     const agentInstanceId = await this.ensureAgentInstanceId(baseUrl, signal);
-    const registration = await this.request<ReverseRegisterResponse>(
-      baseUrl,
-      `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/a2a-peers/reverse-connections`,
-      {
-        method: "POST",
-        signal,
-        body: JSON.stringify({
-          clientInstanceId,
-          displayName: "Supbot Desktop",
-          capabilities: ["prompt.readOnly"],
-          supbotVersion: "0.1.0"
-        })
-      }
-    );
+    const registration = await this.registerReverseConnection(baseUrl, agentInstanceId, clientInstanceId, signal);
     const peerId = registration.peer?.id;
     if (!peerId) {
       throw new Error("Servstation reverse registration did not return a peer id.");
@@ -150,6 +164,60 @@ export class ServstationReverseBridgeClient {
     const streamUrl = registration.streamUrl || `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/a2a-peers/${encodeURIComponent(peerId)}/events`;
     await this.host.updateReverseState({ enabled: true, status: "connecting", peerId, clientInstanceId });
     await this.openEventStream(baseUrl, streamUrl, agentInstanceId, peerId, signal);
+  }
+
+  private async registerReverseConnection(
+    baseUrl: string,
+    agentInstanceId: string,
+    clientInstanceId: string,
+    signal: AbortSignal
+  ): Promise<ReverseRegisterResponse> {
+    try {
+      return await this.request<ReverseRegisterResponse>(
+        baseUrl,
+        `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/a2a-peers/reverse-connections`,
+        {
+          method: "POST",
+          signal,
+          body: JSON.stringify({
+            clientInstanceId,
+            displayName: "Supbot Desktop",
+            capabilities: ["prompt.readOnly"],
+            supbotVersion: "0.1.0"
+          })
+        }
+      );
+    } catch (error) {
+      if (!isRecoverableReverseRegistrationError(error)) {
+        throw error;
+      }
+      const peer = await this.findExistingReversePeer(baseUrl, agentInstanceId, clientInstanceId, signal);
+      if (!peer?.id) {
+        throw error;
+      }
+      return {
+        peer: { id: peer.id },
+        streamUrl: `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/a2a-peers/${encodeURIComponent(peer.id)}/events`
+      };
+    }
+  }
+
+  private async findExistingReversePeer(
+    baseUrl: string,
+    agentInstanceId: string,
+    clientInstanceId: string,
+    signal: AbortSignal
+  ): Promise<ReversePeerLink | undefined> {
+    const response = await this.request<ReversePeerListResponse>(
+      baseUrl,
+      `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/a2a-peers`,
+      { method: "GET", signal }
+    );
+    return (response.peers || []).find((peer) =>
+      peer.connectionMode === "reverse_sse" &&
+      peer.clientInstanceId === clientInstanceId &&
+      Boolean(peer.id)
+    );
   }
 
   private async ensureAgentInstanceId(baseUrl: string, signal: AbortSignal): Promise<string> {
@@ -197,6 +265,17 @@ export class ServstationReverseBridgeClient {
 
     for await (const event of parseSse(response.body, signal)) {
       if (event.event === "heartbeat") {
+        try {
+          await this.request(baseUrl, heartbeatPath(agentInstanceId, peerId), {
+            method: "POST",
+            signal,
+            body: JSON.stringify({ at: this.host.nowIso() })
+          });
+        } catch (error) {
+          if (!isRecoverableHeartbeatError(error)) {
+            throw error;
+          }
+        }
         await this.host.updateReverseState({
           status: "connected",
           lastHeartbeatAt: this.host.nowIso(),
@@ -271,7 +350,7 @@ export class ServstationReverseBridgeClient {
     const text = await response.text();
     const payload = text.trim() ? safeJson(text) : {};
     if (!response.ok) {
-      throw new Error(errorMessage(payload) || text || `HTTP ${response.status}`);
+      throw new ServstationHttpError(errorMessage(payload) || text || `HTTP ${response.status}`, response.status, payload);
     }
     return payload as T;
   }
@@ -308,10 +387,57 @@ export class ServstationReverseBridgeClient {
     }
     return baseUrl;
   }
+
+  private waitBeforeRetry(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        if (this.wakeRetry === finish) {
+          this.wakeRetry = undefined;
+        }
+        resolve();
+      };
+      const timer = setTimeout(finish, ms);
+      this.wakeRetry = finish;
+    });
+  }
 }
 
 function invocationPath(agentInstanceId: string, peerId: string, invocationId: string, action: "ack" | "result"): string {
   return `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/a2a-peers/${encodeURIComponent(peerId)}/invocations/${encodeURIComponent(invocationId)}/${action}`;
+}
+
+function heartbeatPath(agentInstanceId: string, peerId: string): string {
+  return `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/a2a-peers/${encodeURIComponent(peerId)}/heartbeat`;
+}
+
+class ServstationHttpError extends Error {
+  constructor(message: string, readonly status: number, readonly payload: unknown) {
+    super(message);
+    this.name = "ServstationHttpError";
+  }
+}
+
+function isRecoverableReverseRegistrationError(error: unknown): boolean {
+  if (!(error instanceof ServstationHttpError) || error.status !== 400) {
+    return false;
+  }
+  return error.message.toLowerCase().includes("invalid input syntax for type json");
+}
+
+function isRecoverableHeartbeatError(error: unknown): boolean {
+  if (!(error instanceof ServstationHttpError)) {
+    return false;
+  }
+  const message = error.message.toLowerCase();
+  return (error.status === 400 && message.includes("missing agent instance id"))
+    || error.status === 404
+    || error.status === 405;
 }
 
 function normalizeBaseUrl(value: string | undefined): string | undefined {
@@ -425,8 +551,4 @@ async function* parseSse(body: ReadableStream<Uint8Array>, signal: AbortSignal):
   } finally {
     reader.releaseLock();
   }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

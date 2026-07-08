@@ -2746,6 +2746,7 @@ describe("SupbotRuntime", () => {
     let eventStream: import("node:http").ServerResponse | undefined;
     let closeStream: (() => void) | undefined;
     let resultBody: Record<string, unknown> | undefined;
+    let heartbeatPosts = 0;
     let resolveResult: (() => void) | undefined;
     const resultReceived = new Promise<void>((resolve) => {
       resolveResult = resolve;
@@ -2784,6 +2785,11 @@ describe("SupbotRuntime", () => {
           response.write(`event: heartbeat\ndata: {"ok":true}\n\n`);
           return;
         }
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-reverse-1/a2a-peers/peer-reverse-1/heartbeat") {
+          heartbeatPosts += 1;
+          response.end(JSON.stringify({ status: "online" }));
+          return;
+        }
         if (request.method === "POST" && url.pathname.endsWith("/ack")) {
           response.end(JSON.stringify({ ok: true }));
           return;
@@ -2817,6 +2823,7 @@ describe("SupbotRuntime", () => {
     try {
       await runtime.connectServstationReverseBridge();
       await waitForCondition("reverse stream connected", () => runtime.snapshot().servstationA2A.config.reverse?.status === "connected" && Boolean(eventStream));
+      await waitForCondition("reverse heartbeat posted", () => heartbeatPosts > 0);
       eventStream!.write([
         "id: inv-reverse-1",
         "event: invoke_prompt",
@@ -2853,6 +2860,985 @@ describe("SupbotRuntime", () => {
       closeStream?.();
       await runtime.disconnectServstationReverseBridge();
       await mock.close();
+      await new Promise<void>((resolve, reject) => servstation.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  test("recovers Servstation reverse registration when the persisted peer is returned after an audit JSON failure", async () => {
+    const runtime = await createRuntime();
+    let eventStream: import("node:http").ServerResponse | undefined;
+    let closeStream: (() => void) | undefined;
+    let registerCalls = 0;
+    let peerListCalls = 0;
+    let heartbeatPosts = 0;
+    const peer = {
+      id: "peer-recover-1",
+      agentInstanceId: "agent-recover-1",
+      tenantId: "tenant-recover",
+      organizationId: "org-recover",
+      departmentId: "dept-recover",
+      userId: "user-recover",
+      peerType: "supbot",
+      displayName: "Supbot Desktop",
+      connectionMode: "reverse_sse",
+      clientInstanceId: "supbot-client-recover",
+      capabilities: ["prompt.readOnly"],
+      status: "unknown",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    };
+    const servstation = createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        const url = new URL(request.url || "/", "http://127.0.0.1");
+        response.setHeader("Content-Type", "application/json");
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/connect") {
+          response.end(JSON.stringify({ agentInstanceId: "agent-recover-1" }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-recover-1/a2a-peers/reverse-connections") {
+          registerCalls += 1;
+          expect(JSON.parse(body)).toMatchObject({ clientInstanceId: "supbot-client-recover" });
+          response.statusCode = 400;
+          response.end(JSON.stringify({ error: "invalid input syntax for type json" }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-recover-1/a2a-peers") {
+          peerListCalls += 1;
+          response.end(JSON.stringify({ peers: [peer] }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-recover-1/a2a-peers/peer-recover-1/events") {
+          response.writeHead(200, {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive"
+          });
+          eventStream = response;
+          closeStream = () => response.end();
+          response.write(`event: heartbeat\ndata: {"ok":true}\n\n`);
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-recover-1/a2a-peers/peer-recover-1/heartbeat") {
+          heartbeatPosts += 1;
+          response.end(JSON.stringify({ status: "online" }));
+          return;
+        }
+        response.statusCode = 404;
+        response.end(JSON.stringify({ error: "not found" }));
+      });
+    });
+    await new Promise<void>((resolve) => servstation.listen(0, "127.0.0.1", resolve));
+    const address = servstation.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    await runtime.updateIdentityContext({
+      tenantId: "tenant-recover",
+      organizationId: "org-recover",
+      departmentId: "dept-recover",
+      userId: "user-recover",
+      roleIds: ["user"],
+      source: "servstation",
+      servstationUrl: baseUrl
+    });
+    await runtime.updateServstationA2AConfig({
+      enabled: true,
+      baseUrl,
+      authMode: "identityHeaders",
+      reverseClientInstanceId: "supbot-client-recover"
+    });
+    try {
+      await runtime.connectServstationReverseBridge();
+      await waitForCondition("recovered reverse stream connected", () => runtime.snapshot().servstationA2A.config.reverse?.status === "connected" && Boolean(eventStream));
+      await waitForCondition("recovered reverse heartbeat posted", () => heartbeatPosts > 0);
+      expect(registerCalls).toBe(1);
+      expect(peerListCalls).toBe(1);
+      expect(runtime.snapshot().servstationA2A.config.reverse?.peerId).toBe("peer-recover-1");
+    } finally {
+      closeStream?.();
+      await runtime.disconnectServstationReverseBridge();
+      await new Promise<void>((resolve, reject) => servstation.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  test("drives the Servstation client snapshot and remote workflow APIs", async () => {
+    const { runtime, dataDir } = await createRuntimeWithPaths();
+    const attachmentPath = join(dataDir, "remote-note.txt");
+    await writeFile(attachmentPath, "hello remote", "utf8");
+    const requests: Array<{ method: string; path: string; headers: Record<string, string | string[] | undefined>; body: Record<string, unknown> }> = [];
+    const conversations = [{
+      id: "conv-1",
+      agentInstanceId: "agent-client-1",
+      title: "Planning",
+      runtimeSessionId: "runtime-1",
+      jobCount: 1,
+      lastMessageAt: "2026-01-01T00:00:02.000Z",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:02.000Z"
+    }];
+    const jobsByConversation: Record<string, unknown[]> = {
+      "conv-1": [{
+        id: "job-1",
+        agentInstanceId: "agent-client-1",
+        requestId: "req-1",
+        clientId: "agent-client-web-dev",
+        jobType: "interactive",
+        conversationId: "conv-1",
+        runtimeSessionId: "runtime-1",
+        payload: { prompt: "existing prompt" },
+        status: "completed",
+        queuePosition: 0,
+        result: { assistantText: "existing answer" },
+        createdAt: "2026-01-01T00:00:01.000Z",
+        finishedAt: "2026-01-01T00:00:02.000Z"
+      }]
+    };
+    const scheduledJobs = [{
+      id: "schedule-1",
+      agentInstanceId: "agent-client-1",
+      conversationId: "conv-1",
+      title: "Daily check",
+      prompt: "check status",
+      scheduleKind: "cron",
+      cronExpr: "0 9 * * *",
+      enabled: true,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    }];
+    const currentRun = {
+      id: "run-1",
+      agentInstanceId: "agent-client-1",
+      conversationId: "conv-1",
+      goal: "watch the plan",
+      status: "watching",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:01.000Z"
+    };
+    const flowWorkflow = {
+      id: "workflow-1",
+      slug: "expense-approval",
+      name: "Expense approval",
+      description: "Approve an expense",
+      inputSchema: {
+        type: "object",
+        required: ["title"],
+        properties: {
+          title: { type: "string", title: "Title" },
+          amount: { type: "number", title: "Amount" },
+          receipt: { type: "string", format: "file", title: "Receipt" }
+        }
+      }
+    };
+    const flowTask = {
+      id: "approval-1",
+      executionId: "execution-1",
+      workflowId: "workflow-1",
+      spaceId: "space-1",
+      nodeId: "approval-node",
+      assigneeId: "user-client",
+      title: "Approve expense",
+      instructions: "Check the receipt",
+      approverRoles: ["staff"],
+      openUrl: "https://example.test/flow/approval-1",
+      status: "pending",
+      executionInput: { title: "Lunch", amount: 42 }
+    };
+    const flowExecution = {
+      id: "execution-1",
+      workflowId: "workflow-1",
+      workflowName: "Expense approval",
+      workflowVersionId: "version-1",
+      spaceId: "space-1",
+      initiatorUserId: "user-client",
+      status: "waiting_approval",
+      input: { title: "Lunch", amount: 42 },
+      createdAt: "2026-01-01T00:06:00.000Z",
+      startedAt: "2026-01-01T00:06:01.000Z"
+    };
+    const flowEvent = {
+      id: "flow-event-1",
+      executionId: "execution-1",
+      type: "approval.created",
+      payload: { approvalId: "approval-1" },
+      createdAt: "2026-01-01T00:06:02.000Z"
+    };
+    const messageItem = {
+      messageId: "msg-1",
+      sender: { tenantId: "tenant-client", organizationId: "org-client", departmentId: "dept-client", userId: "sender-user" },
+      senderAgentInstanceId: "agent-client-1",
+      subject: "Hello",
+      preview: "Message preview",
+      attachments: [{ attachmentId: "att-msg-1", fileName: "hello.txt", contentType: "text/plain", sizeBytes: 5 }],
+      attachmentCount: 1,
+      createdAt: "2026-01-01T00:03:00.000Z",
+      readAt: null,
+      favorited: false,
+      trashed: false,
+      channel: "internal"
+    };
+    const messageDetail = {
+      ...messageItem,
+      body: "Message body",
+      recipients: [{ tenantId: "tenant-client", organizationId: "org-client", departmentId: "dept-client", userId: "user-client" }]
+    };
+    const mailAccounts: Array<Record<string, unknown>> = [{
+      id: "acct-1",
+      tenantId: "tenant-client",
+      organizationId: "org-client",
+      departmentId: "dept-client",
+      userId: "user-client",
+      emailAddress: "user@example.test",
+      displayName: "User Mail",
+      smtpHost: "smtp.example.test",
+      smtpPort: 587,
+      smtpSecurity: "starttls",
+      smtpUsername: "user@example.test",
+      smtpPassword: "smtp-secret",
+      hasSmtpPassword: true,
+      imapHost: "imap.example.test",
+      imapPort: 993,
+      imapSecurity: "tls",
+      imapUsername: "user@example.test",
+      imapPassword: "imap-secret",
+      hasImapPassword: true,
+      isDefault: true,
+      enabled: true,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    }];
+    const servstation = createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        const url = new URL(request.url || "/", "http://127.0.0.1");
+        const parsedBody = body ? JSON.parse(body) as Record<string, unknown> : {};
+        requests.push({ method: request.method || "GET", path: `${url.pathname}${url.search}`, headers: request.headers, body: parsedBody });
+        if (request.method === "GET" && url.pathname === "/api/v1/messages/events") {
+          response.setHeader("Content-Type", "text/event-stream");
+          response.end(`event: messages.unread\ndata: ${JSON.stringify({ unreadCount: 1, messages: [messageItem] })}\n\n`);
+          return;
+        }
+        response.setHeader("Content-Type", "application/json");
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/conversations") {
+          response.end(JSON.stringify({ conversations }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-client-1/conversations") {
+          const conversation = {
+            id: "conv-new",
+            agentInstanceId: "agent-client-1",
+            title: "New conversation",
+            runtimeSessionId: "runtime-new",
+            jobCount: 0,
+            createdAt: "2026-01-01T00:01:00.000Z",
+            updatedAt: "2026-01-01T00:01:00.000Z"
+          };
+          conversations.unshift(conversation);
+          jobsByConversation[conversation.id] = [];
+          response.end(JSON.stringify(conversation));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/jobs") {
+          response.end(JSON.stringify({ jobs: jobsByConversation[url.searchParams.get("conversationId") || ""] || [] }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-client-1/jobs") {
+          const conversationId = String(parsedBody.conversationId || "");
+          const job = {
+            id: "job-new",
+            agentInstanceId: "agent-client-1",
+            requestId: parsedBody.requestId,
+            clientId: parsedBody.clientId,
+            jobType: parsedBody.jobType,
+            conversationId,
+            payload: parsedBody.payload,
+            status: "queued",
+            queuePosition: 1,
+            progress: { message: "queued" },
+            createdAt: "2026-01-01T00:01:01.000Z"
+          };
+          jobsByConversation[conversationId] = [...(jobsByConversation[conversationId] || []), job];
+          response.end(JSON.stringify(job));
+          return;
+        }
+        if (request.method === "PATCH" && url.pathname === "/api/v1/agent/agent-client-1/jobs") {
+          response.end(JSON.stringify({ ...jobsByConversation["conv-1"][0], id: url.searchParams.get("jobId"), status: "canceled" }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/scheduled-jobs") {
+          response.end(JSON.stringify({ scheduledJobs }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-client-1/scheduled-jobs") {
+          const scheduled = { id: "schedule-new", agentInstanceId: "agent-client-1", createdAt: "2026-01-01T00:02:00.000Z", updatedAt: "2026-01-01T00:02:00.000Z", ...parsedBody };
+          scheduledJobs.push(scheduled as typeof scheduledJobs[number]);
+          response.end(JSON.stringify(scheduled));
+          return;
+        }
+        if (request.method === "PATCH" && url.pathname === "/api/v1/agent/agent-client-1/scheduled-jobs") {
+          response.end(JSON.stringify({ ...scheduledJobs[0], ...parsedBody, id: url.searchParams.get("scheduledJobId") }));
+          return;
+        }
+        if (request.method === "DELETE" && url.pathname === "/api/v1/agent/agent-client-1/scheduled-jobs") {
+          response.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/autopilot-runs/current") {
+          response.end(JSON.stringify({ run: currentRun }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/autopilot-runs/run-1/events") {
+          response.end(JSON.stringify({
+            events: [{
+              id: "evt-1",
+              runId: "run-1",
+              agentInstanceId: "agent-client-1",
+              eventType: "watching",
+              level: "info",
+              message: "watching",
+              createdAt: "2026-01-01T00:00:03.000Z"
+            }]
+          }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-client-1/autopilot-runs") {
+          response.end(JSON.stringify({ run: { ...currentRun, id: "run-new", ...parsedBody } }));
+          return;
+        }
+        if (request.method === "PATCH" && url.pathname === "/api/v1/agent/agent-client-1/autopilot-runs/run-1") {
+          response.end(JSON.stringify({ run: { ...currentRun, ...parsedBody } }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/flow-engine/workflows/launchable") {
+          response.end(JSON.stringify([flowWorkflow]));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/flow-engine/tasks/pending") {
+          response.end(JSON.stringify([flowTask]));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/flow-engine/executions") {
+          response.end(JSON.stringify({
+            ...flowExecution,
+            id: "execution-new",
+            workflowId: parsedBody.workflowId,
+            status: "queued",
+            input: parsedBody.input
+          }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/flow-engine/executions/mine") {
+          response.end(JSON.stringify([flowExecution]));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/flow-engine/executions/mine/execution-1") {
+          response.end(JSON.stringify(flowExecution));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/flow-engine/executions/mine/execution-1/events") {
+          response.end(JSON.stringify([flowEvent]));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/flow-engine/approvals/approval-1/decision") {
+          response.end(JSON.stringify({ ...flowTask, status: parsedBody.decision, decision: parsedBody.decision, comment: parsedBody.comment }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/messages") {
+          response.end(JSON.stringify({ messages: url.searchParams.get("folder") === "trash" ? [] : [messageItem] }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/messages/unread") {
+          response.end(JSON.stringify({ unreadCount: 1, messages: [messageItem] }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/messages/msg-1") {
+          response.end(JSON.stringify({ message: messageDetail }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/messages/msg-1/read") {
+          response.end(JSON.stringify({ message: { ...messageDetail, readAt: "2026-01-01T00:04:00.000Z" } }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/messages/msg-1/favorite") {
+          response.end(JSON.stringify({ message: { ...messageDetail, favorited: parsedBody.favorited } }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/messages/msg-1/trash") {
+          response.end(JSON.stringify({ message: { ...messageDetail, trashed: true } }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/messages/msg-1/restore") {
+          response.end(JSON.stringify({ message: { ...messageDetail, trashed: false } }));
+          return;
+        }
+        if (request.method === "DELETE" && url.pathname === "/api/v1/messages/msg-1") {
+          response.end(JSON.stringify({ status: "deleted" }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/messages/msg-1/attachments/att-msg-1") {
+          response.end(JSON.stringify({
+            attachment: {
+              attachmentId: "att-msg-1",
+              fileName: "hello.txt",
+              contentType: "text/plain",
+              sizeBytes: 5,
+              contentBase64: Buffer.from("hello").toString("base64")
+            }
+          }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/messages/send") {
+          response.end(JSON.stringify({
+            id: "job-message-1",
+            agentInstanceId: parsedBody.agentInstanceId,
+            requestId: "message-req",
+            clientId: "message-compose",
+            jobType: "message_delivery",
+            status: "queued",
+            queuePosition: 0,
+            createdAt: "2026-01-01T00:05:00.000Z"
+          }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/messages/deliver") {
+          response.end(JSON.stringify({ message: { ...messageDetail, messageId: "msg-direct-1", channel: "email" } }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/mail/accounts") {
+          response.end(JSON.stringify({ accounts: mailAccounts }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/mail/accounts") {
+          response.end(JSON.stringify({ account: { ...mailAccounts[0], id: "acct-new", ...parsedBody, hasSmtpPassword: true, hasImapPassword: true } }));
+          return;
+        }
+        if (request.method === "PUT" && url.pathname === "/api/v1/mail/accounts/acct-1") {
+          response.end(JSON.stringify({ account: { ...mailAccounts[0], ...parsedBody } }));
+          return;
+        }
+        if (request.method === "DELETE" && url.pathname === "/api/v1/mail/accounts/acct-1") {
+          response.end(JSON.stringify({ status: "deleted" }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/mail/accounts/acct-1/default") {
+          response.end(JSON.stringify({ account: { ...mailAccounts[0], isDefault: true } }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/mail/accounts/acct-1/test") {
+          response.end(JSON.stringify({ smtpOk: true, imapOk: true }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/mail/accounts/acct-1/sync") {
+          response.end(JSON.stringify({ status: "queued" }));
+          return;
+        }
+        response.statusCode = 404;
+        response.end(JSON.stringify({ error: "not found" }));
+      });
+    });
+    await new Promise<void>((resolve) => servstation.listen(0, "127.0.0.1", resolve));
+    const address = servstation.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    try {
+      await runtime.updateIdentityContext({
+        tenantId: "tenant-client",
+        organizationId: "org-client",
+        departmentId: "dept-client",
+        userId: "user-client",
+        roleIds: ["staff", "user"],
+        source: "servstation",
+        servstationUrl: baseUrl
+      });
+      await runtime.updateServstationA2AConfig({
+        enabled: true,
+        baseUrl,
+        authMode: "oidc",
+        oidcIssuerUrl: `${baseUrl}/realms/supmate`,
+        oidcClientId: "agent-client-web-dev",
+        staffAgentAccount: "staff@example.test",
+        staffAgentPassword: "staff-secret",
+        agentInstanceId: "agent-client-1"
+      });
+      await runtime.updateServstationA2AOidcSession({
+        baseUrl,
+        issuerUrl: `${baseUrl}/realms/supmate`,
+        clientId: "agent-client-web-dev",
+        tokens: {
+          accessToken: "oidc-client-token",
+          refreshToken: "refresh-client-token",
+          expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+          issuerUrl: `${baseUrl}/realms/supmate`,
+          clientId: "agent-client-web-dev"
+        }
+      });
+      const disconnected = await runtime.getServstationClientSnapshot();
+      expect(disconnected.connected).toBe(false);
+      expect(disconnected.conversations).toEqual([]);
+      await expect(runtime.getServstationFlowEngineSnapshot()).rejects.toThrow("Servstation reverse A2A is not connected.");
+      await (runtime as unknown as { updateServstationReverseState(input: Record<string, unknown>): Promise<void> }).updateServstationReverseState({
+        enabled: true,
+        status: "connected",
+        peerId: "peer-client-1"
+      });
+      const snapshot = await runtime.getServstationClientSnapshot();
+      expect(snapshot).toMatchObject({
+        connected: true,
+        agentInstanceId: "agent-client-1",
+        activeConversationId: "conv-1"
+      });
+      expect(snapshot.conversations).toHaveLength(1);
+      expect(snapshot.jobs[0]).toMatchObject({ id: "job-1", status: "completed" });
+      expect(snapshot.scheduledJobs[0]).toMatchObject({ id: "schedule-1" });
+      expect(snapshot.autopilotRun?.id).toBe("run-1");
+      expect(snapshot.autopilotEvents[0]?.id).toBe("evt-1");
+
+      const sent = await runtime.sendServstationPrompt({
+        prompt: "new remote prompt",
+        attachments: [{ id: "att-1", name: "remote-note.txt", path: attachmentPath, size: 12, mimeType: "text/plain" }]
+      });
+      expect(sent.conversation.id).toBe("conv-new");
+      expect(sent.snapshot.jobs[0]).toMatchObject({ id: "job-new", status: "queued" });
+      const postJob = requests.find((item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/jobs");
+      expect(postJob?.body).toMatchObject({
+        clientId: "supbot-server-agent-client",
+        jobType: "interactive",
+        conversationId: "conv-new"
+      });
+      expect(((postJob?.body.payload as Record<string, unknown>).attachments as Array<Record<string, unknown>>)[0]).toMatchObject({
+        name: "remote-note.txt",
+        mimeType: "text/plain",
+        contentBase64: Buffer.from("hello remote").toString("base64")
+      });
+
+      await runtime.cancelServstationJob("job-1");
+      await runtime.createServstationScheduledJob({ prompt: "scheduled prompt", scheduleKind: "once", runAt: "2026-01-02T00:00:00.000Z", enabled: true });
+      await runtime.updateServstationScheduledJob("schedule-1", { enabled: false });
+      await runtime.deleteServstationScheduledJob("schedule-1");
+      await runtime.startServstationAutopilotRun({ conversationId: "conv-1", goal: "finish the plan", prompt: "finish the plan" });
+      await runtime.updateServstationAutopilotRun({ runId: "run-1", status: "paused" });
+
+      const flowSnapshot = await runtime.getServstationFlowEngineSnapshot();
+      expect(flowSnapshot.launchableWorkflows[0]).toMatchObject({ id: "workflow-1", name: "Expense approval" });
+      expect(flowSnapshot.pendingTasks[0]).toMatchObject({ id: "approval-1", status: "pending" });
+      expect(flowSnapshot.executions[0]).toMatchObject({ id: "execution-1", status: "waiting_approval" });
+      const launchedFlow = await runtime.launchServstationFlowEngineWorkflow({ workflowId: "workflow-1", input: { title: "Dinner", amount: 88 } });
+      expect(launchedFlow).toMatchObject({ id: "execution-new", workflowId: "workflow-1", status: "queued" });
+      expect(await runtime.getServstationFlowEngineExecution("execution-1")).toMatchObject({ id: "execution-1", workflowName: "Expense approval" });
+      expect(await runtime.getServstationFlowEngineExecutionEvents("execution-1")).toEqual([flowEvent]);
+      expect(await runtime.decideServstationFlowEngineApproval({ approvalId: "approval-1", decision: "approved", comment: "ok" })).toMatchObject({
+        id: "approval-1",
+        status: "approved",
+        comment: "ok"
+      });
+
+      const messages = await runtime.listServstationMessages("inbox");
+      expect(messages.messages[0]).toMatchObject({ messageId: "msg-1", subject: "Hello" });
+      expect(await runtime.getServstationUnreadMessages()).toMatchObject({ unreadCount: 1 });
+      expect(await runtime.getServstationMessage("msg-1")).toMatchObject({ body: "Message body" });
+      expect(await runtime.markServstationMessageRead("msg-1")).toMatchObject({ readAt: "2026-01-01T00:04:00.000Z" });
+      expect(await runtime.setServstationMessageFavorite("msg-1", true)).toMatchObject({ favorited: true });
+      expect(await runtime.trashServstationMessage("msg-1")).toMatchObject({ trashed: true });
+      expect(await runtime.restoreServstationMessage("msg-1")).toMatchObject({ trashed: false });
+      expect(await runtime.fetchServstationMessageAttachment("msg-1", "att-msg-1")).toMatchObject({
+        fileName: "hello.txt",
+        contentBase64: Buffer.from("hello").toString("base64")
+      });
+      await runtime.deleteServstationMessage("msg-1");
+      await runtime.sendServstationAgentMessage({
+        recipients: [{ tenantId: "tenant-client", organizationId: "org-client", departmentId: "dept-client", userId: "user-b" }],
+        subject: "Internal",
+        body: "Internal body"
+      });
+      await runtime.sendServstationDirectMessage({
+        recipients: [],
+        externalRecipients: ["person@example.test"],
+        senderMailAccountId: "acct-1",
+        subject: "External",
+        body: "External body"
+      });
+      const accounts = await runtime.listServstationMailAccounts();
+      expect(accounts[0]).toMatchObject({ id: "acct-1", hasSmtpPassword: true, hasImapPassword: true });
+      expect(JSON.stringify(accounts)).not.toContain("smtp-secret");
+      expect(JSON.stringify(accounts)).not.toContain("imap-secret");
+      const accountDraft = {
+        emailAddress: "new@example.test",
+        displayName: "New Mail",
+        smtpHost: "smtp.example.test",
+        smtpPort: 587,
+        smtpSecurity: "starttls" as const,
+        smtpUsername: "new@example.test",
+        smtpPassword: "created-smtp-secret",
+        imapHost: "imap.example.test",
+        imapPort: 993,
+        imapSecurity: "tls" as const,
+        imapUsername: "new@example.test",
+        imapPassword: "created-imap-secret",
+        isDefault: false,
+        enabled: true
+      };
+      const createdAccount = await runtime.createServstationMailAccount(accountDraft);
+      expect(createdAccount.id).toBe("acct-new");
+      expect(JSON.stringify(createdAccount)).not.toContain("created-smtp-secret");
+      await runtime.updateServstationMailAccount("acct-1", accountDraft);
+      await runtime.setDefaultServstationMailAccount("acct-1");
+      expect(await runtime.testServstationMailAccountConnection("acct-1")).toMatchObject({ smtpOk: true, imapOk: true });
+      expect(await runtime.syncServstationMailAccountNow("acct-1")).toEqual({ status: "queued" });
+      await runtime.deleteServstationMailAccount("acct-1");
+      const streamedEvents: unknown[] = [];
+      await runtime.streamServstationMessageEvents((event) => streamedEvents.push(event));
+      expect(streamedEvents).toEqual([{ type: "messages.unread", data: { unreadCount: 1, messages: [messageItem] } }]);
+
+      expect(requests.some((item) => item.method === "PATCH" && item.path === "/api/v1/agent/agent-client-1/jobs?jobId=job-1")).toBe(true);
+      expect(requests.some((item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/scheduled-jobs")).toBe(true);
+      expect(requests.some((item) => item.method === "PATCH" && item.path === "/api/v1/agent/agent-client-1/scheduled-jobs?scheduledJobId=schedule-1")).toBe(true);
+      expect(requests.some((item) => item.method === "DELETE" && item.path === "/api/v1/agent/agent-client-1/scheduled-jobs?scheduledJobId=schedule-1")).toBe(true);
+      expect(requests.some((item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/autopilot-runs")).toBe(true);
+      expect(requests.some((item) => item.method === "PATCH" && item.path === "/api/v1/agent/agent-client-1/autopilot-runs/run-1")).toBe(true);
+      expect(requests.some((item) => item.method === "GET" && item.path === "/api/v1/flow-engine/workflows/launchable")).toBe(true);
+      expect(requests.some((item) => item.method === "GET" && item.path === "/api/v1/flow-engine/tasks/pending")).toBe(true);
+      expect(requests.some((item) => item.method === "GET" && item.path === "/api/v1/flow-engine/executions/mine")).toBe(true);
+      expect(requests.some((item) => item.method === "POST" && item.path === "/api/v1/flow-engine/executions" && item.body.workflowId === "workflow-1")).toBe(true);
+      expect(requests.some((item) => item.method === "GET" && item.path === "/api/v1/flow-engine/executions/mine/execution-1/events")).toBe(true);
+      expect(requests.some((item) => item.method === "POST" && item.path === "/api/v1/flow-engine/approvals/approval-1/decision" && item.body.decision === "approved")).toBe(true);
+      expect(requests.some((item) => item.method === "GET" && item.path === "/api/v1/messages?folder=inbox&unreadOnly=false")).toBe(true);
+      expect(requests.some((item) => item.method === "POST" && item.path === "/api/v1/messages/send" && item.body.agentInstanceId === "agent-client-1")).toBe(true);
+      expect(requests.some((item) => item.method === "POST" && item.path === "/api/v1/messages/deliver" && item.body.senderAgentInstanceId === "agent-client-1")).toBe(true);
+      expect(requests.some((item) => item.method === "POST" && item.path === "/api/v1/mail/accounts" && item.body.smtpPassword === "created-smtp-secret")).toBe(true);
+
+      const authed = requests.find((item) => item.method === "GET" && item.path === "/api/v1/agent/agent-client-1/conversations");
+      expect(authed?.headers.authorization).toBe("Bearer oidc-client-token");
+      expect(authed?.headers["x-tenant-id"]).toBe("tenant-client");
+      expect(authed?.headers["x-organization-id"]).toBe("org-client");
+      expect(authed?.headers["x-department-id"]).toBe("dept-client");
+      expect(authed?.headers["x-user-id"]).toBe("user-client");
+      expect(authed?.headers["x-role-ids"]).toBe("staff,user");
+      expect(JSON.stringify(snapshot)).not.toContain("oidc-client-token");
+      expect(JSON.stringify(flowSnapshot)).not.toContain("oidc-client-token");
+      expect(JSON.stringify(snapshot)).not.toContain("staff-secret");
+    } finally {
+      await new Promise<void>((resolve, reject) => servstation.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  test("saves Servstation staff-agent credentials without exposing the password", async () => {
+    const { runtime, dataDir } = await createRuntimeWithPaths();
+    const baseUrl = "http://127.0.0.1:12345";
+    const issuerUrl = `${baseUrl}/issuer`;
+    const saved = await runtime.updateServstationA2AConfig({
+      enabled: true,
+      baseUrl,
+      authMode: "oidc",
+      oidcIssuerUrl: issuerUrl,
+      oidcClientId: "agent-client",
+      staffAgentAccount: "staff@example.com",
+      staffAgentPassword: "staff-password"
+    });
+    expect(saved).toMatchObject({
+      staffAgentAccount: "staff@example.com",
+      staffAgentPasswordSaved: true,
+      staffAgentPasswordStorage: "file"
+    });
+    expect("staffAgentPassword" in saved).toBe(false);
+    const snapshot = runtime.snapshot().servstationA2A.config;
+    expect(snapshot.staffAgentPasswordSaved).toBe(true);
+    expect("staffAgentPassword" in snapshot).toBe(false);
+    const state = JSON.parse(await readFile(join(dataDir, "state.json"), "utf8")) as Record<string, unknown>;
+    expect(state.servstationA2AStaffAgentPasswordSecret).toBe("staff-password");
+
+    await runtime.updateServstationA2AOidcSession({
+      baseUrl,
+      issuerUrl,
+      clientId: "agent-client",
+      tokens: {
+        accessToken: fakeJwt({
+          tenantId: "tenant-staff",
+          organizationId: "org-staff",
+          departmentId: "dept-staff",
+          preferred_username: "staff@example.com"
+        }),
+        refreshToken: "refresh-staff",
+        issuerUrl,
+        clientId: "agent-client"
+      }
+    });
+    expect(runtime.snapshot().servstationA2A.config.oidc?.refreshTokenSaved).toBe(true);
+    await runtime.updateServstationA2AConfig({ staffAgentAccount: "other@example.com" });
+    expect(runtime.snapshot().servstationA2A.config.oidc?.refreshTokenSaved).toBe(false);
+  });
+
+  test("uses saved Servstation OIDC session before opening reverse SSE", async () => {
+    const runtime = await createRuntime();
+    const tokenBodies: string[] = [];
+    let eventStream: import("node:http").ServerResponse | undefined;
+    let closeStream: (() => void) | undefined;
+    let heartbeatPosts = 0;
+    const servstation = createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        const url = new URL(request.url || "/", "http://127.0.0.1");
+        response.setHeader("Content-Type", "application/json");
+        if (request.method === "GET" && url.pathname === "/issuer/.well-known/openid-configuration") {
+          response.end(JSON.stringify({ token_endpoint: `${baseUrl}/issuer/token` }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/issuer/token") {
+          tokenBodies.push(body);
+          response.end(JSON.stringify({
+            access_token: fakeJwt({
+              tenantId: "tenant-pw",
+              organizationId: "org-pw",
+              departmentId: "dept-pw",
+              preferred_username: "staff-user",
+              realm_access: { roles: ["staff"] }
+            }),
+            refresh_token: "refresh-password",
+            token_type: "Bearer",
+            scope: "openid profile email offline_access",
+            expires_in: 300
+          }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/connect") {
+          expect(String(request.headers.authorization || "")).toMatch(/^Bearer /);
+          expect(request.headers["x-tenant-id"]).toBe("tenant-pw");
+          response.end(JSON.stringify({ agentInstanceId: "agent-password-1" }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-password-1/a2a-peers/reverse-connections") {
+          expect(String(request.headers.authorization || "")).toMatch(/^Bearer /);
+          const parsed = JSON.parse(body) as Record<string, unknown>;
+          expect(parsed.clientInstanceId).toBeTruthy();
+          response.end(JSON.stringify({
+            peer: { id: "peer-password-1" },
+            streamUrl: "/api/v1/agent/agent-password-1/a2a-peers/peer-password-1/events"
+          }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-password-1/a2a-peers/peer-password-1/events") {
+          response.writeHead(200, {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive"
+          });
+          eventStream = response;
+          closeStream = () => response.end();
+          response.write(`event: heartbeat\ndata: {"ok":true}\n\n`);
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-password-1/a2a-peers/peer-password-1/heartbeat") {
+          heartbeatPosts += 1;
+          response.end(JSON.stringify({ status: "online" }));
+          return;
+        }
+        response.statusCode = 404;
+        response.end(JSON.stringify({ error: "not found" }));
+      });
+    });
+    await new Promise<void>((resolve) => servstation.listen(0, "127.0.0.1", resolve));
+    const address = servstation.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    try {
+      await runtime.updateServstationA2AConfig({
+        enabled: true,
+        baseUrl,
+        authMode: "oidc",
+        oidcIssuerUrl: `${baseUrl}/issuer`,
+        oidcClientId: "agent-client-web-dev",
+        staffAgentAccount: "staff-user",
+        staffAgentPassword: "staff-password"
+      });
+      await runtime.updateServstationA2AOidcSession({
+        baseUrl,
+        issuerUrl: `${baseUrl}/issuer`,
+        clientId: "agent-client-web-dev",
+        tokens: {
+          accessToken: fakeJwt({
+            tenantId: "tenant-pw",
+            organizationId: "org-pw",
+            departmentId: "dept-pw",
+            preferred_username: "staff-user",
+            realm_access: { roles: ["staff"] }
+          }),
+          refreshToken: "refresh-password",
+          issuerUrl: `${baseUrl}/issuer`,
+          clientId: "agent-client-web-dev"
+        }
+      });
+      await runtime.connectServstationReverseBridge();
+      await waitForCondition("password reverse stream connected", () => runtime.snapshot().servstationA2A.config.reverse?.status === "connected" && Boolean(eventStream));
+      await waitForCondition("password reverse heartbeat posted", () => heartbeatPosts > 0);
+      expect(tokenBodies).toHaveLength(0);
+      expect(runtime.snapshot().identityContext).toMatchObject({
+        tenantId: "tenant-pw",
+        organizationId: "org-pw",
+        departmentId: "dept-pw",
+        userId: "staff-user",
+        source: "servstation"
+      });
+    } finally {
+      closeStream?.();
+      await runtime.disconnectServstationReverseBridge();
+      await new Promise<void>((resolve, reject) => servstation.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  test("keeps Servstation reverse SSE connected when deployed heartbeat endpoint is unavailable", async () => {
+    const runtime = await createRuntime();
+    let eventStream: import("node:http").ServerResponse | undefined;
+    let closeStream: (() => void) | undefined;
+    let heartbeatPosts = 0;
+    const servstation = createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        const url = new URL(request.url || "/", "http://127.0.0.1");
+        response.setHeader("Content-Type", "application/json");
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/connect") {
+          response.end(JSON.stringify({ agentInstanceId: "agent-heartbeat-1" }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-heartbeat-1/a2a-peers/reverse-connections") {
+          response.end(JSON.stringify({
+            peer: { id: "peer-heartbeat-1" },
+            streamUrl: "/api/v1/agent/agent-heartbeat-1/a2a-peers/peer-heartbeat-1/events"
+          }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-heartbeat-1/a2a-peers/peer-heartbeat-1/events") {
+          response.writeHead(200, {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive"
+          });
+          eventStream = response;
+          closeStream = () => response.end();
+          response.write(`event: heartbeat\ndata: {"ok":true}\n\n`);
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-heartbeat-1/a2a-peers/peer-heartbeat-1/heartbeat") {
+          heartbeatPosts += 1;
+          response.statusCode = 400;
+          response.end(JSON.stringify({ error: "missing agent instance id", code: "bad_request" }));
+          return;
+        }
+        response.statusCode = 404;
+        response.end(JSON.stringify({ error: "not found", body }));
+      });
+    });
+    await new Promise<void>((resolve) => servstation.listen(0, "127.0.0.1", resolve));
+    const address = servstation.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    await runtime.updateIdentityContext({
+      tenantId: "tenant-heartbeat",
+      organizationId: "org-heartbeat",
+      departmentId: "dept-heartbeat",
+      userId: "user-heartbeat",
+      roleIds: ["user"],
+      source: "servstation",
+      servstationUrl: baseUrl
+    });
+    await runtime.updateServstationA2AConfig({ enabled: true, baseUrl, authMode: "identityHeaders" });
+    try {
+      await runtime.connectServstationReverseBridge();
+      await waitForCondition("reverse heartbeat attempted", () => heartbeatPosts > 0);
+      expect(runtime.snapshot().servstationA2A.config.reverse).toMatchObject({
+        status: "connected",
+        lastError: undefined
+      });
+      expect(eventStream).toBeTruthy();
+    } finally {
+      closeStream?.();
+      await runtime.disconnectServstationReverseBridge();
+      await new Promise<void>((resolve, reject) => servstation.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  test("retries Servstation reverse SSE immediately when connect is clicked after an error", async () => {
+    const runtime = await createRuntime();
+    let registrationAttempts = 0;
+    let eventStream: import("node:http").ServerResponse | undefined;
+    let closeStream: (() => void) | undefined;
+    let heartbeatPosts = 0;
+    const servstation = createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        const url = new URL(request.url || "/", "http://127.0.0.1");
+        response.setHeader("Content-Type", "application/json");
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/connect") {
+          response.end(JSON.stringify({ agentInstanceId: "agent-retry-1" }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-retry-1/a2a-peers/reverse-connections") {
+          registrationAttempts += 1;
+          if (registrationAttempts === 1) {
+            response.statusCode = 500;
+            response.end(JSON.stringify({ error: "transient reverse failure" }));
+            return;
+          }
+          response.end(JSON.stringify({
+            peer: { id: "peer-retry-1" },
+            streamUrl: "/api/v1/agent/agent-retry-1/a2a-peers/peer-retry-1/events",
+            heartbeatMs: 500
+          }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-retry-1/a2a-peers/peer-retry-1/events") {
+          response.writeHead(200, {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive"
+          });
+          eventStream = response;
+          closeStream = () => response.end();
+          response.write(`event: heartbeat\ndata: {"ok":true}\n\n`);
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-retry-1/a2a-peers/peer-retry-1/heartbeat") {
+          heartbeatPosts += 1;
+          response.end(JSON.stringify({ status: "online" }));
+          return;
+        }
+        response.statusCode = 404;
+        response.end(JSON.stringify({ error: "not found", body }));
+      });
+    });
+    await new Promise<void>((resolve) => servstation.listen(0, "127.0.0.1", resolve));
+    const address = servstation.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    await runtime.updateIdentityContext({
+      tenantId: "tenant-retry",
+      organizationId: "org-retry",
+      departmentId: "dept-retry",
+      userId: "user-retry",
+      roleIds: ["user"],
+      source: "servstation",
+      servstationUrl: baseUrl
+    });
+    await runtime.updateServstationA2AConfig({ enabled: true, baseUrl, authMode: "identityHeaders" });
+    try {
+      await expect(runtime.connectServstationReverseBridge()).rejects.toThrow("transient reverse failure");
+      const startedAt = Date.now();
+      await runtime.connectServstationReverseBridge();
+      expect(Date.now() - startedAt).toBeLessThan(900);
+      expect(registrationAttempts).toBe(2);
+      expect(runtime.snapshot().servstationA2A.config.reverse?.status).toBe("connected");
+      expect(eventStream).toBeTruthy();
+      await waitForCondition("retry reverse heartbeat posted", () => heartbeatPosts > 0);
+    } finally {
+      closeStream?.();
+      await runtime.disconnectServstationReverseBridge();
       await new Promise<void>((resolve, reject) => servstation.close((error) => error ? reject(error) : resolve()));
     }
   });

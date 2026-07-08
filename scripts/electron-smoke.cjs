@@ -250,8 +250,8 @@ async function main() {
       hasRunSelect: Boolean(document.querySelector(".autopilot-run-monitor-card .autopilot-run-select .ant-select-selector")),
       hasEmptyRunInfo: document.body.innerText.includes("Register a project and start a data run."),
       hasDataSourceControls: Boolean(document.querySelector(".autopilot-source-row, .autopilot-source-kind, .autopilot-source-value, [name='sourceKind'], [name='sourceValue']")),
-      hasProjectText: document.body.innerText.includes("Project data runs") || document.body.innerText.includes("DATA AUTOPILOT"),
-      hasStartRunText: document.body.innerText.includes("Start run"),
+      hasProjectText: document.body.innerText.includes("Project data runs") || document.body.innerText.includes("DATA AUTOPILOT") || document.body.innerText.includes("项目数据任务"),
+      hasStartRunText: document.body.innerText.includes("Start run") || document.body.innerText.includes("启动运行"),
       hasSurfaceText: document.body.innerText.includes("Autopilot surface") || document.body.innerText.includes("自动驾驶面板"),
       hasAutomationLoopText: document.body.innerText.includes("automation loop") || document.body.innerText.includes("自动化循环")
     }))()`
@@ -520,10 +520,10 @@ async function main() {
       hasPanel: Boolean(document.querySelector(".mcp-server-card")),
       hasSeedServer: document.body.innerText.includes("Smoke MCP"),
       hasStatusGrid: Boolean(document.querySelector(".mcp-status-grid")),
-      hasTimeoutField: document.body.innerText.includes("Request timeout") || document.body.innerText.includes("Timeout"),
+      hasTimeoutField: document.body.innerText.includes("Request timeout") || document.body.innerText.includes("Timeout") || document.body.innerText.includes("请求超时"),
       hasPresetSelect: Boolean(document.querySelector(".mcp-preset-select")),
-      hasTransferButtons: document.body.innerText.includes("Export MCP") && document.body.innerText.includes("Import MCP"),
-      hasDiagnoseButton: document.body.innerText.includes("Diagnose"),
+      hasTransferButtons: (document.body.innerText.includes("Export MCP") || document.body.innerText.includes("导出 MCP")) && (document.body.innerText.includes("Import MCP") || document.body.innerText.includes("导入 MCP")),
+      hasDiagnoseButton: document.body.innerText.includes("Diagnose") || document.body.innerText.includes("诊断"),
       hasCopyButtons: (document.body.innerText.includes("Copy diagnostic summary") || document.body.innerText.includes("复制诊断摘要")) && (document.body.innerText.includes("Copy tool list") || document.body.innerText.includes("复制工具清单")),
       hasSchemaWarning: document.body.innerText.includes("schema warning") || document.body.innerText.includes("schema 警告")
     }))()`

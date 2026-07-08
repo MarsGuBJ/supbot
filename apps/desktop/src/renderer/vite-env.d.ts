@@ -54,6 +54,33 @@ import type {
   ServstationA2AConfigUpdate,
   ServstationA2AOidcLoginInput,
   ServstationA2AOidcLoginResult,
+  ServstationAutopilotRun,
+  ServstationAutopilotStartInput,
+  ServstationAutopilotStatusUpdate,
+  ServstationClientSnapshot,
+  ServstationClientSnapshotQuery,
+  ServstationConversation,
+  ServstationFlowEngineApprovalDecisionInput,
+  ServstationFlowEngineExecutionEvent,
+  ServstationFlowEngineInitiatedExecution,
+  ServstationFlowEngineLaunchInput,
+  ServstationFlowEngineSnapshot,
+  ServstationMailAccount,
+  ServstationMailAccountDraft,
+  ServstationMailConnectionTestResult,
+  ServstationMessageAttachmentContent,
+  ServstationMessageDetail,
+  ServstationMessageEvent,
+  ServstationMessageFolder,
+  ServstationMessageListResponse,
+  ServstationMessageUnreadSummary,
+  ServstationScheduledJob,
+  ServstationScheduledJobInput,
+  ServstationSendAgentMessageInput,
+  ServstationSendDirectMessageInput,
+  ServstationSendPromptInput,
+  ServstationSendPromptResult,
+  ServstationSessionJob,
   SubagentConfig,
   SupbotEvent,
   ToolMarketCatalogItem,
@@ -108,6 +135,40 @@ declare global {
       logoutServstationOidc(): Promise<ServstationA2AConfig>;
       connectServstationReverseBridge(): Promise<ServstationA2AConfig>;
       disconnectServstationReverseBridge(): Promise<ServstationA2AConfig>;
+      getServstationClientSnapshot(query?: ServstationClientSnapshotQuery): Promise<ServstationClientSnapshot>;
+      createServstationConversation(title?: string): Promise<ServstationConversation>;
+      deleteServstationConversation(id: string): Promise<void>;
+      sendServstationPrompt(input: ServstationSendPromptInput): Promise<ServstationSendPromptResult>;
+      cancelServstationJob(id: string): Promise<ServstationSessionJob>;
+      createServstationScheduledJob(input: ServstationScheduledJobInput): Promise<ServstationScheduledJob>;
+      updateServstationScheduledJob(id: string, input: Partial<ServstationScheduledJobInput>): Promise<ServstationScheduledJob>;
+      deleteServstationScheduledJob(id: string): Promise<void>;
+      startServstationAutopilotRun(input: ServstationAutopilotStartInput): Promise<ServstationAutopilotRun>;
+      updateServstationAutopilotRun(input: ServstationAutopilotStatusUpdate): Promise<ServstationAutopilotRun>;
+      getServstationFlowEngineSnapshot(): Promise<ServstationFlowEngineSnapshot>;
+      launchServstationFlowEngineWorkflow(input: ServstationFlowEngineLaunchInput): Promise<ServstationFlowEngineInitiatedExecution>;
+      getServstationFlowEngineExecution(id: string): Promise<ServstationFlowEngineInitiatedExecution>;
+      getServstationFlowEngineExecutionEvents(id: string): Promise<ServstationFlowEngineExecutionEvent[]>;
+      decideServstationFlowEngineApproval(input: ServstationFlowEngineApprovalDecisionInput): Promise<import("@supbot/shared").ServstationFlowEnginePendingTask>;
+      listServstationMessages(folder: ServstationMessageFolder, unreadOnly?: boolean): Promise<ServstationMessageListResponse>;
+      getServstationUnreadMessages(): Promise<ServstationMessageUnreadSummary>;
+      getServstationMessage(id: string): Promise<ServstationMessageDetail>;
+      markServstationMessageRead(id: string): Promise<ServstationMessageDetail>;
+      setServstationMessageFavorite(id: string, favorited: boolean): Promise<ServstationMessageDetail>;
+      trashServstationMessage(id: string): Promise<ServstationMessageDetail>;
+      restoreServstationMessage(id: string): Promise<ServstationMessageDetail>;
+      deleteServstationMessage(id: string): Promise<void>;
+      fetchServstationMessageAttachment(messageId: string, attachmentId: string): Promise<ServstationMessageAttachmentContent>;
+      sendServstationAgentMessage(input: ServstationSendAgentMessageInput): Promise<ServstationSessionJob>;
+      sendServstationDirectMessage(input: ServstationSendDirectMessageInput): Promise<ServstationMessageDetail>;
+      listServstationMailAccounts(): Promise<ServstationMailAccount[]>;
+      createServstationMailAccount(input: ServstationMailAccountDraft): Promise<ServstationMailAccount>;
+      updateServstationMailAccount(id: string, input: ServstationMailAccountDraft): Promise<ServstationMailAccount>;
+      deleteServstationMailAccount(id: string): Promise<void>;
+      setDefaultServstationMailAccount(id: string): Promise<ServstationMailAccount>;
+      testServstationMailAccountConnection(id: string): Promise<ServstationMailConnectionTestResult>;
+      syncServstationMailAccountNow(id: string): Promise<{ status: string }>;
+      onServstationMessageEvent(listener: (event: ServstationMessageEvent) => void): () => void;
       listMemory(query?: MemorySearchQuery): Promise<MemorySearchResult[]>;
       searchMemory(query?: MemorySearchQuery): Promise<MemorySearchResult[]>;
       addMemory(input: MemoryAddInput): Promise<MemoryPage | MemoryFact>;

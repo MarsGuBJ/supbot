@@ -368,6 +368,9 @@ export interface ServstationA2AConfig {
   baseUrl?: string;
   authMode: ServstationA2AAuthMode;
   bearerTokenSaved: boolean;
+  staffAgentAccount?: string;
+  staffAgentPasswordSaved: boolean;
+  staffAgentPasswordStorage?: "safeStorage" | "file";
   oidc?: ServstationA2AOidcConfig;
   reverse?: ServstationA2AReverseConfig;
   agentInstanceId?: string;
@@ -380,6 +383,9 @@ export interface ServstationA2AConfigUpdate {
   authMode?: ServstationA2AAuthMode;
   bearerToken?: string;
   clearBearerToken?: boolean;
+  staffAgentAccount?: string;
+  staffAgentPassword?: string;
+  clearStaffAgentPassword?: boolean;
   agentInstanceId?: string;
   oidcIssuerUrl?: string;
   oidcClientId?: string;
@@ -387,6 +393,351 @@ export interface ServstationA2AConfigUpdate {
   oidcRedirectUri?: string;
   reverseEnabled?: boolean;
   reverseClientInstanceId?: string;
+}
+
+export interface ServstationConversation {
+  id: string;
+  agentInstanceId: string;
+  title: string;
+  runtimeSessionId: string;
+  jobCount: number;
+  lastMessageAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ServstationSessionJob {
+  id: string;
+  agentInstanceId: string;
+  requestId: string;
+  clientId: string;
+  jobType: string;
+  conversationId?: string;
+  runtimeSessionId?: string;
+  payload?: unknown;
+  status: string;
+  queuePosition: number;
+  progress?: unknown;
+  result?: unknown;
+  terminalCode?: string;
+  terminalMessage?: string;
+  createdAt: string;
+  startedAt?: string | null;
+  heartbeatAt?: string | null;
+  leaseExpiresAt?: string | null;
+  finishedAt?: string | null;
+}
+
+export interface ServstationScheduledJob {
+  id: string;
+  agentInstanceId: string;
+  conversationId: string;
+  title: string;
+  prompt: string;
+  scheduleKind: string;
+  runAt?: string | null;
+  cronExpr?: string;
+  enabled: boolean;
+  lastRunAt?: string | null;
+  nextRunAt?: string | null;
+  lastError?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ServstationAutopilotEvaluation {
+  jobId?: string;
+  completed: boolean;
+  confidence: number;
+  reason?: string;
+  nextPrompt?: string;
+  needsUser?: boolean;
+  evaluatedAt?: string;
+}
+
+export interface ServstationAutopilotRun {
+  id: string;
+  agentInstanceId: string;
+  conversationId: string;
+  runtimeSessionId?: string;
+  goal: string;
+  status: string;
+  currentJobId?: string;
+  retryState?: Record<string, number>;
+  totalRetries?: number;
+  activeTargetId?: string;
+  activeTargetKind?: string;
+  monitoredAgents?: Array<Record<string, unknown>>;
+  monitoredJobs?: Array<Record<string, unknown>>;
+  lastEvaluation?: ServstationAutopilotEvaluation;
+  failureMessage?: string;
+  lastCheckedAt?: string | null;
+  completedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ServstationAutopilotEvent {
+  id: string;
+  runId: string;
+  agentInstanceId: string;
+  jobId?: string;
+  eventType: string;
+  level: string;
+  message: string;
+  data?: unknown;
+  createdAt: string;
+}
+
+export interface ServstationFlowEnginePendingTask {
+  id: string;
+  executionId: string;
+  workflowId: string;
+  spaceId: string;
+  nodeId: string;
+  assigneeId?: string;
+  title: string;
+  instructions?: string;
+  approverRoles: string[];
+  openUrl?: string;
+  status: "pending" | "approved" | "rejected" | string;
+  comment?: string;
+  decision?: "approved" | "rejected";
+  actedAt?: string;
+  executionInput?: Record<string, unknown>;
+}
+
+export interface ServstationFlowEngineLaunchableWorkflow {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+}
+
+export interface ServstationFlowEngineInitiatedExecution {
+  id: string;
+  workflowId: string;
+  workflowName?: string;
+  workflowVersionId: string;
+  spaceId: string;
+  initiatorUserId?: string;
+  status: "queued" | "running" | "waiting_approval" | "waiting_timer" | "succeeded" | "failed" | "cancelled" | string;
+  input: Record<string, unknown>;
+  output?: Record<string, unknown>;
+  error?: Record<string, unknown>;
+  createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+}
+
+export interface ServstationFlowEngineExecutionEvent {
+  id: string;
+  executionId: string;
+  type: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface ServstationFlowEngineSnapshot {
+  launchableWorkflows: ServstationFlowEngineLaunchableWorkflow[];
+  pendingTasks: ServstationFlowEnginePendingTask[];
+  executions: ServstationFlowEngineInitiatedExecution[];
+  fetchedAt: string;
+}
+
+export interface ServstationFlowEngineLaunchInput {
+  workflowId: string;
+  input: Record<string, unknown>;
+}
+
+export interface ServstationFlowEngineApprovalDecisionInput {
+  approvalId: string;
+  decision: "approved" | "rejected";
+  comment?: string;
+}
+
+export type ServstationMessageFolder = "inbox" | "trash";
+
+export interface ServstationMessageAccountRef {
+  tenantId: string;
+  organizationId: string;
+  departmentId: string;
+  userId: string;
+}
+
+export interface ServstationMessageAttachmentUpload {
+  fileName: string;
+  contentType: string;
+  contentBase64: string;
+}
+
+export interface ServstationMessageAttachmentMeta {
+  attachmentId: string;
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+}
+
+export interface ServstationMessageAttachmentContent extends ServstationMessageAttachmentMeta {
+  contentBase64: string;
+}
+
+export interface ServstationMessageListItem {
+  messageId: string;
+  sender: ServstationMessageAccountRef;
+  senderAgentInstanceId?: string;
+  subject: string;
+  preview: string;
+  attachments?: ServstationMessageAttachmentMeta[];
+  attachmentCount: number;
+  createdAt: string;
+  readAt?: string | null;
+  favorited: boolean;
+  trashed: boolean;
+  channel?: "internal" | "email" | string;
+  externalFromAddress?: string | null;
+}
+
+export interface ServstationMessageDetail extends ServstationMessageListItem {
+  body: string;
+  recipients: ServstationMessageAccountRef[];
+}
+
+export interface ServstationMessageListResponse {
+  messages: ServstationMessageListItem[];
+}
+
+export interface ServstationMessageUnreadSummary {
+  unreadCount: number;
+  messages: ServstationMessageListItem[];
+}
+
+export type ServstationMailSecurityMode = "starttls" | "tls" | "none";
+
+export interface ServstationMailAccount {
+  id: string;
+  tenantId: string;
+  organizationId: string;
+  departmentId: string;
+  userId: string;
+  emailAddress: string;
+  displayName: string;
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecurity: ServstationMailSecurityMode;
+  smtpUsername: string;
+  hasSmtpPassword: boolean;
+  imapHost: string;
+  imapPort: number;
+  imapSecurity: ServstationMailSecurityMode;
+  imapUsername: string;
+  hasImapPassword: boolean;
+  isDefault: boolean;
+  enabled: boolean;
+  lastSyncAt?: string | null;
+  lastSyncError?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ServstationMailAccountDraft {
+  emailAddress: string;
+  displayName: string;
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecurity: ServstationMailSecurityMode;
+  smtpUsername: string;
+  smtpPassword?: string;
+  imapHost: string;
+  imapPort: number;
+  imapSecurity: ServstationMailSecurityMode;
+  imapUsername: string;
+  imapPassword?: string;
+  isDefault: boolean;
+  enabled: boolean;
+}
+
+export interface ServstationMailConnectionTestResult {
+  imapOk: boolean;
+  smtpOk: boolean;
+  imapError?: string;
+  smtpError?: string;
+}
+
+export interface ServstationSendAgentMessageInput {
+  recipients: ServstationMessageAccountRef[];
+  subject: string;
+  body: string;
+  attachments?: ServstationMessageAttachmentUpload[];
+}
+
+export interface ServstationSendDirectMessageInput {
+  recipients: ServstationMessageAccountRef[];
+  externalRecipients?: string[];
+  senderMailAccountId?: string;
+  subject: string;
+  body: string;
+  attachments?: ServstationMessageAttachmentUpload[];
+}
+
+export type ServstationMessageEvent =
+  | { type: "messages.unread"; data: ServstationMessageUnreadSummary };
+
+export interface ServstationClientSnapshot {
+  connected: boolean;
+  reverseStatus: ServstationA2AReverseStatus;
+  baseUrl?: string;
+  agentInstanceId?: string;
+  identity?: IdentityContext;
+  lastError?: string;
+  activeConversationId?: string;
+  conversations: ServstationConversation[];
+  jobs: ServstationSessionJob[];
+  scheduledJobs: ServstationScheduledJob[];
+  autopilotRun?: ServstationAutopilotRun | null;
+  autopilotEvents: ServstationAutopilotEvent[];
+  fetchedAt: string;
+}
+
+export interface ServstationClientSnapshotQuery {
+  conversationId?: string;
+}
+
+export interface ServstationSendPromptInput {
+  conversationId?: string;
+  prompt: string;
+  requestId?: string;
+  attachments?: Attachment[];
+  allowWebSearch?: boolean;
+}
+
+export interface ServstationSendPromptResult {
+  conversation: ServstationConversation;
+  job: ServstationSessionJob;
+  snapshot: ServstationClientSnapshot;
+}
+
+export interface ServstationScheduledJobInput {
+  title?: string;
+  prompt: string;
+  scheduleKind: string;
+  runAt?: string;
+  cronExpr?: string;
+  conversationId?: string;
+  enabled?: boolean;
+}
+
+export interface ServstationAutopilotStartInput {
+  conversationId?: string;
+  goal?: string;
+  prompt?: string;
+  requestId?: string;
+}
+
+export interface ServstationAutopilotStatusUpdate {
+  runId: string;
+  status: "paused" | "watching" | "stopped";
 }
 
 export interface ServstationA2AOidcTokenSet {
@@ -416,6 +767,7 @@ export interface ServstationA2AOidcLoginInput {
   clientId?: string;
   scope?: string;
   redirectUri?: string;
+  loginHint?: string;
 }
 
 export interface ServstationA2AOidcLoginResult {

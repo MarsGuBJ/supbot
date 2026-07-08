@@ -3,10 +3,11 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
 import { hostname, userInfo } from "node:os";
 import { isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { JsonFileStorage, SupbotRuntime, ensureRuntimeDirs, identityContextFromAccessToken, oidcTokenSetFromTokenResponse, type RuntimeState, type StorageAdapter } from "@supbot/runtime";
-import type { AutopilotStartDataRunInput, CapabilityUpdateInput, DataSourceSpec, IdentityContext, McpConfigTransfer, McpServerInput, McpServerUpdate, MemoryAddInput, MemoryImportInput, MemoryRecallFeedbackInput, MemoryReplayRecallInput, MemorySearchQuery, MemoryUpdateInput, ModelConfigUpdate, PermissionMode, PermissionRule, PersonalityConfig, ProjectCreateInput, ProjectUpdateInput, RemoteBridgeConfig, ScheduledJobInput, SendPromptInput, ServstationA2AConfigUpdate, ServstationA2AOidcLoginInput, ServstationA2AOidcLoginResult, SubagentConfig, ToolMarketConfigUpdate, ToolMarketQuery } from "@supbot/shared";
+import type { AutopilotStartDataRunInput, CapabilityUpdateInput, DataSourceSpec, IdentityContext, McpConfigTransfer, McpServerInput, McpServerUpdate, MemoryAddInput, MemoryImportInput, MemoryRecallFeedbackInput, MemoryReplayRecallInput, MemorySearchQuery, MemoryUpdateInput, ModelConfigUpdate, PermissionMode, PermissionRule, PersonalityConfig, ProjectCreateInput, ProjectUpdateInput, RemoteBridgeConfig, ScheduledJobInput, SendPromptInput, ServstationA2AConfigUpdate, ServstationA2AOidcLoginInput, ServstationA2AOidcLoginResult, ServstationAutopilotStartInput, ServstationAutopilotStatusUpdate, ServstationClientSnapshotQuery, ServstationFlowEngineApprovalDecisionInput, ServstationFlowEngineLaunchInput, ServstationMailAccountDraft, ServstationMessageAttachmentUpload, ServstationMessageFolder, ServstationMessageAccountRef, ServstationScheduledJobInput, ServstationSendAgentMessageInput, ServstationSendDirectMessageInput, ServstationSendPromptInput, SubagentConfig, ToolMarketConfigUpdate, ToolMarketQuery } from "@supbot/shared";
 
 let mainWindow: BrowserWindow | null = null;
 let runtime: SupbotRuntime | null = null;
+const servstationMessageEventSubscriptions = new Map<string, AbortController>();
 const isDev = !app.isPackaged;
 const allowedDevServerOrigin = "http://127.0.0.1:5173";
 const productionCsp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'none'";
@@ -73,6 +74,12 @@ class EncryptedStorage implements StorageAdapter {
         refreshTokenSaved: true
       };
     }
+    if (state.servstationA2AStaffAgentPasswordSecret) {
+      const decoded = this.decryptSecret(state.servstationA2AStaffAgentPasswordSecret);
+      state.servstationA2AStaffAgentPasswordSecret = decoded.value;
+      state.servstationA2AConfig.staffAgentPasswordSaved = true;
+      state.servstationA2AConfig.staffAgentPasswordStorage = decoded.kind;
+    }
     return state;
   }
 
@@ -116,6 +123,12 @@ class EncryptedStorage implements StorageAdapter {
         ...(copy.servstationA2AConfig.oidc || { refreshTokenSaved: false }),
         refreshTokenSaved: true
       };
+    }
+    if (copy.servstationA2AStaffAgentPasswordSecret) {
+      const encoded = this.encryptSecret(copy.servstationA2AStaffAgentPasswordSecret);
+      copy.servstationA2AStaffAgentPasswordSecret = encoded.value;
+      copy.servstationA2AConfig.staffAgentPasswordSaved = true;
+      copy.servstationA2AConfig.staffAgentPasswordStorage = encoded.kind;
     }
     await this.inner.save(copy);
   }
@@ -198,6 +211,7 @@ async function loginServstationOidc(input: ServstationA2AOidcLoginInput): Promis
   const clientId = requiredString(input.clientId || currentConfig.oidc?.clientId || "agent-client-web-dev", "Servstation OIDC client id");
   const scope = input.scope || currentConfig.oidc?.scope || "openid profile email offline_access";
   const redirectUri = normalizeOidcUrl(input.redirectUri || currentConfig.oidc?.redirectUri || `${baseUrl}/auth/callback`, "Servstation OIDC redirect URI");
+  const loginHint = input.loginHint || currentConfig.staffAgentAccount;
   const discovery = await discoverOidcDocument(issuerUrl);
   if (!discovery.authorization_endpoint || !discovery.token_endpoint) {
     throw new Error("Servstation OIDC discovery document is missing required endpoints.");
@@ -213,6 +227,9 @@ async function loginServstationOidc(input: ServstationA2AOidcLoginInput): Promis
   authorizationUrl.searchParams.set("state", state);
   authorizationUrl.searchParams.set("code_challenge", challenge);
   authorizationUrl.searchParams.set("code_challenge_method", "S256");
+  if (loginHint?.trim()) {
+    authorizationUrl.searchParams.set("login_hint", loginHint.trim());
+  }
 
   const codeResult = await openOidcLoginWindow(authorizationUrl.toString(), redirectUri, state);
   const tokenResponse = await fetch(discovery.token_endpoint, {
@@ -511,6 +528,65 @@ function registerIpc(): void {
   ipcMain.handle("servstationA2A:logoutOidc", () => getRuntime().clearServstationA2AOidcSession());
   ipcMain.handle("servstationA2A:connectReverse", () => getRuntime().connectServstationReverseBridge());
   ipcMain.handle("servstationA2A:disconnectReverse", () => getRuntime().disconnectServstationReverseBridge());
+  ipcMain.handle("servstationClient:snapshot", (_event, input?: ServstationClientSnapshotQuery) => getRuntime().getServstationClientSnapshot(validateServstationClientSnapshotQuery(input)));
+  ipcMain.handle("servstationClient:createConversation", (_event, title?: string) => getRuntime().createServstationConversation(optionalString(title, "servstation conversation title")));
+  ipcMain.handle("servstationClient:deleteConversation", (_event, id: string) => getRuntime().deleteServstationConversation(requiredString(id, "servstation conversation id")));
+  ipcMain.handle("servstationClient:sendPrompt", (_event, input: ServstationSendPromptInput) => getRuntime().sendServstationPrompt(validateServstationSendPromptInput(input)));
+  ipcMain.handle("servstationClient:cancelJob", (_event, id: string) => getRuntime().cancelServstationJob(requiredString(id, "servstation job id")));
+  ipcMain.handle("servstationClient:createScheduledJob", (_event, input: ServstationScheduledJobInput) => getRuntime().createServstationScheduledJob(validateServstationScheduledJobInput(input)));
+  ipcMain.handle("servstationClient:updateScheduledJob", (_event, id: string, input: Partial<ServstationScheduledJobInput>) => getRuntime().updateServstationScheduledJob(requiredString(id, "servstation scheduled job id"), validateServstationScheduledJobUpdate(input)));
+  ipcMain.handle("servstationClient:deleteScheduledJob", (_event, id: string) => getRuntime().deleteServstationScheduledJob(requiredString(id, "servstation scheduled job id")));
+  ipcMain.handle("servstationClient:startAutopilotRun", (_event, input: ServstationAutopilotStartInput) => getRuntime().startServstationAutopilotRun(validateServstationAutopilotStartInput(input)));
+  ipcMain.handle("servstationClient:updateAutopilotRun", (_event, input: ServstationAutopilotStatusUpdate) => getRuntime().updateServstationAutopilotRun(validateServstationAutopilotStatusUpdate(input)));
+  ipcMain.handle("servstationClient:getFlowEngineSnapshot", () => getRuntime().getServstationFlowEngineSnapshot());
+  ipcMain.handle("servstationClient:launchFlowEngineWorkflow", (_event, input: ServstationFlowEngineLaunchInput) => getRuntime().launchServstationFlowEngineWorkflow(validateServstationFlowEngineLaunchInput(input)));
+  ipcMain.handle("servstationClient:getFlowEngineExecution", (_event, id: string) => getRuntime().getServstationFlowEngineExecution(requiredString(id, "servstation flow execution id")));
+  ipcMain.handle("servstationClient:getFlowEngineExecutionEvents", (_event, id: string) => getRuntime().getServstationFlowEngineExecutionEvents(requiredString(id, "servstation flow execution id")));
+  ipcMain.handle("servstationClient:decideFlowEngineApproval", (_event, input: ServstationFlowEngineApprovalDecisionInput) => getRuntime().decideServstationFlowEngineApproval(validateServstationFlowEngineApprovalDecisionInput(input)));
+  ipcMain.handle("servstationClient:listMessages", (_event, folder: ServstationMessageFolder, unreadOnly?: boolean) => getRuntime().listServstationMessages(validateServstationMessageFolder(folder), optionalBoolean(unreadOnly, "servstation unread only") ?? false));
+  ipcMain.handle("servstationClient:getUnreadMessages", () => getRuntime().getServstationUnreadMessages());
+  ipcMain.handle("servstationClient:getMessage", (_event, id: string) => getRuntime().getServstationMessage(requiredString(id, "servstation message id")));
+  ipcMain.handle("servstationClient:markMessageRead", (_event, id: string) => getRuntime().markServstationMessageRead(requiredString(id, "servstation message id")));
+  ipcMain.handle("servstationClient:setMessageFavorite", (_event, id: string, favorited: boolean) => getRuntime().setServstationMessageFavorite(requiredString(id, "servstation message id"), optionalBoolean(favorited, "servstation message favorite") ?? false));
+  ipcMain.handle("servstationClient:trashMessage", (_event, id: string) => getRuntime().trashServstationMessage(requiredString(id, "servstation message id")));
+  ipcMain.handle("servstationClient:restoreMessage", (_event, id: string) => getRuntime().restoreServstationMessage(requiredString(id, "servstation message id")));
+  ipcMain.handle("servstationClient:deleteMessage", (_event, id: string) => getRuntime().deleteServstationMessage(requiredString(id, "servstation message id")));
+  ipcMain.handle("servstationClient:fetchMessageAttachment", (_event, messageId: string, attachmentId: string) => getRuntime().fetchServstationMessageAttachment(requiredString(messageId, "servstation message id"), requiredString(attachmentId, "servstation attachment id")));
+  ipcMain.handle("servstationClient:sendAgentMessage", (_event, input: ServstationSendAgentMessageInput) => getRuntime().sendServstationAgentMessage(validateServstationSendAgentMessageInput(input)));
+  ipcMain.handle("servstationClient:sendDirectMessage", (_event, input: ServstationSendDirectMessageInput) => getRuntime().sendServstationDirectMessage(validateServstationSendDirectMessageInput(input)));
+  ipcMain.handle("servstationClient:listMailAccounts", () => getRuntime().listServstationMailAccounts());
+  ipcMain.handle("servstationClient:createMailAccount", (_event, input: ServstationMailAccountDraft) => getRuntime().createServstationMailAccount(validateServstationMailAccountDraft(input)));
+  ipcMain.handle("servstationClient:updateMailAccount", (_event, id: string, input: ServstationMailAccountDraft) => getRuntime().updateServstationMailAccount(requiredString(id, "servstation mail account id"), validateServstationMailAccountDraft(input)));
+  ipcMain.handle("servstationClient:deleteMailAccount", (_event, id: string) => getRuntime().deleteServstationMailAccount(requiredString(id, "servstation mail account id")));
+  ipcMain.handle("servstationClient:setDefaultMailAccount", (_event, id: string) => getRuntime().setDefaultServstationMailAccount(requiredString(id, "servstation mail account id")));
+  ipcMain.handle("servstationClient:testMailAccountConnection", (_event, id: string) => getRuntime().testServstationMailAccountConnection(requiredString(id, "servstation mail account id")));
+  ipcMain.handle("servstationClient:syncMailAccountNow", (_event, id: string) => getRuntime().syncServstationMailAccountNow(requiredString(id, "servstation mail account id")));
+  ipcMain.handle("servstationClient:subscribeMessageEvents", (event, id: string) => {
+    const subscriptionId = requiredString(id, "servstation message event subscription id");
+    servstationMessageEventSubscriptions.get(subscriptionId)?.abort();
+    const controller = new AbortController();
+    servstationMessageEventSubscriptions.set(subscriptionId, controller);
+    const channel = `servstationClient:messageEvent:${subscriptionId}`;
+    void getRuntime().streamServstationMessageEvents((payload) => {
+      if (!controller.signal.aborted && !event.sender.isDestroyed()) {
+        event.sender.send(channel, payload);
+      }
+    }, controller.signal).catch(() => undefined).finally(() => {
+      if (servstationMessageEventSubscriptions.get(subscriptionId) === controller) {
+        servstationMessageEventSubscriptions.delete(subscriptionId);
+      }
+    });
+    event.sender.once("destroyed", () => {
+      controller.abort();
+      servstationMessageEventSubscriptions.delete(subscriptionId);
+    });
+    return { subscriptionId };
+  });
+  ipcMain.handle("servstationClient:unsubscribeMessageEvents", (_event, id: string) => {
+    const subscriptionId = requiredString(id, "servstation message event subscription id");
+    servstationMessageEventSubscriptions.get(subscriptionId)?.abort();
+    servstationMessageEventSubscriptions.delete(subscriptionId);
+  });
   ipcMain.handle("memory:list", (_event, query?: MemorySearchQuery) => getRuntime().listMemory(validateMemorySearchQuery(query)));
   ipcMain.handle("memory:search", (_event, query?: MemorySearchQuery) => getRuntime().searchMemory(validateMemorySearchQuery(query)));
   ipcMain.handle("memory:add", (_event, input: MemoryAddInput) => getRuntime().addMemory(validateMemoryAddInput(input)));
@@ -711,6 +787,9 @@ function validateServstationA2AConfigUpdate(input: ServstationA2AConfigUpdate): 
     authMode: optionalEnum(value.authMode, ["identityHeaders", "bearer", "oidc"], "servstation A2A auth mode"),
     bearerToken: optionalString(value.bearerToken, "servstation A2A bearer token"),
     clearBearerToken: optionalBoolean(value.clearBearerToken, "clear servstation A2A bearer token"),
+    staffAgentAccount: optionalString(value.staffAgentAccount, "servstation staff-agent account"),
+    staffAgentPassword: optionalString(value.staffAgentPassword, "servstation staff-agent password"),
+    clearStaffAgentPassword: optionalBoolean(value.clearStaffAgentPassword, "clear servstation staff-agent password"),
     agentInstanceId: optionalString(value.agentInstanceId, "servstation agent instance id"),
     oidcIssuerUrl: optionalString(value.oidcIssuerUrl, "servstation OIDC issuer URL"),
     oidcClientId: optionalString(value.oidcClientId, "servstation OIDC client id"),
@@ -731,8 +810,163 @@ function validateServstationA2AOidcLoginInput(input: ServstationA2AOidcLoginInpu
     issuerUrl: optionalString(value.issuerUrl, "servstation OIDC issuer URL"),
     clientId: optionalString(value.clientId, "servstation OIDC client id"),
     scope: optionalString(value.scope, "servstation OIDC scope"),
-    redirectUri: optionalString(value.redirectUri, "servstation OIDC redirect URI")
+    redirectUri: optionalString(value.redirectUri, "servstation OIDC redirect URI"),
+    loginHint: optionalString(value.loginHint, "servstation OIDC login hint")
   });
+}
+
+function validateServstationClientSnapshotQuery(input: ServstationClientSnapshotQuery | undefined): ServstationClientSnapshotQuery {
+  if (!input) {
+    return {};
+  }
+  const value = object(input, "servstation client snapshot query");
+  return compactUndefined({
+    conversationId: optionalString(value.conversationId, "servstation conversation id")
+  });
+}
+
+function validateServstationSendPromptInput(input: ServstationSendPromptInput): ServstationSendPromptInput {
+  const value = object(input, "servstation prompt input");
+  return compactUndefined({
+    conversationId: optionalString(value.conversationId, "servstation conversation id"),
+    prompt: requiredString(value.prompt, "servstation prompt"),
+    requestId: optionalString(value.requestId, "servstation request id"),
+    attachments: Array.isArray(value.attachments) ? value.attachments.map(validateAttachment) : [],
+    allowWebSearch: optionalBoolean(value.allowWebSearch, "servstation web search")
+  });
+}
+
+function validateServstationScheduledJobInput(input: ServstationScheduledJobInput): ServstationScheduledJobInput {
+  const value = object(input, "servstation scheduled job");
+  return compactUndefined({
+    title: optionalString(value.title, "servstation scheduled job title"),
+    prompt: requiredString(value.prompt, "servstation scheduled job prompt"),
+    scheduleKind: requiredString(value.scheduleKind, "servstation scheduled job kind"),
+    runAt: optionalString(value.runAt, "servstation scheduled job run at"),
+    cronExpr: optionalString(value.cronExpr, "servstation scheduled job cron expression"),
+    conversationId: optionalString(value.conversationId, "servstation scheduled job conversation id"),
+    enabled: optionalBoolean(value.enabled, "servstation scheduled job enabled")
+  });
+}
+
+function validateServstationScheduledJobUpdate(input: Partial<ServstationScheduledJobInput>): Partial<ServstationScheduledJobInput> {
+  return validatePartialObject(input, {
+    title: (value) => optionalString(value, "servstation scheduled job title"),
+    prompt: (value) => optionalString(value, "servstation scheduled job prompt"),
+    scheduleKind: (value) => optionalString(value, "servstation scheduled job kind"),
+    runAt: (value) => optionalString(value, "servstation scheduled job run at"),
+    cronExpr: (value) => optionalString(value, "servstation scheduled job cron expression"),
+    conversationId: (value) => optionalString(value, "servstation scheduled job conversation id"),
+    enabled: (value) => optionalBoolean(value, "servstation scheduled job enabled")
+  }) as Partial<ServstationScheduledJobInput>;
+}
+
+function validateServstationAutopilotStartInput(input: ServstationAutopilotStartInput): ServstationAutopilotStartInput {
+  const value = object(input, "servstation autopilot start");
+  return compactUndefined({
+    conversationId: optionalString(value.conversationId, "servstation autopilot conversation id"),
+    goal: optionalString(value.goal, "servstation autopilot goal"),
+    prompt: optionalString(value.prompt, "servstation autopilot prompt"),
+    requestId: optionalString(value.requestId, "servstation autopilot request id")
+  });
+}
+
+function validateServstationAutopilotStatusUpdate(input: ServstationAutopilotStatusUpdate): ServstationAutopilotStatusUpdate {
+  const value = object(input, "servstation autopilot update");
+  const status = requiredString(value.status, "servstation autopilot status");
+  if (status !== "paused" && status !== "watching" && status !== "stopped") {
+    throw new Error(`Invalid Servstation autopilot status: ${status}`);
+  }
+  return {
+    runId: requiredString(value.runId, "servstation autopilot run id"),
+    status
+  };
+}
+
+function validateServstationFlowEngineLaunchInput(input: ServstationFlowEngineLaunchInput): ServstationFlowEngineLaunchInput {
+  const value = object(input, "servstation flow launch");
+  return {
+    workflowId: requiredString(value.workflowId, "servstation flow workflow id"),
+    input: value.input === undefined ? {} : object(value.input, "servstation flow input")
+  };
+}
+
+function validateServstationFlowEngineApprovalDecisionInput(input: ServstationFlowEngineApprovalDecisionInput): ServstationFlowEngineApprovalDecisionInput {
+  const value = object(input, "servstation flow approval decision");
+  const decision = requiredString(value.decision, "servstation flow approval decision");
+  if (decision !== "approved" && decision !== "rejected") {
+    throw new Error(`Invalid Servstation flow approval decision: ${decision}`);
+  }
+  return compactUndefined({
+    approvalId: requiredString(value.approvalId, "servstation flow approval id"),
+    decision,
+    comment: optionalString(value.comment, "servstation flow approval comment")
+  }) as ServstationFlowEngineApprovalDecisionInput;
+}
+
+function validateServstationMessageFolder(input: unknown): ServstationMessageFolder {
+  return optionalEnum(input, ["inbox", "trash"], "servstation message folder") || "inbox";
+}
+
+function validateServstationMessageAccountRef(input: unknown): ServstationMessageAccountRef {
+  const value = object(input, "servstation message account");
+  return {
+    tenantId: requiredString(value.tenantId, "tenant id"),
+    organizationId: requiredString(value.organizationId, "organization id"),
+    departmentId: requiredString(value.departmentId, "department id"),
+    userId: requiredString(value.userId, "user id")
+  };
+}
+
+function validateServstationMessageAttachmentUpload(input: unknown): ServstationMessageAttachmentUpload {
+  const value = object(input, "servstation message attachment");
+  return {
+    fileName: requiredString(value.fileName, "attachment file name"),
+    contentType: optionalString(value.contentType, "attachment content type") || "application/octet-stream",
+    contentBase64: requiredString(value.contentBase64, "attachment content")
+  };
+}
+
+function validateServstationSendAgentMessageInput(input: ServstationSendAgentMessageInput): ServstationSendAgentMessageInput {
+  const value = object(input, "servstation agent message");
+  return {
+    recipients: requiredArray(value.recipients, "servstation message recipients").map(validateServstationMessageAccountRef),
+    subject: requiredString(value.subject, "servstation message subject"),
+    body: requiredString(value.body, "servstation message body"),
+    attachments: Array.isArray(value.attachments) ? value.attachments.map(validateServstationMessageAttachmentUpload) : []
+  };
+}
+
+function validateServstationSendDirectMessageInput(input: ServstationSendDirectMessageInput): ServstationSendDirectMessageInput {
+  const value = object(input, "servstation direct message");
+  return {
+    recipients: Array.isArray(value.recipients) ? value.recipients.map(validateServstationMessageAccountRef) : [],
+    externalRecipients: optionalStringArray(value.externalRecipients, "external message recipients") || [],
+    senderMailAccountId: optionalString(value.senderMailAccountId, "servstation sender mail account"),
+    subject: requiredString(value.subject, "servstation message subject"),
+    body: requiredString(value.body, "servstation message body"),
+    attachments: Array.isArray(value.attachments) ? value.attachments.map(validateServstationMessageAttachmentUpload) : []
+  };
+}
+
+function validateServstationMailAccountDraft(input: ServstationMailAccountDraft): ServstationMailAccountDraft {
+  const value = object(input, "servstation mail account");
+  return compactUndefined({
+    emailAddress: requiredString(value.emailAddress, "mail account email address"),
+    displayName: optionalString(value.displayName, "mail account display name") || "",
+    smtpHost: requiredString(value.smtpHost, "SMTP host"),
+    smtpPort: optionalNumber(value.smtpPort, "SMTP port") ?? 587,
+    smtpSecurity: optionalEnum(value.smtpSecurity, ["starttls", "tls", "none"], "SMTP security") || "starttls",
+    smtpUsername: requiredString(value.smtpUsername, "SMTP username"),
+    smtpPassword: optionalString(value.smtpPassword, "SMTP password"),
+    imapHost: requiredString(value.imapHost, "IMAP host"),
+    imapPort: optionalNumber(value.imapPort, "IMAP port") ?? 993,
+    imapSecurity: optionalEnum(value.imapSecurity, ["starttls", "tls", "none"], "IMAP security") || "tls",
+    imapUsername: requiredString(value.imapUsername, "IMAP username"),
+    imapPassword: optionalString(value.imapPassword, "IMAP password"),
+    isDefault: optionalBoolean(value.isDefault, "mail account default") ?? false,
+    enabled: optionalBoolean(value.enabled, "mail account enabled") ?? true
+  }) as ServstationMailAccountDraft;
 }
 
 function validateMemorySearchQuery(input: MemorySearchQuery | undefined): MemorySearchQuery {
@@ -969,6 +1203,13 @@ function object(value: unknown, label: string): Record<string, unknown> {
     throw new Error(`${label} must be an object.`);
   }
   return value as Record<string, unknown>;
+}
+
+function requiredArray(value: unknown, label: string): unknown[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`${label} is required.`);
+  }
+  return value;
 }
 
 function requiredString(value: unknown, label: string): string {

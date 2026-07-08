@@ -75,6 +75,7 @@ export interface RuntimeState {
   servstationA2AConfig: ServstationA2AConfig;
   servstationA2ASecret?: string;
   servstationA2AOidcSecret?: string;
+  servstationA2AStaffAgentPasswordSecret?: string;
 }
 
 export interface StorageAdapter {
@@ -207,6 +208,7 @@ export function createInitialState(): RuntimeState {
       enabled: false,
       authMode: "identityHeaders",
       bearerTokenSaved: false,
+      staffAgentPasswordSaved: false,
       oidc: {
         refreshTokenSaved: false
       },
@@ -308,9 +310,15 @@ function normalizeState(input: Partial<RuntimeState>): RuntimeState {
     remoteBridgeSecret: typeof input.remoteBridgeSecret === "string" ? input.remoteBridgeSecret : undefined,
     remoteBridgeSessions: Array.isArray(input.remoteBridgeSessions) ? input.remoteBridgeSessions.map(normalizeRemoteBridgeSession).filter(Boolean) as RemoteBridgeSession[] : [],
     remoteBridgeAudit: Array.isArray(input.remoteBridgeAudit) ? input.remoteBridgeAudit.map(normalizeRemoteBridgeAudit).filter(Boolean) as RemoteBridgeAuditRecord[] : [],
-    servstationA2AConfig: normalizeServstationA2AConfig(input.servstationA2AConfig, Boolean(input.servstationA2ASecret), Boolean(input.servstationA2AOidcSecret)),
+    servstationA2AConfig: normalizeServstationA2AConfig(
+      input.servstationA2AConfig,
+      Boolean(input.servstationA2ASecret),
+      Boolean(input.servstationA2AOidcSecret),
+      Boolean(input.servstationA2AStaffAgentPasswordSecret)
+    ),
     servstationA2ASecret: typeof input.servstationA2ASecret === "string" ? input.servstationA2ASecret : undefined,
-    servstationA2AOidcSecret: typeof input.servstationA2AOidcSecret === "string" ? input.servstationA2AOidcSecret : undefined
+    servstationA2AOidcSecret: typeof input.servstationA2AOidcSecret === "string" ? input.servstationA2AOidcSecret : undefined,
+    servstationA2AStaffAgentPasswordSecret: typeof input.servstationA2AStaffAgentPasswordSecret === "string" ? input.servstationA2AStaffAgentPasswordSecret : undefined
   };
 }
 
@@ -642,7 +650,7 @@ function normalizeRemoteBridgeConfig(value: unknown, tokenSaved: boolean): Remot
   };
 }
 
-function normalizeServstationA2AConfig(value: unknown, bearerTokenSaved: boolean, oidcTokenSaved = false): ServstationA2AConfig {
+function normalizeServstationA2AConfig(value: unknown, bearerTokenSaved: boolean, oidcTokenSaved = false, staffAgentPasswordSaved = false): ServstationA2AConfig {
   const input = value as Partial<ServstationA2AConfig> | undefined;
   const baseUrl = typeof input?.baseUrl === "string" && input.baseUrl.trim() ? normalizeHttpUrl(input.baseUrl) : undefined;
   return {
@@ -650,6 +658,9 @@ function normalizeServstationA2AConfig(value: unknown, bearerTokenSaved: boolean
     baseUrl: baseUrl || undefined,
     authMode: input?.authMode === "bearer" || input?.authMode === "oidc" ? input.authMode : "identityHeaders",
     bearerTokenSaved,
+    staffAgentAccount: typeof input?.staffAgentAccount === "string" && input.staffAgentAccount.trim() ? input.staffAgentAccount.trim() : undefined,
+    staffAgentPasswordSaved,
+    staffAgentPasswordStorage: staffAgentPasswordSaved ? input?.staffAgentPasswordStorage || "file" : undefined,
     oidc: normalizeServstationA2AOidcConfig(input?.oidc, oidcTokenSaved),
     reverse: normalizeServstationA2AReverseConfig(input?.reverse),
     agentInstanceId: typeof input?.agentInstanceId === "string" && input.agentInstanceId.trim() ? input.agentInstanceId.trim() : undefined,

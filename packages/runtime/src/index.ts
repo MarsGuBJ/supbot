@@ -16,6 +16,7 @@ export { fetchRemoteToolMarketProducts, findLocalToolMarketProduct, listLocalToo
 export { McpManager } from "./mcpManager";
 export { ProjectManager, pathIsInside as pathIsInsideProject, projectSandboxRoots, resolveProjectWriteTarget } from "./projectManager";
 export { RemoteBridgeManager } from "./remoteBridgeManager";
+export { ServstationAgentClient } from "./servstationAgentClient";
 export { ServstationA2AProvider } from "./servstationA2AProvider";
 export { ServstationReverseBridgeClient } from "./servstationReverseBridgeClient";
 export { identityContextFromAccessToken, oidcTokenSetFromTokenResponse } from "./servstationOidc";

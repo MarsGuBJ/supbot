@@ -76,6 +76,34 @@ import {
   type ServstationA2AConfig,
   type ServstationA2AConfigUpdate,
   type ServstationA2AOidcSessionUpdate,
+  type ServstationAutopilotRun,
+  type ServstationAutopilotStartInput,
+  type ServstationAutopilotStatusUpdate,
+  type ServstationClientSnapshot,
+  type ServstationClientSnapshotQuery,
+  type ServstationConversation,
+  type ServstationFlowEngineApprovalDecisionInput,
+  type ServstationFlowEngineExecutionEvent,
+  type ServstationFlowEngineInitiatedExecution,
+  type ServstationFlowEngineLaunchInput,
+  type ServstationFlowEnginePendingTask,
+  type ServstationFlowEngineSnapshot,
+  type ServstationMailAccount,
+  type ServstationMailAccountDraft,
+  type ServstationMailConnectionTestResult,
+  type ServstationMessageAttachmentContent,
+  type ServstationMessageDetail,
+  type ServstationMessageEvent,
+  type ServstationMessageFolder,
+  type ServstationMessageListResponse,
+  type ServstationMessageUnreadSummary,
+  type ServstationScheduledJob,
+  type ServstationScheduledJobInput,
+  type ServstationSendAgentMessageInput,
+  type ServstationSendDirectMessageInput,
+  type ServstationSendPromptInput,
+  type ServstationSendPromptResult,
+  type ServstationSessionJob,
   type SubagentConfig,
   type SupbotEvent,
   type TaskWorktree,
@@ -98,6 +126,7 @@ import { generateReply } from "./modelClient";
 import { ProjectManager } from "./projectManager";
 import { QueryEngine } from "./queryEngine";
 import { RemoteBridgeManager } from "./remoteBridgeManager";
+import { ServstationAgentClient } from "./servstationAgentClient";
 import { ServstationA2AProvider } from "./servstationA2AProvider";
 import { ServstationReverseBridgeClient, type ReversePromptResult } from "./servstationReverseBridgeClient";
 import {
@@ -140,6 +169,7 @@ export class SupbotRuntime extends EventEmitter {
   private readonly toolRegistry = new ToolRegistry();
   private readonly mcpManager: McpManager;
   private readonly servstationA2AProvider: ServstationA2AProvider;
+  private readonly servstationAgentClient: ServstationAgentClient;
   private readonly worktreeManager: WorktreeManager;
   private readonly remoteBridgeManager: RemoteBridgeManager;
   private readonly servstationReverseBridgeClient: ServstationReverseBridgeClient;
@@ -242,6 +272,14 @@ export class SupbotRuntime extends EventEmitter {
       randomId,
       nowIso
     });
+    this.servstationAgentClient = new ServstationAgentClient({
+      getConfig: () => this.state.servstationA2AConfig,
+      getAccessToken: (signal) => this.servstationA2AAccessToken(signal),
+      getIdentityContext: () => this.state.identityContext,
+      updateConfig: (input) => this.updateServstationA2AConfig(input),
+      randomId,
+      nowIso
+    });
     this.toolRegistry.addProvider(this.mcpManager);
     this.toolRegistry.addProvider(this.servstationA2AProvider);
   }
@@ -298,11 +336,7 @@ export class SupbotRuntime extends EventEmitter {
       worktrees: this.worktreeManager.list(),
       remoteBridge: this.remoteBridgeManager.snapshot(),
       servstationA2A: {
-        config: {
-          ...this.state.servstationA2AConfig,
-          bearerTokenSaved: Boolean(this.state.servstationA2ASecret),
-          oidc: this.redactServstationA2AOidcConfig()
-        }
+        config: this.redactServstationA2AConfig()
       }
     };
   }
@@ -717,6 +751,31 @@ export class SupbotRuntime extends EventEmitter {
       redirectUri: input.oidcRedirectUri !== undefined ? normalizeHttpUrl(input.oidcRedirectUri) : currentOidc.redirectUri,
       refreshTokenSaved: currentOidc.refreshTokenSaved
     };
+    const staffAgentAccount = input.staffAgentAccount !== undefined ? emptyToUndefined(input.staffAgentAccount) : current.staffAgentAccount;
+    const previousStaffAgentPassword = this.state.servstationA2AStaffAgentPasswordSecret;
+    let nextStaffAgentPassword = previousStaffAgentPassword;
+    let staffAgentPasswordChanged = false;
+    if (input.clearStaffAgentPassword) {
+      staffAgentPasswordChanged = Boolean(previousStaffAgentPassword);
+      nextStaffAgentPassword = undefined;
+    } else if (typeof input.staffAgentPassword === "string" && input.staffAgentPassword.trim()) {
+      nextStaffAgentPassword = input.staffAgentPassword.trim();
+      staffAgentPasswordChanged = nextStaffAgentPassword !== previousStaffAgentPassword;
+    }
+    const oidcContextChanged =
+      baseUrl !== current.baseUrl
+      || oidc.issuerUrl !== currentOidc.issuerUrl
+      || oidc.clientId !== currentOidc.clientId
+      || staffAgentAccount !== current.staffAgentAccount
+      || staffAgentPasswordChanged;
+    const nextOidc = oidcContextChanged
+      ? {
+          ...oidc,
+          accessTokenExpiresAt: undefined,
+          refreshTokenSaved: false,
+          userId: undefined
+        }
+      : oidc;
     const currentReverse = this.state.servstationA2AConfig.reverse || { enabled: false, status: "disconnected" as const };
     const reverse = {
       ...currentReverse,
@@ -731,19 +790,28 @@ export class SupbotRuntime extends EventEmitter {
       baseUrl,
       authMode,
       bearerTokenSaved: Boolean(nextSecret),
-      oidc,
+      staffAgentAccount,
+      staffAgentPasswordSaved: Boolean(nextStaffAgentPassword),
+      staffAgentPasswordStorage: nextStaffAgentPassword ? this.secretStorageKind : undefined,
+      oidc: nextOidc,
       reverse,
       agentInstanceId: input.agentInstanceId !== undefined ? emptyToUndefined(input.agentInstanceId) : current.agentInstanceId,
       updatedAt: nowIso()
     };
     this.state.servstationA2ASecret = nextSecret;
+    this.state.servstationA2AStaffAgentPasswordSecret = nextStaffAgentPassword;
+    if (oidcContextChanged) {
+      this.state.servstationA2AOidcSecret = undefined;
+    }
     const event = this.createRuntimeEvent("servstation_a2a", "Servstation A2A config updated", {
       enabled: this.state.servstationA2AConfig.enabled,
       baseUrl: this.state.servstationA2AConfig.baseUrl,
       authMode: this.state.servstationA2AConfig.authMode,
       agentInstanceId: this.state.servstationA2AConfig.agentInstanceId,
       bearerTokenSaved: Boolean(nextSecret),
-      oidc,
+      staffAgentAccount,
+      staffAgentPasswordSaved: Boolean(nextStaffAgentPassword),
+      oidc: nextOidc,
       reverse
     });
     this.addRuntimeEvent(event);
@@ -755,19 +823,192 @@ export class SupbotRuntime extends EventEmitter {
 
   async connectServstationReverseBridge(): Promise<ServstationA2AConfig> {
     this.assertLoaded();
+    if (this.state.servstationA2AConfig.authMode === "oidc" && !parseServstationOidcSecret(this.state.servstationA2AOidcSecret)) {
+      throw new Error("Servstation OIDC session is not configured.");
+    }
     await this.updateServstationReverseState({
       enabled: true,
       status: "connecting",
       lastError: undefined
     });
     this.servstationReverseBridgeClient.start();
-    return this.redactServstationA2AConfig();
+    return this.waitForServstationReverseConnection();
   }
 
   async disconnectServstationReverseBridge(): Promise<ServstationA2AConfig> {
     this.assertLoaded();
     await this.servstationReverseBridgeClient.stop(false);
     return this.redactServstationA2AConfig();
+  }
+
+  async getServstationClientSnapshot(query: ServstationClientSnapshotQuery = {}): Promise<ServstationClientSnapshot> {
+    this.assertLoaded();
+    return this.servstationAgentClient.snapshot(query);
+  }
+
+  async createServstationConversation(title?: string): Promise<ServstationConversation> {
+    this.assertLoaded();
+    return this.servstationAgentClient.createConversation(title);
+  }
+
+  async deleteServstationConversation(conversationId: string): Promise<void> {
+    this.assertLoaded();
+    await this.servstationAgentClient.deleteConversation(conversationId);
+  }
+
+  async sendServstationPrompt(input: ServstationSendPromptInput): Promise<ServstationSendPromptResult> {
+    this.assertLoaded();
+    return this.servstationAgentClient.sendPrompt(input);
+  }
+
+  async cancelServstationJob(jobId: string): Promise<ServstationSessionJob> {
+    this.assertLoaded();
+    return this.servstationAgentClient.cancelJob(jobId);
+  }
+
+  async createServstationScheduledJob(input: ServstationScheduledJobInput): Promise<ServstationScheduledJob> {
+    this.assertLoaded();
+    return this.servstationAgentClient.createScheduledJob(input);
+  }
+
+  async updateServstationScheduledJob(id: string, input: Partial<ServstationScheduledJobInput>): Promise<ServstationScheduledJob> {
+    this.assertLoaded();
+    return this.servstationAgentClient.updateScheduledJob(id, input);
+  }
+
+  async deleteServstationScheduledJob(id: string): Promise<void> {
+    this.assertLoaded();
+    await this.servstationAgentClient.deleteScheduledJob(id);
+  }
+
+  async startServstationAutopilotRun(input: ServstationAutopilotStartInput): Promise<ServstationAutopilotRun> {
+    this.assertLoaded();
+    return this.servstationAgentClient.startAutopilotRun(input);
+  }
+
+  async updateServstationAutopilotRun(input: ServstationAutopilotStatusUpdate): Promise<ServstationAutopilotRun> {
+    this.assertLoaded();
+    return this.servstationAgentClient.updateAutopilotRun(input);
+  }
+
+  async getServstationFlowEngineSnapshot(): Promise<ServstationFlowEngineSnapshot> {
+    this.assertLoaded();
+    return this.servstationAgentClient.flowEngineSnapshot();
+  }
+
+  async launchServstationFlowEngineWorkflow(input: ServstationFlowEngineLaunchInput): Promise<ServstationFlowEngineInitiatedExecution> {
+    this.assertLoaded();
+    return this.servstationAgentClient.launchFlowEngineWorkflow(input);
+  }
+
+  async getServstationFlowEngineExecution(executionId: string): Promise<ServstationFlowEngineInitiatedExecution> {
+    this.assertLoaded();
+    return this.servstationAgentClient.getFlowEngineExecution(executionId);
+  }
+
+  async getServstationFlowEngineExecutionEvents(executionId: string): Promise<ServstationFlowEngineExecutionEvent[]> {
+    this.assertLoaded();
+    return this.servstationAgentClient.getFlowEngineExecutionEvents(executionId);
+  }
+
+  async decideServstationFlowEngineApproval(input: ServstationFlowEngineApprovalDecisionInput): Promise<ServstationFlowEnginePendingTask> {
+    this.assertLoaded();
+    return this.servstationAgentClient.decideFlowEngineApproval(input);
+  }
+
+  async listServstationMessages(folder: ServstationMessageFolder, unreadOnly = false): Promise<ServstationMessageListResponse> {
+    this.assertLoaded();
+    return this.servstationAgentClient.listMessages(folder, unreadOnly);
+  }
+
+  async getServstationUnreadMessages(): Promise<ServstationMessageUnreadSummary> {
+    this.assertLoaded();
+    return this.servstationAgentClient.getUnreadMessages();
+  }
+
+  async getServstationMessage(messageId: string): Promise<ServstationMessageDetail> {
+    this.assertLoaded();
+    return this.servstationAgentClient.getMessage(messageId);
+  }
+
+  async markServstationMessageRead(messageId: string): Promise<ServstationMessageDetail> {
+    this.assertLoaded();
+    return this.servstationAgentClient.markMessageRead(messageId);
+  }
+
+  async setServstationMessageFavorite(messageId: string, favorited: boolean): Promise<ServstationMessageDetail> {
+    this.assertLoaded();
+    return this.servstationAgentClient.setMessageFavorite(messageId, favorited);
+  }
+
+  async trashServstationMessage(messageId: string): Promise<ServstationMessageDetail> {
+    this.assertLoaded();
+    return this.servstationAgentClient.trashMessage(messageId);
+  }
+
+  async restoreServstationMessage(messageId: string): Promise<ServstationMessageDetail> {
+    this.assertLoaded();
+    return this.servstationAgentClient.restoreMessage(messageId);
+  }
+
+  async deleteServstationMessage(messageId: string): Promise<void> {
+    this.assertLoaded();
+    await this.servstationAgentClient.deleteMessage(messageId);
+  }
+
+  async fetchServstationMessageAttachment(messageId: string, attachmentId: string): Promise<ServstationMessageAttachmentContent> {
+    this.assertLoaded();
+    return this.servstationAgentClient.fetchMessageAttachment(messageId, attachmentId);
+  }
+
+  async sendServstationAgentMessage(input: ServstationSendAgentMessageInput): Promise<ServstationSessionJob> {
+    this.assertLoaded();
+    return this.servstationAgentClient.sendAgentMessage(input);
+  }
+
+  async sendServstationDirectMessage(input: ServstationSendDirectMessageInput): Promise<ServstationMessageDetail> {
+    this.assertLoaded();
+    return this.servstationAgentClient.sendDirectMessage(input);
+  }
+
+  async listServstationMailAccounts(): Promise<ServstationMailAccount[]> {
+    this.assertLoaded();
+    return this.servstationAgentClient.listMailAccounts();
+  }
+
+  async createServstationMailAccount(input: ServstationMailAccountDraft): Promise<ServstationMailAccount> {
+    this.assertLoaded();
+    return this.servstationAgentClient.createMailAccount(input);
+  }
+
+  async updateServstationMailAccount(id: string, input: ServstationMailAccountDraft): Promise<ServstationMailAccount> {
+    this.assertLoaded();
+    return this.servstationAgentClient.updateMailAccount(id, input);
+  }
+
+  async deleteServstationMailAccount(id: string): Promise<void> {
+    this.assertLoaded();
+    await this.servstationAgentClient.deleteMailAccount(id);
+  }
+
+  async setDefaultServstationMailAccount(id: string): Promise<ServstationMailAccount> {
+    this.assertLoaded();
+    return this.servstationAgentClient.setDefaultMailAccount(id);
+  }
+
+  async testServstationMailAccountConnection(id: string): Promise<ServstationMailConnectionTestResult> {
+    this.assertLoaded();
+    return this.servstationAgentClient.testMailAccountConnection(id);
+  }
+
+  async syncServstationMailAccountNow(id: string): Promise<{ status: string }> {
+    this.assertLoaded();
+    return this.servstationAgentClient.syncMailAccountNow(id);
+  }
+
+  async streamServstationMessageEvents(onEvent: (event: ServstationMessageEvent) => void, signal?: AbortSignal): Promise<void> {
+    this.assertLoaded();
+    await this.servstationAgentClient.streamMessageEvents(onEvent, signal);
   }
 
   async updateServstationA2AOidcSession(input: ServstationA2AOidcSessionUpdate): Promise<ServstationA2AConfig> {
@@ -2927,15 +3168,30 @@ export class SupbotRuntime extends EventEmitter {
     if (this.state.servstationA2AConfig.authMode !== "oidc") {
       return this.state.servstationA2ASecret;
     }
-    const tokens = parseServstationOidcSecret(this.state.servstationA2AOidcSecret);
+    let tokens = parseServstationOidcSecret(this.state.servstationA2AOidcSecret);
     if (!tokens) {
-      return undefined;
+      throw new Error("Servstation OIDC session is not configured.");
     }
     if (oidcAccessTokenExpiringSoon(tokens)) {
       await this.refreshServstationA2AOidcSession(signal);
       return parseServstationOidcSecret(this.state.servstationA2AOidcSecret)?.accessToken;
     }
     return tokens.accessToken;
+  }
+
+  private async waitForServstationReverseConnection(timeoutMs = 45_000): Promise<ServstationA2AConfig> {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt <= timeoutMs) {
+      const reverse = this.state.servstationA2AConfig.reverse;
+      if (reverse?.status === "connected") {
+        return this.redactServstationA2AConfig();
+      }
+      if (reverse?.status === "error" && reverse.lastError) {
+        throw new Error(reverse.lastError);
+      }
+      await delay(250);
+    }
+    throw new Error("Timed out waiting for Servstation reverse A2A connection.");
   }
 
   private async updateServstationReverseState(input: Partial<NonNullable<ServstationA2AConfig["reverse"]>>): Promise<void> {
@@ -2974,6 +3230,10 @@ export class SupbotRuntime extends EventEmitter {
     return {
       ...this.state.servstationA2AConfig,
       bearerTokenSaved: Boolean(this.state.servstationA2ASecret),
+      staffAgentPasswordSaved: Boolean(this.state.servstationA2AStaffAgentPasswordSecret),
+      staffAgentPasswordStorage: this.state.servstationA2AStaffAgentPasswordSecret
+        ? this.state.servstationA2AConfig.staffAgentPasswordStorage || this.secretStorageKind || "file"
+        : undefined,
       oidc: this.redactServstationA2AOidcConfig()
     };
   }
