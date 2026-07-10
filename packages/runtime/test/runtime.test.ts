@@ -342,6 +342,33 @@ describe("SupbotRuntime", () => {
     expect(saved.apiKeySaved).toBe(true);
     expect(JSON.stringify(saved)).not.toContain("secret-token");
     expect(runtime.snapshot().modelConfig.apiKeySaved).toBe(true);
+
+    const updated = await runtime.updateModelConfig({
+      providerName: "DeepSeek",
+      baseUrl: "https://api.openai.com/v1",
+      model: "deepseek-v4-pro",
+      temperature: 0.4,
+      maxTokens: 2048,
+      apiKey: "api key：sk-new-secret-token",
+      clearApiKey: true
+    });
+    expect(updated.baseUrl).toBe("https://api.deepseek.com/v1");
+    expect(updated.apiKeySaved).toBe(true);
+    expect(JSON.stringify(updated)).not.toContain("sk-new-secret-token");
+
+    await expect(runtime.updateModelConfig({
+      providerName: "DeepSeek",
+      baseUrl: "https://api.deepseek.com/v1",
+      model: "deepseek-v4-pro",
+      temperature: 0.4,
+      maxTokens: 2048,
+      apiKey: "加载失败"
+    })).rejects.toThrow("Model API key contains invalid characters");
+
+    await expect(runtime.testModelConfig({ apiKey: "加载失败" })).resolves.toMatchObject({
+      ok: false,
+      message: expect.stringContaining("Model API key contains invalid characters")
+    });
   });
 
   test("creates a conversation and runs a fallback local job", async () => {
@@ -2746,10 +2773,19 @@ describe("SupbotRuntime", () => {
     let eventStream: import("node:http").ServerResponse | undefined;
     let closeStream: (() => void) | undefined;
     let resultBody: Record<string, unknown> | undefined;
+    const requestResults: Record<string, Record<string, unknown>> = {};
     let heartbeatPosts = 0;
     let resolveResult: (() => void) | undefined;
+    let resolveSnapshot: (() => void) | undefined;
+    let resolveTranscript: (() => void) | undefined;
     const resultReceived = new Promise<void>((resolve) => {
       resolveResult = resolve;
+    });
+    const snapshotReceived = new Promise<void>((resolve) => {
+      resolveSnapshot = resolve;
+    });
+    const transcriptReceived = new Promise<void>((resolve) => {
+      resolveTranscript = resolve;
     });
     const servstation = createServer((request, response) => {
       let body = "";
@@ -2767,6 +2803,8 @@ describe("SupbotRuntime", () => {
           expect(request.headers["x-tenant-id"]).toBe("tenant-rev");
           const parsed = JSON.parse(body) as Record<string, unknown>;
           expect(parsed.capabilities).toEqual(["prompt.readOnly"]);
+          expect(parsed.displayName).toBe("HBClient Desktop");
+          expect(parsed.hbclientVersion).toBe("0.1.0");
           response.end(JSON.stringify({
             peer: { id: "peer-reverse-1" },
             streamUrl: "/api/v1/agent/agent-reverse-1/a2a-peers/peer-reverse-1/events",
@@ -2795,8 +2833,19 @@ describe("SupbotRuntime", () => {
           return;
         }
         if (request.method === "POST" && url.pathname.endsWith("/result")) {
-          resultBody = JSON.parse(body) as Record<string, unknown>;
-          resolveResult?.();
+          const parsed = JSON.parse(body) as Record<string, unknown>;
+          if (url.pathname.includes("/requests/")) {
+            requestResults[url.pathname] = parsed;
+            if (url.pathname.includes("/snapshot-req-1/")) {
+              resolveSnapshot?.();
+            }
+            if (url.pathname.includes("/transcript-req-1/")) {
+              resolveTranscript?.();
+            }
+          } else {
+            resultBody = parsed;
+            resolveResult?.();
+          }
           response.end(JSON.stringify({ ok: true }));
           return;
         }
@@ -2856,6 +2905,38 @@ describe("SupbotRuntime", () => {
       });
       const reverseJob = runtime.snapshot().jobs.find((job) => job.prompt === "Run a read-only local Supbot task");
       expect(reverseJob?.workspaceMode).toBe("readOnly");
+      const conversationId = runtime.snapshot().conversations[0]?.id;
+      expect(conversationId).toBeTruthy();
+      eventStream!.write([
+        "id: snapshot-req-1",
+        "event: snapshot_request",
+        `data: ${JSON.stringify({ requestId: "snapshot-req-1" })}`,
+        "",
+        ""
+      ].join("\n"));
+      await snapshotReceived;
+      expect(requestResults["/api/v1/agent/agent-reverse-1/a2a-peers/peer-reverse-1/requests/snapshot-req-1/result"]).toMatchObject({
+        status: "completed",
+        result: {
+          conversations: expect.any(Array),
+          jobs: expect.any(Array)
+        }
+      });
+      eventStream!.write([
+        "id: transcript-req-1",
+        "event: transcript_request",
+        `data: ${JSON.stringify({ requestId: "transcript-req-1", conversationId })}`,
+        "",
+        ""
+      ].join("\n"));
+      await transcriptReceived;
+      expect(requestResults["/api/v1/agent/agent-reverse-1/a2a-peers/peer-reverse-1/requests/transcript-req-1/result"]).toMatchObject({
+        status: "completed",
+        result: {
+          conversationId,
+          activeMessages: expect.any(Array)
+        }
+      });
     } finally {
       closeStream?.();
       await runtime.disconnectServstationReverseBridge();
@@ -2878,10 +2959,10 @@ describe("SupbotRuntime", () => {
       organizationId: "org-recover",
       departmentId: "dept-recover",
       userId: "user-recover",
-      peerType: "supbot",
-      displayName: "Supbot Desktop",
+      peerType: "hbclient",
+      displayName: "HBClient Desktop",
       connectionMode: "reverse_sse",
-      clientInstanceId: "supbot-client-recover",
+      clientInstanceId: "hbclient-client-recover",
       capabilities: ["prompt.readOnly"],
       status: "unknown",
       createdAt: "2026-01-01T00:00:00.000Z",
@@ -2901,7 +2982,7 @@ describe("SupbotRuntime", () => {
         }
         if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-recover-1/a2a-peers/reverse-connections") {
           registerCalls += 1;
-          expect(JSON.parse(body)).toMatchObject({ clientInstanceId: "supbot-client-recover" });
+          expect(JSON.parse(body)).toMatchObject({ clientInstanceId: "hbclient-client-recover" });
           response.statusCode = 400;
           response.end(JSON.stringify({ error: "invalid input syntax for type json" }));
           return;
@@ -2947,7 +3028,7 @@ describe("SupbotRuntime", () => {
       enabled: true,
       baseUrl,
       authMode: "identityHeaders",
-      reverseClientInstanceId: "supbot-client-recover"
+      reverseClientInstanceId: "hbclient-client-recover"
     });
     try {
       await runtime.connectServstationReverseBridge();
@@ -3169,21 +3250,48 @@ describe("SupbotRuntime", () => {
           response.end(JSON.stringify({ ...jobsByConversation["conv-1"][0], id: url.searchParams.get("jobId"), status: "canceled" }));
           return;
         }
-        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/scheduled-jobs") {
-          response.end(JSON.stringify({ scheduledJobs }));
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/scheduled-tasks") {
+          response.end(JSON.stringify({
+            tasks: scheduledJobs.map((job) => ({
+              id: job.id,
+              agentInstanceId: job.agentInstanceId,
+              name: job.title,
+              prompt: job.prompt,
+              scheduleType: "unbounded_recurring",
+              cronExpression: job.cronExpr,
+              status: job.enabled ? "active" : "paused",
+              createdAt: job.createdAt,
+              updatedAt: job.updatedAt
+            }))
+          }));
           return;
         }
-        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-client-1/scheduled-jobs") {
-          const scheduled = { id: "schedule-new", agentInstanceId: "agent-client-1", createdAt: "2026-01-01T00:02:00.000Z", updatedAt: "2026-01-01T00:02:00.000Z", ...parsedBody };
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-client-1/scheduled-tasks") {
+          const scheduled = {
+            id: "schedule-new",
+            agentInstanceId: "agent-client-1",
+            name: parsedBody.name,
+            prompt: parsedBody.prompt,
+            scheduleType: parsedBody.scheduleType,
+            cronExpression: parsedBody.cronExpression,
+            runAt: parsedBody.runAt,
+            status: "active",
+            createdAt: "2026-01-01T00:02:00.000Z",
+            updatedAt: "2026-01-01T00:02:00.000Z"
+          };
           scheduledJobs.push(scheduled as typeof scheduledJobs[number]);
           response.end(JSON.stringify(scheduled));
           return;
         }
-        if (request.method === "PATCH" && url.pathname === "/api/v1/agent/agent-client-1/scheduled-jobs") {
-          response.end(JSON.stringify({ ...scheduledJobs[0], ...parsedBody, id: url.searchParams.get("scheduledJobId") }));
+        if (request.method === "PATCH" && url.pathname === "/api/v1/agent/agent-client-1/scheduled-tasks/schedule-1") {
+          response.end(JSON.stringify({ ...scheduledJobs[0], ...parsedBody, id: "schedule-1" }));
           return;
         }
-        if (request.method === "DELETE" && url.pathname === "/api/v1/agent/agent-client-1/scheduled-jobs") {
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-client-1/scheduled-tasks/schedule-1/pause") {
+          response.end(JSON.stringify({ ...scheduledJobs[0], id: "schedule-1", status: "paused" }));
+          return;
+        }
+        if (request.method === "DELETE" && url.pathname === "/api/v1/agent/agent-client-1/scheduled-tasks/schedule-1") {
           response.end(JSON.stringify({ ok: true }));
           return;
         }
@@ -3493,9 +3601,9 @@ describe("SupbotRuntime", () => {
       expect(streamedEvents).toEqual([{ type: "messages.unread", data: { unreadCount: 1, messages: [messageItem] } }]);
 
       expect(requests.some((item) => item.method === "PATCH" && item.path === "/api/v1/agent/agent-client-1/jobs?jobId=job-1")).toBe(true);
-      expect(requests.some((item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/scheduled-jobs")).toBe(true);
-      expect(requests.some((item) => item.method === "PATCH" && item.path === "/api/v1/agent/agent-client-1/scheduled-jobs?scheduledJobId=schedule-1")).toBe(true);
-      expect(requests.some((item) => item.method === "DELETE" && item.path === "/api/v1/agent/agent-client-1/scheduled-jobs?scheduledJobId=schedule-1")).toBe(true);
+      expect(requests.some((item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/scheduled-tasks")).toBe(true);
+      expect(requests.some((item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/scheduled-tasks/schedule-1/pause")).toBe(true);
+      expect(requests.some((item) => item.method === "DELETE" && item.path === "/api/v1/agent/agent-client-1/scheduled-tasks/schedule-1")).toBe(true);
       expect(requests.some((item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/autopilot-runs")).toBe(true);
       expect(requests.some((item) => item.method === "PATCH" && item.path === "/api/v1/agent/agent-client-1/autopilot-runs/run-1")).toBe(true);
       expect(requests.some((item) => item.method === "GET" && item.path === "/api/v1/flow-engine/workflows/launchable")).toBe(true);
@@ -3519,6 +3627,65 @@ describe("SupbotRuntime", () => {
       expect(JSON.stringify(snapshot)).not.toContain("oidc-client-token");
       expect(JSON.stringify(flowSnapshot)).not.toContain("oidc-client-token");
       expect(JSON.stringify(snapshot)).not.toContain("staff-secret");
+    } finally {
+      await new Promise<void>((resolve, reject) => servstation.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  test("loads Servstation client snapshot when Botstation has no autopilot route", async () => {
+    const runtime = await createRuntime();
+    const servstation = createServer((request, response) => {
+      request.on("data", () => undefined);
+      request.on("end", () => {
+        const url = new URL(request.url || "/", "http://127.0.0.1");
+        response.setHeader("Content-Type", "application/json");
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/conversations") {
+          response.end(JSON.stringify({ conversations: [] }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/scheduled-tasks") {
+          response.end(JSON.stringify({ tasks: [] }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/autopilot-runs/current") {
+          response.statusCode = 400;
+          response.end(JSON.stringify({ error: "missing agent instance id" }));
+          return;
+        }
+        response.statusCode = 404;
+        response.end(JSON.stringify({ error: "not found" }));
+      });
+    });
+    await new Promise<void>((resolve) => servstation.listen(0, "127.0.0.1", resolve));
+    const address = servstation.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    try {
+      await runtime.updateIdentityContext({
+        tenantId: "tenant-client",
+        organizationId: "org-client",
+        departmentId: "dept-client",
+        userId: "user-client",
+        roleIds: ["user"],
+        source: "servstation",
+        servstationUrl: baseUrl
+      });
+      await runtime.updateServstationA2AConfig({
+        enabled: true,
+        baseUrl,
+        authMode: "identityHeaders",
+        agentInstanceId: "agent-client-1"
+      });
+      await (runtime as unknown as { updateServstationReverseState(input: Record<string, unknown>): Promise<void> }).updateServstationReverseState({
+        enabled: true,
+        status: "connected",
+        peerId: "peer-client-1"
+      });
+
+      const snapshot = await runtime.getServstationClientSnapshot();
+
+      expect(snapshot.connected).toBe(true);
+      expect(snapshot.agentInstanceId).toBe("agent-client-1");
+      expect(snapshot.autopilotRun).toBeNull();
     } finally {
       await new Promise<void>((resolve, reject) => servstation.close((error) => error ? reject(error) : resolve()));
     }

@@ -12,7 +12,7 @@ try {
 }
 const appDir = path.resolve("apps", "desktop");
 const port = 9323;
-const smokeUserDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "supbot-smoke-"));
+const smokeUserDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "hbclient-smoke-"));
 const smokeMcpServerPath = writeSmokeMcpServer(smokeUserDataDir);
 seedSmokeState(smokeUserDataDir, smokeMcpServerPath);
 
@@ -21,7 +21,7 @@ const child = spawn(electron, [`--remote-debugging-port=${port}`, "."], {
   env: {
     ...process.env,
     ELECTRON_MIRROR: process.env.ELECTRON_MIRROR || "https://npmmirror.com/mirrors/electron/",
-    SUPBOT_USER_DATA_DIR: smokeUserDataDir
+    HBCLIENT_USER_DATA_DIR: smokeUserDataDir
   },
   windowsHide: true,
   stdio: ["ignore", "pipe", "pipe"]
@@ -166,7 +166,7 @@ async function main() {
     })()`
   );
   const text = String(bodyText);
-  const hasSupbot = text.includes("Supbot");
+  const hasHBClient = text.includes("HBClient");
   const hasDefaultChinese = text.includes("本地智能体控制台") && text.includes("对话") && text.includes("配置");
   const toolUi = await evaluate(
     page.webSocketDebuggerUrl,
@@ -180,7 +180,7 @@ async function main() {
   );
   console.log(JSON.stringify({
     rootChildren,
-    hasSupbot,
+    hasHBClient,
     hasDefaultChinese,
     layoutMetrics,
     toolUi,
@@ -190,8 +190,8 @@ async function main() {
     diagnostics,
     stderr: stderr.slice(0, 600)
   }, null, 2));
-  if (!rootChildren || !hasSupbot || !hasDefaultChinese) {
-    throw new Error("Electron renderer did not render the Supbot workspace.");
+  if (!rootChildren || !hasHBClient || !hasDefaultChinese) {
+    throw new Error("Electron renderer did not render the HBClient workspace.");
   }
   const securityWarning = diagnostics.events.find((event) => {
     const text = `${event.args || ""} ${event.text || ""}`;
@@ -207,10 +207,10 @@ async function main() {
     page.webSocketDebuggerUrl,
     `Promise.all([
       window.supbot.setPermissionMode("bypassPermissions").then(() => "allowed", (error) => String(error.message || error)),
-      window.supbot.openFile(${JSON.stringify(path.join(os.tmpdir(), "supbot-smoke-forbidden.txt"))}).then(() => "allowed", (error) => String(error.message || error))
+      window.supbot.openFile(${JSON.stringify(path.join(os.tmpdir(), "hbclient-smoke-forbidden.txt"))}).then(() => "allowed", (error) => String(error.message || error))
     ]).then(([permissionMode, openFile]) => ({ permissionMode, openFile }))`
   );
-  if (!securityIpc?.permissionMode.includes("bypassPermissions") || !securityIpc?.openFile.includes("Supbot can only open")) {
+  if (!securityIpc?.permissionMode.includes("bypassPermissions") || !securityIpc?.openFile.includes("HBClient can only open")) {
     throw new Error(`Renderer IPC security checks failed: ${JSON.stringify(securityIpc)}`);
   }
   const rightPanelTasks = await evaluate(
@@ -794,7 +794,7 @@ function seedSmokeState(userDataDir, smokeMcpServerPath) {
   const memoryFactId = "mem_fact_smoke";
   const memoryPageId = "mem_page_smoke";
   fs.writeFileSync(path.join(dataDir, "state.json"), `${JSON.stringify({
-    agentName: "Supbot Local Agent",
+    agentName: "HBClient Local Agent",
     modelConfig: {
       providerName: "OpenAI Compatible",
       baseUrl: "https://api.openai.com/v1",

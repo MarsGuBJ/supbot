@@ -60,7 +60,7 @@ export async function generateReply(input: GenerateReplyInput): Promise<Generate
 }
 
 export async function generateAgentTurn(input: GenerateAgentTurnInput): Promise<GenerateReplyResult> {
-  const apiKey = input.apiKey?.trim();
+  const apiKey = normalizeModelApiKey(input.apiKey);
   if (!apiKey) {
     return {
       text: localFallbackReply({
@@ -125,6 +125,19 @@ export function normalizeChatCompletionsUrl(baseUrl: string): string {
     return `${trimmed}/chat/completions`;
   }
   return `${trimmed}/v1/chat/completions`;
+}
+
+export function normalizeModelApiKey(value?: string): string {
+  const trimmed = value?.trim() || "";
+  if (!trimmed) {
+    return "";
+  }
+  const embeddedKey = trimmed.match(/sk-[A-Za-z0-9._-]+/)?.[0];
+  const apiKey = embeddedKey || trimmed;
+  if (!/^[\x21-\x7e]+$/.test(apiKey)) {
+    throw new Error("Model API key contains invalid characters. Paste only the provider API key, such as sk-..., without labels or Chinese text.");
+  }
+  return apiKey;
 }
 
 function localFallbackReply(input: GenerateReplyInput): string {

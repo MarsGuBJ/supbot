@@ -1,11 +1,11 @@
 {
-  "name": "supbot",
+  "name": "hbclient",
   "version": "0.1.0",
   "description": "Local single-user desktop agent.",
-  "author": "Supbot contributors",
+  "author": "HBClient contributors",
   "main": "dist/main/index.js",
   "bin": {
-    "supbot": "bin/supbot.js"
+    "hbclient": "bin/hbclient.js"
   },
   "type": "commonjs",
   "files": [
@@ -18,7 +18,7 @@
     "build": "npm run build:renderer && npm run build:main",
     "build:renderer": "vite build",
     "build:main": "esbuild src/main/index.ts src/preload/index.ts --bundle --platform=node --target=node22 --format=cjs --outdir=dist --external:electron",
-    "dev": "npm run build:main && concurrently -k \"vite --host 127.0.0.1\" \"cross-env SUPBOT_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "dev": "npm run build:main && concurrently -k \"vite --host 127.0.0.1\" \"cross-env HBCLIENT_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "start": "electron .",
     "dist:win": "electron-builder --win nsis",
     "dist:linux": "electron-builder --linux AppImage deb"
@@ -41,16 +41,17 @@
     "vite": "^8.0.16"
   },
   "build": {
-    "appId": "local.supbot.desktop",
-    "productName": "Supbot",
+    "appId": "local.hbclient.desktop",
+    "productName": "HBClient",
     "electronVersion": "42.4.1",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
-    "copyright": "Copyright © 2026 Supbot contributors",
+    "copyright": "Copyright © 2026 HBClient contributors",
     "directories": {
       "output": "release"
     },
     "files": [
       "dist/**/*",
+      "build/icon.ico",
       "package.json"
     ],
     "extraMetadata": {
@@ -64,17 +65,19 @@
       "requestedExecutionLevel": "asInvoker",
       "verifyUpdateCodeSignature": false,
       "signtoolOptions": {
-        "publisherName": "Supbot"
+        "publisherName": "HBClient"
       }
     },
     "nsis": {
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": false,
       "deleteAppDataOnUninstall": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Supbot"
+      "shortcutName": "HBClient"
     },
     "linux": {
       "target": [

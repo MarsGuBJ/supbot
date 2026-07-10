@@ -9,12 +9,24 @@ let mainWindow: BrowserWindow | null = null;
 let runtime: SupbotRuntime | null = null;
 const servstationMessageEventSubscriptions = new Map<string, AbortController>();
 const isDev = !app.isPackaged;
+const appDisplayName = "HBClient";
+const defaultBotstationBaseUrl = "http://localhost:8081";
+const defaultBotstationIssuerUrl = "http://localhost:8092";
+const defaultBotstationClientId = "botstation-agent-client-web";
+const defaultBotstationScope = "openid profile email";
+const defaultBotstationRedirectUri = "http://localhost:8800/oauth2/callback";
+const defaultBotstationUser = "dev-user";
+const defaultBotstationPassword = "dev-user";
 const allowedDevServerOrigin = "http://127.0.0.1:5173";
 const productionCsp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'none'";
+const appIconPath = join(__dirname, "../../build/icon.ico");
 let productionCspInstalled = false;
 
+app.setName(appDisplayName);
+app.setAppUserModelId("local.hbclient.desktop");
+
 async function createRuntime(): Promise<SupbotRuntime> {
-  const userDataPath = process.env.SUPBOT_USER_DATA_DIR || app.getPath("userData");
+  const userDataPath = process.env.HBCLIENT_USER_DATA_DIR || process.env.SUPBOT_USER_DATA_DIR || app.getPath("userData");
   const dataDir = join(userDataPath, "data");
   await ensureRuntimeDirs(dataDir);
   const storage = new EncryptedStorage(new JsonFileStorage(dataDir), userDataPath);
@@ -188,7 +200,7 @@ function safeUserName(): string {
 
 function getRuntime(): SupbotRuntime {
   if (!runtime) {
-    throw new Error("Supbot runtime is not ready.");
+    throw new Error("HBClient runtime is not ready.");
   }
   return runtime;
 }
@@ -202,16 +214,24 @@ interface OidcCodeResult {
   code: string;
 }
 
+interface OidcAutoLogin {
+  userId: string;
+  password: string;
+  issuerOrigin: string;
+}
+
 async function loginServstationOidc(input: ServstationA2AOidcLoginInput): Promise<ServstationA2AOidcLoginResult> {
   const service = getRuntime();
   const currentConfig = await service.servstationA2AConfig();
   const currentIdentity = await service.identityContext();
-  const baseUrl = normalizeOidcUrl(input.baseUrl || currentConfig.baseUrl || currentIdentity?.servstationUrl || "https://zstupu.com", "Servstation base URL");
-  const issuerUrl = normalizeOidcUrl(input.issuerUrl || currentConfig.oidc?.issuerUrl || `${baseUrl}/realms/supmate`, "Servstation OIDC issuer URL");
-  const clientId = requiredString(input.clientId || currentConfig.oidc?.clientId || "agent-client-web-dev", "Servstation OIDC client id");
-  const scope = input.scope || currentConfig.oidc?.scope || "openid profile email offline_access";
-  const redirectUri = normalizeOidcUrl(input.redirectUri || currentConfig.oidc?.redirectUri || `${baseUrl}/auth/callback`, "Servstation OIDC redirect URI");
-  const loginHint = input.loginHint || currentConfig.staffAgentAccount;
+  const baseUrl = normalizeOidcUrl(input.baseUrl || currentConfig.baseUrl || currentIdentity?.servstationUrl || process.env.HBCLIENT_BOTSTATION_BASE_URL || defaultBotstationBaseUrl, "Botstation base URL");
+  const issuerUrl = normalizeOidcUrl(input.issuerUrl || currentConfig.oidc?.issuerUrl || process.env.HBCLIENT_BOTSTATION_ISSUER_URL || defaultBotstationIssuerUrl, "Botstation OIDC issuer URL");
+  const clientId = requiredString(input.clientId || currentConfig.oidc?.clientId || process.env.HBCLIENT_BOTSTATION_CLIENT_ID || defaultBotstationClientId, "Botstation OIDC client id");
+  const scope = input.scope || currentConfig.oidc?.scope || process.env.HBCLIENT_BOTSTATION_SCOPE || defaultBotstationScope;
+  const redirectUri = normalizeOidcUrl(input.redirectUri || currentConfig.oidc?.redirectUri || process.env.HBCLIENT_BOTSTATION_REDIRECT_URI || defaultBotstationRedirectUri, "Botstation OIDC redirect URI");
+  const loginHint = input.loginHint || currentConfig.staffAgentAccount || process.env.HBCLIENT_BOTSTATION_USERNAME || defaultBotstationUser;
+  const savedPassword = await service.servstationA2AStaffAgentPassword();
+  const autoLogin = localBotstationAutoLogin(issuerUrl, loginHint, savedPassword || process.env.HBCLIENT_BOTSTATION_PASSWORD);
   const discovery = await discoverOidcDocument(issuerUrl);
   if (!discovery.authorization_endpoint || !discovery.token_endpoint) {
     throw new Error("Servstation OIDC discovery document is missing required endpoints.");
@@ -231,7 +251,7 @@ async function loginServstationOidc(input: ServstationA2AOidcLoginInput): Promis
     authorizationUrl.searchParams.set("login_hint", loginHint.trim());
   }
 
-  const codeResult = await openOidcLoginWindow(authorizationUrl.toString(), redirectUri, state);
+  const codeResult = await openOidcLoginWindow(authorizationUrl.toString(), redirectUri, state, autoLogin);
   const tokenResponse = await fetch(discovery.token_endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -279,7 +299,7 @@ async function discoverOidcDocument(issuerUrl: string): Promise<OidcDiscoveryDoc
   return payload;
 }
 
-function openOidcLoginWindow(authorizationUrl: string, redirectUri: string, expectedState: string): Promise<OidcCodeResult> {
+function openOidcLoginWindow(authorizationUrl: string, redirectUri: string, expectedState: string, autoLogin?: OidcAutoLogin): Promise<OidcCodeResult> {
   return new Promise((resolve, reject) => {
     const authWindow = new BrowserWindow({
       parent: mainWindow || undefined,
@@ -289,6 +309,7 @@ function openOidcLoginWindow(authorizationUrl: string, redirectUri: string, expe
       minWidth: 480,
       minHeight: 620,
       title: "Servstation Sign In",
+      icon: appIconPath,
       backgroundColor: "#ffffff",
       webPreferences: {
         contextIsolation: true,
@@ -342,6 +363,30 @@ function openOidcLoginWindow(authorizationUrl: string, redirectUri: string, expe
     const onWillRedirect = (event: Electron.Event, url: string): void => maybeComplete(url, event);
     const onWillNavigate = (event: Electron.Event, url: string): void => maybeComplete(url, event);
     const onDidNavigate = (_event: Electron.Event, url: string): void => maybeComplete(url);
+    let autoSubmitted = false;
+    const onDidFinishLoad = (): void => {
+      if (!autoLogin || autoSubmitted || authWindow.isDestroyed()) {
+        return;
+      }
+      const currentUrl = authWindow.webContents.getURL();
+      if (!isLocalBotstationLoginUrl(currentUrl, autoLogin.issuerOrigin)) {
+        return;
+      }
+      autoSubmitted = true;
+      const script = `
+        (() => {
+          const user = document.querySelector('input[name="userId"]');
+          const password = document.querySelector('input[name="password"]');
+          const form = document.querySelector('form');
+          if (!user || !password || !form) return false;
+          user.value = ${JSON.stringify(autoLogin.userId)};
+          password.value = ${JSON.stringify(autoLogin.password)};
+          form.submit();
+          return true;
+        })()
+      `;
+      authWindow.webContents.executeJavaScript(script, true).catch(() => undefined);
+    };
     const onClosed = (): void => {
       if (!settled) {
         settled = true;
@@ -353,14 +398,49 @@ function openOidcLoginWindow(authorizationUrl: string, redirectUri: string, expe
       authWindow.webContents.off("will-redirect", onWillRedirect);
       authWindow.webContents.off("will-navigate", onWillNavigate);
       authWindow.webContents.off("did-navigate", onDidNavigate);
+      authWindow.webContents.off("did-finish-load", onDidFinishLoad);
       authWindow.off("closed", onClosed);
     };
     authWindow.webContents.on("will-redirect", onWillRedirect);
     authWindow.webContents.on("will-navigate", onWillNavigate);
     authWindow.webContents.on("did-navigate", onDidNavigate);
+    authWindow.webContents.on("did-finish-load", onDidFinishLoad);
     authWindow.on("closed", onClosed);
     authWindow.loadURL(authorizationUrl).catch((error) => settle(() => reject(error)));
   });
+}
+
+function localBotstationAutoLogin(issuerUrl: string, userId: string | undefined, password: string | undefined): OidcAutoLogin | undefined {
+  if (!userId?.trim()) {
+    return undefined;
+  }
+  const issuer = new URL(issuerUrl);
+  if (!isLoopbackHost(issuer.hostname)) {
+    return undefined;
+  }
+  const resolvedPassword = password?.trim() || (userId.trim() === defaultBotstationUser ? defaultBotstationPassword : "");
+  if (!resolvedPassword) {
+    return undefined;
+  }
+  return {
+    userId: userId.trim(),
+    password: resolvedPassword,
+    issuerOrigin: issuer.origin
+  };
+}
+
+function isLocalBotstationLoginUrl(rawUrl: string, issuerOrigin: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return url.origin === issuerOrigin && url.pathname === "/oauth2/login";
+  } catch {
+    return false;
+  }
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  const value = hostname.toLowerCase();
+  return value === "localhost" || value === "127.0.0.1" || value === "::1" || value === "[::1]";
 }
 
 function base64Url(value: Buffer): string {
@@ -439,7 +519,8 @@ async function createWindow(): Promise<void> {
     minWidth: 1060,
     minHeight: 720,
     backgroundColor: "#0a0f16",
-    title: "Supbot",
+    title: appDisplayName,
+    icon: appIconPath,
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
       contextIsolation: true,
@@ -451,13 +532,13 @@ async function createWindow(): Promise<void> {
   });
   hardenWebContents(mainWindow.webContents);
 
-  const devServerUrl = process.env.SUPBOT_DEV_SERVER_URL;
+  const devServerUrl = process.env.HBCLIENT_DEV_SERVER_URL || process.env.SUPBOT_DEV_SERVER_URL;
   if (devServerUrl) {
     if (!isDev) {
-      throw new Error("SUPBOT_DEV_SERVER_URL is disabled in packaged production builds.");
+      throw new Error("HBCLIENT_DEV_SERVER_URL is disabled in packaged production builds.");
     }
     if (!isAllowedAppUrl(devServerUrl)) {
-      throw new Error(`Unsupported Supbot dev server URL: ${devServerUrl}`);
+      throw new Error(`Unsupported HBClient dev server URL: ${devServerUrl}`);
     }
     await mainWindow.loadURL(devServerUrl);
     mainWindow.webContents.openDevTools({ mode: "detach" });
@@ -466,9 +547,50 @@ async function createWindow(): Promise<void> {
     await mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
   }
 
+  void autoConnectLocalBotstation();
+
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
+}
+
+async function autoConnectLocalBotstation(): Promise<void> {
+  if (process.env.HBCLIENT_BOTSTATION_AUTO_CONNECT === "0") {
+    return;
+  }
+  const service = getRuntime();
+  const config = await service.servstationA2AConfig();
+  if (!isLocalBotstationConfig(config) || config.reverse?.status === "connected" || config.reverse?.status === "connecting") {
+    return;
+  }
+  try {
+    if (!hasUsableBotstationOidcSession(config)) {
+      await loginServstationOidc({});
+    }
+    await service.connectServstationReverseBridge();
+  } catch (error) {
+    console.warn("HBClient local Botstation auto-connect failed:", error instanceof Error ? error.message : String(error));
+  }
+}
+
+function isLocalBotstationConfig(config: ServstationA2AConfigUpdate & { oidc?: { issuerUrl?: string; accessTokenExpiresAt?: string }; reverse?: { status?: string } }): boolean {
+  const baseUrl = config.baseUrl || defaultBotstationBaseUrl;
+  const issuerUrl = config.oidc?.issuerUrl || defaultBotstationIssuerUrl;
+  try {
+    return isLoopbackHost(new URL(baseUrl).hostname) && isLoopbackHost(new URL(issuerUrl).hostname);
+  } catch {
+    return false;
+  }
+}
+
+function hasUsableBotstationOidcSession(config: { oidc?: { accessTokenExpiresAt?: string; refreshTokenSaved?: boolean } }): boolean {
+  if (config.oidc?.refreshTokenSaved) {
+    return true;
+  }
+  if (!config.oidc?.accessTokenExpiresAt) {
+    return false;
+  }
+  return new Date(config.oidc.accessTokenExpiresAt).getTime() > Date.now() + 60_000;
 }
 
 function registerIpc(): void {
@@ -638,13 +760,13 @@ function registerIpc(): void {
   });
   ipcMain.handle("file:open", async (_event, filePath: string) => {
     const safePath = requiredPath(filePath, "file path");
-    const userDataPath = process.env.SUPBOT_USER_DATA_DIR || app.getPath("userData");
+    const userDataPath = process.env.HBCLIENT_USER_DATA_DIR || process.env.SUPBOT_USER_DATA_DIR || app.getPath("userData");
     if (!getRuntime().isKnownSafePath(safePath) && !pathIsInside(userDataPath, safePath)) {
-      throw new Error("Supbot can only open files or folders it created, imported, or tracks as a worktree.");
+      throw new Error("HBClient can only open files or folders it created, imported, or tracks as a worktree.");
     }
     await shell.openPath(safePath);
   });
-  ipcMain.handle("path:userData", () => process.env.SUPBOT_USER_DATA_DIR || app.getPath("userData"));
+  ipcMain.handle("path:userData", () => process.env.HBCLIENT_USER_DATA_DIR || process.env.SUPBOT_USER_DATA_DIR || app.getPath("userData"));
 }
 
 function validateRendererPermissionMode(mode: PermissionMode): PermissionMode {
@@ -752,7 +874,7 @@ function validateRemoteBridgeUpdate(input: Partial<RemoteBridgeConfig> & { token
   const host = optionalString(value.host, "remote bridge host");
   const allowRemoteBind = optionalBoolean(value.allowRemoteBind, "allow remote bridge bind");
   if (host && !isLocalhost(host) && !allowRemoteBind) {
-    throw new Error("Production Supbot only allows Remote Bridge to bind localhost.");
+    throw new Error("Production HBClient only allows Remote Bridge to bind localhost.");
   }
   return compactUndefined({
     enabled: optionalBoolean(value.enabled, "remote bridge enabled"),
@@ -1323,7 +1445,7 @@ app.whenReady().then(async () => {
     }
   });
 }).catch((error) => {
-  dialog.showErrorBox("Supbot failed to start", error instanceof Error ? error.message : String(error));
+  dialog.showErrorBox("HBClient failed to start", error instanceof Error ? error.message : String(error));
   app.quit();
 });
 

@@ -212,7 +212,7 @@ export class McpManager implements ToolProvider {
       const initializeResult = await this.request(connection, "initialize", {
         protocolVersion: "2024-11-05",
         capabilities: {},
-        clientInfo: { name: "supbot", version: "4.3.0" }
+        clientInfo: { name: "hbclient", version: "4.3.0" }
       });
       recordInitializeResult(connection, initializeResult);
       initializeMs = Date.now() - initializeStart;
@@ -359,7 +359,7 @@ export class McpManager implements ToolProvider {
       const initializeResult = await this.request(connection, "initialize", {
         protocolVersion: "2024-11-05",
         capabilities: {},
-        clientInfo: { name: "supbot", version: "4.3.0" }
+        clientInfo: { name: "hbclient", version: "4.3.0" }
       });
       recordInitializeResult(connection, initializeResult);
       this.notify(connection, "notifications/initialized", {});
@@ -1006,7 +1006,7 @@ const mcpServerPresets: McpServerPreset[] = [
     argsTemplate: ["-y", "@example/mcp-server"],
     envHints: [{ key: "TOKEN", description: "Optional token used by the MCP package.", required: false }],
     docsUrl: "https://modelcontextprotocol.io",
-    riskNote: "Does not install from Supbot, but npx may execute package code available on this machine or registry cache.",
+    riskNote: "Does not install from HBClient, but npx may execute package code available on this machine or registry cache.",
     serverInput: {
       name: "npx-mcp",
       command: "npx",

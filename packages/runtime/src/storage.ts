@@ -167,9 +167,18 @@ const defaultSubagents: SubagentConfig[] = [
   }
 ];
 
+const defaultBotstationA2A = {
+  baseUrl: "http://localhost:8081",
+  issuerUrl: "http://localhost:8092",
+  clientId: "botstation-agent-client-web",
+  scope: "openid profile email",
+  redirectUri: "http://localhost:8800/oauth2/callback",
+  userId: "dev-user"
+};
+
 export function createInitialState(): RuntimeState {
   return {
-    agentName: "Supbot Local Agent",
+    agentName: "HBClient Local Agent",
     identityContext: undefined,
     modelConfig: { ...defaultModelConfig },
     toolMarketConfig: { ...defaultToolMarketConfig },
@@ -205,11 +214,17 @@ export function createInitialState(): RuntimeState {
     remoteBridgeSessions: [],
     remoteBridgeAudit: [],
     servstationA2AConfig: {
-      enabled: false,
-      authMode: "identityHeaders",
+      enabled: true,
+      baseUrl: defaultBotstationA2A.baseUrl,
+      authMode: "oidc",
       bearerTokenSaved: false,
+      staffAgentAccount: defaultBotstationA2A.userId,
       staffAgentPasswordSaved: false,
       oidc: {
+        issuerUrl: defaultBotstationA2A.issuerUrl,
+        clientId: defaultBotstationA2A.clientId,
+        scope: defaultBotstationA2A.scope,
+        redirectUri: defaultBotstationA2A.redirectUri,
         refreshTokenSaved: false
       },
       reverse: {
@@ -240,7 +255,9 @@ export class JsonFileStorage implements StorageAdapter {
     await mkdir(this.dataDir, { recursive: true });
     try {
       const raw = await readFile(this.statePath, "utf8");
-      return normalizeState(JSON.parse(raw) as Partial<RuntimeState>);
+      const state = normalizeState(JSON.parse(raw) as Partial<RuntimeState>);
+      await this.save(state);
+      return state;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         throw error;
@@ -652,17 +669,37 @@ function normalizeRemoteBridgeConfig(value: unknown, tokenSaved: boolean): Remot
 
 function normalizeServstationA2AConfig(value: unknown, bearerTokenSaved: boolean, oidcTokenSaved = false, staffAgentPasswordSaved = false): ServstationA2AConfig {
   const input = value as Partial<ServstationA2AConfig> | undefined;
-  const baseUrl = typeof input?.baseUrl === "string" && input.baseUrl.trim() ? normalizeHttpUrl(input.baseUrl) : undefined;
+  const rawBaseUrl = typeof input?.baseUrl === "string" ? input.baseUrl.trim() : "";
+  const normalizedBaseUrl = rawBaseUrl ? normalizeHttpUrl(rawBaseUrl) : "";
+  const baseUrl = shouldUseLocalBotstationDefault(rawBaseUrl, normalizedBaseUrl) ? defaultBotstationA2A.baseUrl : normalizedBaseUrl;
+  const wasUnconfigured = !rawBaseUrl && !input?.staffAgentAccount && !input?.agentInstanceId && !input?.oidc?.issuerUrl && !input?.oidc?.clientId;
+  const staffAgentAccount = typeof input?.staffAgentAccount === "string" && input.staffAgentAccount.trim() ? input.staffAgentAccount.trim() : defaultBotstationA2A.userId;
+  const oidc = normalizeServstationA2AOidcConfig(input?.oidc, oidcTokenSaved);
+  const forceLocalOidc = wasUnconfigured || (
+    input?.authMode === "identityHeaders" &&
+    baseUrl === defaultBotstationA2A.baseUrl &&
+    staffAgentAccount === defaultBotstationA2A.userId &&
+    oidc.issuerUrl === defaultBotstationA2A.issuerUrl &&
+    oidc.clientId === defaultBotstationA2A.clientId
+  );
+  let authMode: ServstationA2AConfig["authMode"] = "oidc";
+  if (!forceLocalOidc && (input?.authMode === "bearer" || input?.authMode === "identityHeaders" || input?.authMode === "oidc")) {
+    authMode = input.authMode;
+  }
+  const reverse = normalizeServstationA2AReverseConfig(input?.reverse);
+  const nextReverse = forceLocalOidc && !oidcTokenSaved
+    ? { ...reverse, enabled: false, status: "disconnected" as const, connectedAt: undefined, lastHeartbeatAt: undefined, lastError: undefined }
+    : reverse;
   return {
-    enabled: Boolean(input?.enabled),
-    baseUrl: baseUrl || undefined,
-    authMode: input?.authMode === "bearer" || input?.authMode === "oidc" ? input.authMode : "identityHeaders",
+    enabled: forceLocalOidc ? true : input?.enabled ?? true,
+    baseUrl,
+    authMode,
     bearerTokenSaved,
-    staffAgentAccount: typeof input?.staffAgentAccount === "string" && input.staffAgentAccount.trim() ? input.staffAgentAccount.trim() : undefined,
+    staffAgentAccount,
     staffAgentPasswordSaved,
     staffAgentPasswordStorage: staffAgentPasswordSaved ? input?.staffAgentPasswordStorage || "file" : undefined,
-    oidc: normalizeServstationA2AOidcConfig(input?.oidc, oidcTokenSaved),
-    reverse: normalizeServstationA2AReverseConfig(input?.reverse),
+    oidc,
+    reverse: nextReverse,
     agentInstanceId: typeof input?.agentInstanceId === "string" && input.agentInstanceId.trim() ? input.agentInstanceId.trim() : undefined,
     updatedAt: typeof input?.updatedAt === "string" ? input.updatedAt : undefined
   };
@@ -687,15 +724,36 @@ function normalizeServstationA2AReverseConfig(value: unknown): NonNullable<Servs
 
 function normalizeServstationA2AOidcConfig(value: unknown, refreshTokenSaved: boolean): ServstationA2AOidcConfig {
   const input = value as Partial<ServstationA2AOidcConfig> | undefined;
+  const rawIssuerUrl = typeof input?.issuerUrl === "string" ? input.issuerUrl.trim() : "";
+  const issuerUrl = normalizeLocalBotstationOidcUrl(rawIssuerUrl, defaultBotstationA2A.issuerUrl);
+  const rawRedirectUri = typeof input?.redirectUri === "string" ? input.redirectUri.trim() : "";
+  const redirectUri = normalizeLocalBotstationOidcUrl(rawRedirectUri, defaultBotstationA2A.redirectUri);
   return {
-    issuerUrl: typeof input?.issuerUrl === "string" && input.issuerUrl.trim() ? normalizeHttpUrl(input.issuerUrl) : undefined,
-    clientId: typeof input?.clientId === "string" && input.clientId.trim() ? input.clientId.trim() : undefined,
-    scope: typeof input?.scope === "string" && input.scope.trim() ? input.scope.trim() : undefined,
-    redirectUri: typeof input?.redirectUri === "string" && input.redirectUri.trim() ? normalizeHttpUrl(input.redirectUri) : undefined,
+    issuerUrl,
+    clientId: typeof input?.clientId === "string" && input.clientId.trim() ? input.clientId.trim() : defaultBotstationA2A.clientId,
+    scope: typeof input?.scope === "string" && input.scope.trim() ? input.scope.trim() : defaultBotstationA2A.scope,
+    redirectUri,
     accessTokenExpiresAt: typeof input?.accessTokenExpiresAt === "string" ? input.accessTokenExpiresAt : undefined,
     refreshTokenSaved,
     userId: typeof input?.userId === "string" && input.userId.trim() ? input.userId.trim() : undefined
   };
+}
+
+function normalizeLocalBotstationOidcUrl(value: string, fallback: string): string {
+  const normalized = value ? normalizeHttpUrl(value) : "";
+  return shouldUseLocalBotstationDefault(value, normalized) ? fallback : normalized;
+}
+
+function shouldUseLocalBotstationDefault(rawValue: string, normalizedValue: string): boolean {
+  if (!rawValue || !normalizedValue) {
+    return true;
+  }
+  try {
+    const url = new URL(rawValue);
+    return url.hostname === "zstupu.com" || url.hostname.endsWith(".zstupu.com");
+  } catch {
+    return true;
+  }
 }
 
 export function normalizeIdentityContext(value: unknown): IdentityContext | undefined {

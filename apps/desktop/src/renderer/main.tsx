@@ -142,19 +142,33 @@ type WorkspaceView = "chat" | "server" | "config" | "market";
 type DetailPanel = "memory" | "schedule" | "autopilot" | null;
 type Translator = (key: string, vars?: Record<string, string | number>) => string;
 const defaultToolMarketApiUrl = "https://i-shu.com";
+const defaultBotstationBaseUrl = "http://localhost:8081";
+const defaultBotstationIssuerUrl = "http://localhost:8092";
+const defaultBotstationClientId = "botstation-agent-client-web";
+const defaultBotstationScope = "openid profile email";
+const defaultBotstationRedirectUri = "http://localhost:8800/oauth2/callback";
+const defaultBotstationUser = "dev-user";
 const hiddenSlashCommandCapabilityIds = new Set(["tool.file", "tool.shell"]);
 
 const theme = {
   token: {
-    colorPrimary: "#14b8a6",
-    colorBgBase: "#091018",
-    colorTextBase: "#eef8f7",
+    colorPrimary: "#D4750A",
+    colorInfo: "#D4750A",
+    colorSuccess: "#10b981",
+    colorWarning: "#f59e0b",
+    colorError: "#ef4444",
+    colorBgBase: "#FFFAF5",
+    colorTextBase: "#1a1d23",
+    colorBorder: "#dde0e5",
     borderRadius: 8,
     fontFamily: "Aptos, Bahnschrift, Segoe UI, sans-serif"
   },
   components: {
-    Button: { borderRadius: 8 },
-    Input: { borderRadius: 8 },
+    Button: { borderRadius: 8, primaryShadow: "0 8px 22px rgba(212, 117, 10, 0.16)" },
+    Input: { borderRadius: 8, activeBorderColor: "#D4750A", hoverBorderColor: "#FFD6A8" },
+    Select: { optionSelectedBg: "#FFEFE0" },
+    Segmented: { itemSelectedBg: "#FFEFE0", itemSelectedColor: "#B8650A" },
+    Tag: { borderRadiusSM: 6 },
     Card: { borderRadius: 8 }
   }
 };
@@ -452,7 +466,7 @@ function App() {
       <ConfigProvider theme={theme}>
         <div className="boot-screen">
           <div className="brand-mark"><RobotOutlined /></div>
-          <Typography.Title level={3}>{t("Starting Supbot")}</Typography.Title>
+          <Typography.Title level={3}>{t("Starting HBClient")}</Typography.Title>
         </div>
       </ConfigProvider>
     );
@@ -626,8 +640,7 @@ function Topbar({
         options={[
           { label: translate(language, "Chat"), value: "chat" },
           { label: translate(language, "Server Agent"), value: "server" },
-          { label: translate(language, "Config"), value: "config" },
-          { label: translate(language, "Tool Market"), value: "market" }
+          { label: translate(language, "Config"), value: "config" }
         ]}
       />
       <div className="topbar-actions">
@@ -794,12 +807,12 @@ async function ensureServstationOidcSession(
     return;
   }
   const login = () => window.supbot.loginServstationOidc({
-    baseUrl: config.baseUrl || identity?.servstationUrl || "https://zstupu.com",
-    issuerUrl: config.oidc?.issuerUrl,
-    clientId: config.oidc?.clientId,
-    scope: config.oidc?.scope,
-    redirectUri: config.oidc?.redirectUri,
-    loginHint
+    baseUrl: config.baseUrl || identity?.servstationUrl || defaultBotstationBaseUrl,
+    issuerUrl: config.oidc?.issuerUrl || defaultBotstationIssuerUrl,
+    clientId: config.oidc?.clientId || defaultBotstationClientId,
+    scope: config.oidc?.scope || defaultBotstationScope,
+    redirectUri: config.oidc?.redirectUri || defaultBotstationRedirectUri,
+    loginHint: loginHint || defaultBotstationUser
   });
   if (!hasUsableServstationOidcSession(config)) {
     await login();
@@ -3171,7 +3184,7 @@ function ChatPanel({
           {!conversation || conversation.messages.length === 0 ? (
             <div className="chat-empty">
               <div className="brand-mark"><RobotOutlined /></div>
-              <Typography.Title level={3}>{t("Supbot is ready")}</Typography.Title>
+              <Typography.Title level={3}>{t("HBClient is ready")}</Typography.Title>
               <p className="muted">{t("Ask a question, attach local files, use /commands, or mention @research and @builder.")}</p>
             </div>
           ) : conversation.messages.map((item) => <MessageBubble key={item.id} message={item} t={t} />)}
@@ -3210,7 +3223,7 @@ function ChatPanel({
                 }
               }}
               autoSize={{ minRows: 2, maxRows: 6 }}
-              placeholder={t("Message Supbot, use /config, or mention @research...")}
+              placeholder={t("Message HBClient, use /config, or mention @research...")}
             />
             {filteredCommands.length ? (
               <div className="slash-menu">
@@ -3243,7 +3256,7 @@ function MessageBubble({ message: item, t }: { message: ChatMessage; t: (key: st
     <div className={`message-row ${item.role}`}>
       <div className="message-bubble">
         <div className="message-meta">
-          <span>{item.role === "user" ? t("You") : item.role === "assistant" ? "Supbot" : item.role === "tool" ? t("Tool") : t("System")}</span>
+          <span>{item.role === "user" ? t("You") : item.role === "assistant" ? "HBClient" : item.role === "tool" ? t("Tool") : t("System")}</span>
           <span>{formatDateTime(item.createdAt)}</span>
           {item.status ? <Tag color={statusColor(item.status)}>{statusLabel(item.status, t)}</Tag> : null}
         </div>
@@ -3578,7 +3591,7 @@ function assistantPreviewForJob(snapshot: RuntimeSnapshot, job: AgentJob): strin
 }
 
 function isAssistantWaitingText(text: string): boolean {
-  return text === "Supbot is thinking..." || /^@.+ is thinking\.\.\.$/.test(text);
+  return text === "HBClient is thinking..." || /^@.+ is thinking\.\.\.$/.test(text);
 }
 
 function recentJobProgress(progress: string[]): string[] {
@@ -3933,7 +3946,7 @@ function RemoteBridgePanel({ snapshot, t }: { snapshot: RuntimeSnapshot; t: (key
     setSavingA2A(true);
     try {
       await window.supbot.updateServstationA2AConfig({
-        baseUrl: patch.baseUrl ?? outbound.baseUrl ?? identity?.servstationUrl,
+        baseUrl: patch.baseUrl ?? outbound.baseUrl ?? identity?.servstationUrl ?? defaultBotstationBaseUrl,
         agentInstanceId: patch.agentInstanceId ?? outbound.agentInstanceId ?? identity?.agentInstanceId,
         ...patch
       });
@@ -3948,12 +3961,12 @@ function RemoteBridgePanel({ snapshot, t }: { snapshot: RuntimeSnapshot; t: (key
     setSavingA2A(true);
     try {
       await window.supbot.loginServstationOidc({
-        baseUrl: outbound.baseUrl || identity?.servstationUrl || "https://zstupu.com",
-        issuerUrl: oidc?.issuerUrl,
-        clientId: oidc?.clientId,
-        scope: oidc?.scope,
-        redirectUri: oidc?.redirectUri,
-        loginHint: outbound.staffAgentAccount
+        baseUrl: outbound.baseUrl || identity?.servstationUrl || defaultBotstationBaseUrl,
+        issuerUrl: oidc?.issuerUrl || defaultBotstationIssuerUrl,
+        clientId: oidc?.clientId || defaultBotstationClientId,
+        scope: oidc?.scope || defaultBotstationScope,
+        redirectUri: oidc?.redirectUri || defaultBotstationRedirectUri,
+        loginHint: outbound.staffAgentAccount || defaultBotstationUser
       });
       messageApi.success(t("Servstation OIDC signed in."));
     } catch (error) {
@@ -4500,7 +4513,7 @@ function MemoryPanel({
           <Input placeholder={t("Memory title")} />
         </Form.Item>
         <Form.Item name="content" label={t("Content")} rules={[{ required: true }]}>
-          <Input.TextArea rows={3} placeholder={t("What should Supbot remember?")} />
+          <Input.TextArea rows={3} placeholder={t("What should HBClient remember?")} />
         </Form.Item>
         <div className="memory-form-grid">
           <Form.Item name="kind" label={t("Kind")}>
@@ -5040,7 +5053,7 @@ function ConfigWorkspace({
       <div className="config-header">
         <div>
           <div className="eyebrow">{t("LOCAL CONFIG")}</div>
-          <Typography.Title level={3}>{t("Supbot Settings")}</Typography.Title>
+          <Typography.Title level={3}>{t("HBClient Settings")}</Typography.Title>
           <div className="muted">{t("Model, personality, local capabilities, and subagents live on this machine.")}</div>
         </div>
         <Button icon={<ReloadOutlined />} onClick={refresh}>{t("Refresh")}</Button>
@@ -5050,7 +5063,6 @@ function ConfigWorkspace({
         onChange={setFocusTab}
         items={[
           { key: "model", label: t("Model"), children: <ModelConfigCard snapshot={snapshot} openModel={openModel} t={t} /> },
-          { key: "market", label: t("Tool Market"), children: <ToolMarketConfigCard snapshot={snapshot} refresh={refresh} t={t} /> },
           { key: "server-agent", label: t("Server Agent"), children: <RemoteStaffAgentConfigCard snapshot={snapshot} refresh={refresh} t={t} /> },
           { key: "mcp", label: "MCP", children: <McpServersCard snapshot={snapshot} refresh={refresh} t={t} /> },
           { key: "personality", label: t("Personality"), children: <PersonalityCard snapshot={snapshot} refresh={refresh} t={t} /> },
@@ -5238,7 +5250,7 @@ function StorageCard({ userDataPath, t }: { userDataPath: string; t: (key: strin
         type={userDataPath ? "info" : "warning"}
         showIcon
         message={t("Credential storage")}
-        description={t("Supbot uses the operating system safe storage when available. If the app reports file storage for a credential, treat that fallback as local obfuscation rather than strong encryption.")}
+        description={t("HBClient uses the operating system safe storage when available. If the app reports file storage for a credential, treat that fallback as local obfuscation rather than strong encryption.")}
       />
       <Divider />
       <Alert
@@ -5360,16 +5372,16 @@ function RemoteStaffAgentConfigCard({ snapshot, refresh, t }: {
   useEffect(() => {
     form.setFieldsValue({
       enabled: config.enabled,
-      baseUrl: config.baseUrl || snapshot.identityContext?.servstationUrl || "https://zstupu.com",
+      baseUrl: config.baseUrl || snapshot.identityContext?.servstationUrl || defaultBotstationBaseUrl,
       authMode: "oidc",
-      staffAgentAccount: config.staffAgentAccount || "",
+      staffAgentAccount: config.staffAgentAccount || defaultBotstationUser,
       staffAgentPassword: "",
       clearStaffAgentPassword: false,
       agentInstanceId: config.agentInstanceId || snapshot.identityContext?.agentInstanceId,
-      oidcIssuerUrl: oidc?.issuerUrl || (config.baseUrl || snapshot.identityContext?.servstationUrl ? `${config.baseUrl || snapshot.identityContext?.servstationUrl}/realms/supmate` : ""),
-      oidcClientId: oidc?.clientId || "agent-client-web-dev",
-      oidcScope: oidc?.scope || "openid profile email offline_access",
-      oidcRedirectUri: oidc?.redirectUri || ""
+      oidcIssuerUrl: oidc?.issuerUrl || defaultBotstationIssuerUrl,
+      oidcClientId: oidc?.clientId || defaultBotstationClientId,
+      oidcScope: oidc?.scope || defaultBotstationScope,
+      oidcRedirectUri: oidc?.redirectUri || defaultBotstationRedirectUri
     });
   }, [config, form, oidc, snapshot.identityContext]);
 
@@ -5406,16 +5418,16 @@ function RemoteStaffAgentConfigCard({ snapshot, refresh, t }: {
       </div>
       <Form form={form} layout="vertical" onFinish={(values) => void save(values as ServstationA2AConfigUpdate)}>
         <Form.Item label={t("Servstation base URL")} name="baseUrl">
-          <Input placeholder="https://zstupu.com" />
+          <Input placeholder={defaultBotstationBaseUrl} />
         </Form.Item>
         <Form.Item label={t("OIDC issuer URL")} name="oidcIssuerUrl">
-          <Input placeholder="https://zstupu.com/realms/supmate" />
+          <Input placeholder={defaultBotstationIssuerUrl} />
         </Form.Item>
         <Form.Item label={t("OIDC client id")} name="oidcClientId">
-          <Input placeholder="agent-client-web-dev" />
+          <Input placeholder={defaultBotstationClientId} />
         </Form.Item>
         <Form.Item label={t("OIDC scope")} name="oidcScope">
-          <Input placeholder="openid profile email offline_access" />
+          <Input placeholder={defaultBotstationScope} />
         </Form.Item>
         <Form.Item label={t("Staff-agent account")} name="staffAgentAccount">
           <Input autoComplete="username" />
@@ -5604,7 +5616,7 @@ function McpServersCard({ snapshot, refresh, t }: {
         <div className="panel-heading">
           <div>
             <div className="section-title"><ToolOutlined /> {t("MCP Servers")}</div>
-            <div className="muted">{t("Connect local stdio MCP servers. Tools are registered through Supbot permissions.")}</div>
+            <div className="muted">{t("Connect local stdio MCP servers. Tools are registered through HBClient permissions.")}</div>
           </div>
           <Space wrap>
             <Tag color="cyan">{snapshot.mcpServers.length} {t("servers")}</Tag>
@@ -6121,7 +6133,8 @@ function ModelModal({ open, config, onCancel, onSave, t }: {
   const [testing, setTesting] = useState(false);
   useEffect(() => {
     if (open) {
-      form.setFieldsValue({ ...config, apiKey: "" });
+      form.resetFields();
+      form.setFieldsValue({ ...config, apiKey: "", clearApiKey: false });
     }
   }, [open, config, form]);
   return (

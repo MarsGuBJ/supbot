@@ -122,7 +122,7 @@ import { AutopilotOrchestrator } from "./autopilotOrchestrator";
 import { stripQuotes, type LocalToolHost, type LocalToolResult } from "./localTools";
 import { MemoryManager } from "./memoryManager";
 import { McpManager } from "./mcpManager";
-import { generateReply } from "./modelClient";
+import { generateReply, normalizeModelApiKey } from "./modelClient";
 import { ProjectManager } from "./projectManager";
 import { QueryEngine } from "./queryEngine";
 import { RemoteBridgeManager } from "./remoteBridgeManager";
@@ -269,6 +269,8 @@ export class SupbotRuntime extends EventEmitter {
       updateConfig: (input) => this.updateServstationA2AConfig(input),
       updateReverseState: (input) => this.updateServstationReverseState(input),
       sendReadOnlyPromptAndWait: (input) => this.sendRemotePromptAndWait(input),
+      getSnapshot: () => this.snapshot(),
+      loadTranscript: (conversationId) => this.loadTranscript(conversationId),
       randomId,
       nowIso
     });
@@ -734,6 +736,11 @@ export class SupbotRuntime extends EventEmitter {
   async servstationA2AConfig(): Promise<ServstationA2AConfig> {
     this.assertLoaded();
     return this.redactServstationA2AConfig();
+  }
+
+  async servstationA2AStaffAgentPassword(): Promise<string | undefined> {
+    this.assertLoaded();
+    return this.state.servstationA2AStaffAgentPasswordSecret;
   }
 
   async updateServstationA2AConfig(input: ServstationA2AConfigUpdate): Promise<ServstationA2AConfig> {
@@ -1494,18 +1501,22 @@ export class SupbotRuntime extends EventEmitter {
 
   async updateModelConfig(update: ModelConfigUpdate): Promise<ModelConfig> {
     this.assertLoaded();
+    const providerName = requiredString(update.providerName, "Provider name");
+    const model = requiredString(update.model, "Model");
+    const baseUrl = inferModelBaseUrl(providerName, model, requiredString(update.baseUrl, "Base URL"));
+    const apiKey = normalizeModelApiKey(update.apiKey);
     const next: ModelConfig = {
-      providerName: requiredString(update.providerName, "Provider name"),
-      baseUrl: requiredString(update.baseUrl, "Base URL"),
-      model: requiredString(update.model, "Model"),
+      providerName,
+      baseUrl,
+      model,
       temperature: clampNumber(Number(update.temperature), 0, 2),
       maxTokens: Math.round(clampNumber(Number(update.maxTokens), 64, 128000)),
       apiKeySaved: false
     };
-    if (update.clearApiKey) {
+    if (apiKey) {
+      this.state.modelSecret = apiKey;
+    } else if (update.clearApiKey) {
       this.state.modelSecret = undefined;
-    } else if (typeof update.apiKey === "string" && update.apiKey.trim()) {
-      this.state.modelSecret = update.apiKey.trim();
     }
     next.apiKeySaved = Boolean(this.state.modelSecret);
     next.apiKeyStorage = next.apiKeySaved ? this.secretStorageKind : undefined;
@@ -1548,18 +1559,26 @@ export class SupbotRuntime extends EventEmitter {
 
   async testModelConfig(update?: Partial<ModelConfigUpdate>): Promise<ModelTestResult> {
     this.assertLoaded();
+    const providerName = update?.providerName || this.state.modelConfig.providerName;
+    const model = update?.model || this.state.modelConfig.model;
+    const baseUrl = inferModelBaseUrl(providerName, model, update?.baseUrl || this.state.modelConfig.baseUrl);
     const modelConfig: ModelConfig = update
       ? {
-          providerName: update.providerName || this.state.modelConfig.providerName,
-          baseUrl: update.baseUrl || this.state.modelConfig.baseUrl,
-          model: update.model || this.state.modelConfig.model,
+          providerName,
+          baseUrl,
+          model,
           temperature: update.temperature ?? this.state.modelConfig.temperature,
           maxTokens: update.maxTokens ?? this.state.modelConfig.maxTokens,
           apiKeySaved: Boolean(update.apiKey || this.state.modelSecret),
           apiKeyStorage: this.state.modelConfig.apiKeyStorage
         }
       : this.state.modelConfig;
-    const apiKey = update?.apiKey?.trim() || this.state.modelSecret;
+    let apiKey: string;
+    try {
+      apiKey = normalizeModelApiKey(update?.apiKey || this.state.modelSecret);
+    } catch (error) {
+      return { ok: false, message: (error as Error).message };
+    }
     if (!apiKey) {
       return { ok: false, message: "No API key configured. Fallback mode is available, but real model calls need a key." };
     }
@@ -1572,7 +1591,7 @@ export class SupbotRuntime extends EventEmitter {
           id: "model-test",
           conversationId: "model-test",
           role: "user",
-          text: "Reply with exactly: Supbot model test ok",
+          text: "Reply with exactly: HBClient model test ok",
           createdAt: nowIso()
         }]
       });
@@ -1815,7 +1834,7 @@ export class SupbotRuntime extends EventEmitter {
         id: randomId("msg"),
         conversationId: conversation.id,
         role: "assistant",
-        text: subagent ? `@${subagent.name} is thinking...` : "Supbot is thinking...",
+        text: subagent ? `@${subagent.name} is thinking...` : "HBClient is thinking...",
         createdAt: nowIso(),
         jobId,
         status: "running"
@@ -3160,7 +3179,7 @@ export class SupbotRuntime extends EventEmitter {
       status: "failed",
       conversationId: sent.job.conversationId,
       jobId: sent.job.id,
-      error: "Timed out waiting for Supbot prompt result."
+      error: "Timed out waiting for HBClient prompt result."
     };
   }
 
@@ -3259,7 +3278,7 @@ export class SupbotRuntime extends EventEmitter {
 
   private assertLoaded(): void {
     if (!this.loaded) {
-      throw new Error("SupbotRuntime.init() must be called before use.");
+      throw new Error("HBClient runtime init() must be called before use.");
     }
   }
 
@@ -3736,6 +3755,14 @@ function requiredString(value: string, label: string): string {
 function emptyToUndefined(value: string): string | undefined {
   const trimmed = value.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function inferModelBaseUrl(providerName: string, model: string, baseUrl: string): string {
+  const lowerName = `${providerName} ${model}`.toLowerCase();
+  if (lowerName.includes("deepseek") && /^https:\/\/api\.openai\.com\/v1\/?$/i.test(baseUrl)) {
+    return "https://api.deepseek.com/v1";
+  }
+  return baseUrl;
 }
 
 function normalizeHttpUrl(value: string): string | undefined {

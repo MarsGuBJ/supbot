@@ -32,7 +32,7 @@ export class ProjectManager {
     const now = this.host.nowIso();
     const project: Project = {
       id: current?.id || this.host.randomId("project"),
-      name: input.name?.trim() || current?.name || basename(rootPath) || "Supbot project",
+      name: input.name?.trim() || current?.name || basename(rootPath) || "HBClient project",
       rootPath,
       metadataPath,
       status: current?.status || "active",

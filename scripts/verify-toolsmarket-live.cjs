@@ -34,12 +34,12 @@ async function main() {
   }
   const pages = await fetch("http://127.0.0.1:9333/json/list").then((response) => response.json());
   const page =
-    pages.find((item) => item.type === "page" && item.title === "Supbot") ||
+    pages.find((item) => item.type === "page" && item.title === "HBClient") ||
     pages.find((item) => item.type === "page" && item.url.includes("127.0.0.1:5173")) ||
     pages.find((item) => item.type === "page" && !item.url.startsWith("devtools://")) ||
     pages[0];
   if (!page) {
-    throw new Error("No Supbot page found on port 9333.");
+    throw new Error("No HBClient page found on port 9333.");
   }
   const wsUrl = page.webSocketDebuggerUrl;
   const config = { source: "hybrid", apiUrl: "https://i-shu.com", accountEmail: email, password };

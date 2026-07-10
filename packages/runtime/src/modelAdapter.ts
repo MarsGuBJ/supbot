@@ -1,5 +1,5 @@
 import type { ModelConfig } from "@supbot/shared";
-import { normalizeChatCompletionsUrl, type OpenAiToolDefinition } from "./modelClient";
+import { normalizeChatCompletionsUrl, normalizeModelApiKey, type OpenAiToolDefinition } from "./modelClient";
 
 export type AdapterMessage =
   | { role: "system"; content: string }
@@ -50,7 +50,7 @@ type ToolCallAccumulator = {
 
 export class OpenAIChatCompletionsAdapter implements ModelAdapter {
   async complete(input: ModelTurnRequest): Promise<ModelTurnResult> {
-    const apiKey = input.apiKey?.trim();
+    const apiKey = normalizeModelApiKey(input.apiKey);
     if (!apiKey) {
       return { text: localFallbackFromMessages(input.messages), toolCalls: [] };
     }
@@ -76,7 +76,7 @@ export class OpenAIChatCompletionsAdapter implements ModelAdapter {
   }
 
   async *stream(input: ModelTurnRequest): AsyncGenerator<ModelStreamEvent, ModelTurnResult, unknown> {
-    const apiKey = input.apiKey?.trim();
+    const apiKey = normalizeModelApiKey(input.apiKey);
     if (!apiKey) {
       return yield* completeAsStream(this, input);
     }

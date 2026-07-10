@@ -1,8 +1,10 @@
 import type {
   IdentityContext,
+  RuntimeSnapshot,
   ServstationA2AConfig,
   ServstationA2AConfigUpdate,
-  ServstationA2AReverseConfig
+  ServstationA2AReverseConfig,
+  TranscriptLoadResult
 } from "@supbot/shared";
 
 interface ReverseBridgeHost {
@@ -12,6 +14,8 @@ interface ReverseBridgeHost {
   updateConfig(input: ServstationA2AConfigUpdate): Promise<ServstationA2AConfig>;
   updateReverseState(input: Partial<ServstationA2AReverseConfig>): Promise<void>;
   sendReadOnlyPromptAndWait(input: ReversePromptInput): Promise<ReversePromptResult>;
+  getSnapshot(): RuntimeSnapshot;
+  loadTranscript(conversationId: string): Promise<TranscriptLoadResult>;
   randomId(prefix: string): string;
   nowIso(): string;
 }
@@ -68,6 +72,11 @@ interface ReverseInvocationEvent {
   timeoutMs?: number;
   userContext?: IdentityContext;
   agentInstanceId?: string;
+}
+
+interface ReverseRequestEvent {
+  requestId?: string;
+  conversationId?: string;
 }
 
 interface SseEvent {
@@ -153,16 +162,23 @@ export class ServstationReverseBridgeClient {
     const config = this.host.getConfig();
     const identity = this.requireIdentity();
     const baseUrl = this.requireBaseUrl(config, identity);
-    const clientInstanceId = config.reverse?.clientInstanceId || this.host.randomId("supbot_client");
+    const clientInstanceId = config.reverse?.clientInstanceId || this.host.randomId("hbclient");
     await this.host.updateReverseState({ enabled: true, status: "connecting", clientInstanceId });
     const agentInstanceId = await this.ensureAgentInstanceId(baseUrl, signal);
     const registration = await this.registerReverseConnection(baseUrl, agentInstanceId, clientInstanceId, signal);
     const peerId = registration.peer?.id;
     if (!peerId) {
-      throw new Error("Servstation reverse registration did not return a peer id.");
+      throw new Error("Botstation HBClient reverse registration did not return a peer id.");
     }
     const streamUrl = registration.streamUrl || `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/a2a-peers/${encodeURIComponent(peerId)}/events`;
-    await this.host.updateReverseState({ enabled: true, status: "connecting", peerId, clientInstanceId });
+    await this.host.updateReverseState({
+      enabled: true,
+      status: "connected",
+      peerId,
+      clientInstanceId,
+      connectedAt: this.host.nowIso(),
+      lastError: undefined
+    });
     await this.openEventStream(baseUrl, streamUrl, agentInstanceId, peerId, signal);
   }
 
@@ -181,9 +197,9 @@ export class ServstationReverseBridgeClient {
           signal,
           body: JSON.stringify({
             clientInstanceId,
-            displayName: "Supbot Desktop",
+            displayName: "HBClient Desktop",
             capabilities: ["prompt.readOnly"],
-            supbotVersion: "0.1.0"
+            hbclientVersion: "0.1.0"
           })
         }
       );
@@ -229,11 +245,11 @@ export class ServstationReverseBridgeClient {
     const connected = await this.request<AgentConnectResponse>(baseUrl, "/api/v1/agent/connect", {
       method: "POST",
       signal,
-      body: JSON.stringify({ clientId: "supbot-reverse-a2a" })
+      body: JSON.stringify({ clientId: "hbclient-reverse-a2a" })
     });
     const agentInstanceId = connected.agentInstanceId;
     if (!agentInstanceId) {
-      throw new Error("Servstation connect did not return an agent instance id.");
+      throw new Error("Botstation connect did not return an agent instance id.");
     }
     await this.host.updateConfig({ agentInstanceId });
     return agentInstanceId;
@@ -253,7 +269,7 @@ export class ServstationReverseBridgeClient {
     });
     if (!response.ok || !response.body) {
       const text = await response.text().catch(() => "");
-      throw new Error(`Servstation reverse event stream failed: ${text || `HTTP ${response.status}`}`);
+      throw new Error(`Botstation HBClient reverse event stream failed: ${text || `HTTP ${response.status}`}`);
     }
     await this.host.updateReverseState({
       enabled: true,
@@ -285,10 +301,18 @@ export class ServstationReverseBridgeClient {
       }
       if (event.event === "invoke_prompt") {
         void this.handleInvocation(baseUrl, agentInstanceId, peerId, event, signal);
+        continue;
+      }
+      if (event.event === "snapshot_request") {
+        void this.handleSnapshotRequest(baseUrl, agentInstanceId, peerId, event, signal);
+        continue;
+      }
+      if (event.event === "transcript_request") {
+        void this.handleTranscriptRequest(baseUrl, agentInstanceId, peerId, event, signal);
       }
     }
     if (!signal.aborted) {
-      throw new Error("Servstation reverse event stream ended.");
+      throw new Error("Botstation HBClient reverse event stream ended.");
     }
   }
 
@@ -318,7 +342,7 @@ export class ServstationReverseBridgeClient {
           requestId,
           agentInstanceId: payload.agentInstanceId || agentInstanceId,
           peerId,
-          clientId: "servstation-reverse",
+          clientId: "hbclient-reverse",
           userContext: payload.userContext
         }
       });
@@ -335,6 +359,67 @@ export class ServstationReverseBridgeClient {
           status: "failed",
           error: (error as Error).message
         })
+      }).catch(() => undefined);
+    }
+  }
+
+  private async handleSnapshotRequest(
+    baseUrl: string,
+    agentInstanceId: string,
+    peerId: string,
+    event: SseEvent,
+    signal: AbortSignal
+  ): Promise<void> {
+    const payload = safeJson(event.data) as ReverseRequestEvent;
+    const requestId = requiredString(payload.requestId || event.id, "requestId");
+    try {
+      await this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "ack"), {
+        method: "POST",
+        signal,
+        body: JSON.stringify({ requestId })
+      });
+      const snapshot = this.host.getSnapshot();
+      await this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "result"), {
+        method: "POST",
+        signal,
+        body: JSON.stringify({ status: "completed", result: snapshot })
+      });
+    } catch (error) {
+      await this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "result"), {
+        method: "POST",
+        signal,
+        body: JSON.stringify({ status: "failed", error: (error as Error).message })
+      }).catch(() => undefined);
+    }
+  }
+
+  private async handleTranscriptRequest(
+    baseUrl: string,
+    agentInstanceId: string,
+    peerId: string,
+    event: SseEvent,
+    signal: AbortSignal
+  ): Promise<void> {
+    const payload = safeJson(event.data) as ReverseRequestEvent;
+    const requestId = requiredString(payload.requestId || event.id, "requestId");
+    try {
+      const conversationId = requiredString(payload.conversationId, "conversationId");
+      await this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "ack"), {
+        method: "POST",
+        signal,
+        body: JSON.stringify({ requestId })
+      });
+      const transcript = await this.host.loadTranscript(conversationId);
+      await this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "result"), {
+        method: "POST",
+        signal,
+        body: JSON.stringify({ status: "completed", result: transcript })
+      });
+    } catch (error) {
+      await this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "result"), {
+        method: "POST",
+        signal,
+        body: JSON.stringify({ status: "failed", error: (error as Error).message })
       }).catch(() => undefined);
     }
   }
@@ -375,7 +460,7 @@ export class ServstationReverseBridgeClient {
   private requireIdentity(): IdentityContext {
     const identity = this.host.getIdentityContext();
     if (!identity) {
-      throw new Error("Servstation reverse A2A identity context is not paired.");
+      throw new Error("Botstation HBClient reverse A2A identity context is not paired.");
     }
     return identity;
   }
@@ -383,7 +468,7 @@ export class ServstationReverseBridgeClient {
   private requireBaseUrl(config: ServstationA2AConfig, identity: IdentityContext): string {
     const baseUrl = normalizeBaseUrl(config.baseUrl || identity.servstationUrl);
     if (!baseUrl) {
-      throw new Error("Servstation reverse A2A base URL is not configured.");
+      throw new Error("Botstation HBClient reverse A2A base URL is not configured.");
     }
     return baseUrl;
   }
@@ -410,6 +495,10 @@ export class ServstationReverseBridgeClient {
 
 function invocationPath(agentInstanceId: string, peerId: string, invocationId: string, action: "ack" | "result"): string {
   return `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/a2a-peers/${encodeURIComponent(peerId)}/invocations/${encodeURIComponent(invocationId)}/${action}`;
+}
+
+function requestPath(agentInstanceId: string, peerId: string, requestId: string, action: "ack" | "result"): string {
+  return `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/a2a-peers/${encodeURIComponent(peerId)}/requests/${encodeURIComponent(requestId)}/${action}`;
 }
 
 function heartbeatPath(agentInstanceId: string, peerId: string): string {

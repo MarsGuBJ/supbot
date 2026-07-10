@@ -34,7 +34,7 @@ async function main() {
   const pages = await fetch("http://127.0.0.1:9333/json/list").then((response) => response.json());
   const page = pages.find((item) => item.type === "page") || pages[0];
   if (!page) {
-    throw new Error("No packaged Supbot page found on port 9333.");
+    throw new Error("No packaged HBClient page found on port 9333.");
   }
   const wsUrl = page.webSocketDebuggerUrl;
   const clickByText = (text, selector = ".ant-segmented-item-label, .ant-tabs-tab-btn, button") => evaluate(wsUrl, `(() => {

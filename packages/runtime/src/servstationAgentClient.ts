@@ -56,6 +56,7 @@ interface JobsResponse {
 
 interface ScheduledJobsResponse {
   scheduledJobs?: ServstationScheduledJob[];
+  tasks?: ServstationScheduledTask[];
 }
 
 interface AutopilotRunResponse {
@@ -86,6 +87,24 @@ interface FlowEngineExecutionEventsResponse {
 
 interface AgentConnectResponse {
   agentInstanceId?: string;
+}
+
+interface ServstationScheduledTask {
+  id?: string;
+  agentInstanceId?: string;
+  name?: string;
+  title?: string;
+  prompt?: string;
+  scheduleType?: string;
+  scheduleKind?: string;
+  cronExpression?: string;
+  cronExpr?: string;
+  runAt?: string | null;
+  status?: string;
+  lastRunAt?: string | null;
+  nextRunAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 interface MessageDetailResponse {
@@ -242,25 +261,38 @@ export class ServstationAgentClient {
 
   async createScheduledJob(input: ServstationScheduledJobInput, signal?: AbortSignal): Promise<ServstationScheduledJob> {
     const agentInstanceId = await this.ensureConnectedAgent(signal);
-    return this.request<ServstationScheduledJob>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/scheduled-jobs`, {
+    const task = await this.request<ServstationScheduledJob | ServstationScheduledTask>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/scheduled-tasks`, {
       method: "POST",
       signal,
-      body: JSON.stringify(input)
+      body: JSON.stringify(toScheduledTaskInput(input))
     });
+    return normalizeScheduledJob(task);
   }
 
   async updateScheduledJob(id: string, input: Partial<ServstationScheduledJobInput>, signal?: AbortSignal): Promise<ServstationScheduledJob> {
     const agentInstanceId = await this.ensureConnectedAgent(signal);
-    return this.request<ServstationScheduledJob>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/scheduled-jobs?scheduledJobId=${encodeURIComponent(id)}`, {
+    if (typeof input.enabled === "boolean" && Object.keys(input).every((key) => key === "enabled")) {
+      const task = await this.request<ServstationScheduledJob | ServstationScheduledTask>(
+        `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/scheduled-tasks/${encodeURIComponent(id)}/${input.enabled ? "resume" : "pause"}`,
+        {
+          method: "POST",
+          signal,
+          body: JSON.stringify({})
+        }
+      );
+      return normalizeScheduledJob(task);
+    }
+    const task = await this.request<ServstationScheduledJob | ServstationScheduledTask>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/scheduled-tasks/${encodeURIComponent(id)}`, {
       method: "PATCH",
       signal,
-      body: JSON.stringify(input)
+      body: JSON.stringify(toScheduledTaskInput(input))
     });
+    return normalizeScheduledJob(task);
   }
 
   async deleteScheduledJob(id: string, signal?: AbortSignal): Promise<void> {
     const agentInstanceId = await this.ensureConnectedAgent(signal);
-    await this.request(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/scheduled-jobs?scheduledJobId=${encodeURIComponent(id)}`, {
+    await this.request(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/scheduled-tasks/${encodeURIComponent(id)}`, {
       method: "DELETE",
       signal
     });
@@ -629,11 +661,12 @@ export class ServstationAgentClient {
   }
 
   private async listScheduledJobs(agentInstanceId: string, signal?: AbortSignal): Promise<ServstationScheduledJob[]> {
-    const response = await this.request<ScheduledJobsResponse>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/scheduled-jobs`, {
+    const response = await this.request<ScheduledJobsResponse>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/scheduled-tasks`, {
       method: "GET",
       signal
     });
-    return Array.isArray(response.scheduledJobs) ? response.scheduledJobs : [];
+    const jobs = Array.isArray(response.scheduledJobs) ? response.scheduledJobs : response.tasks;
+    return Array.isArray(jobs) ? jobs.map(normalizeScheduledJob) : [];
   }
 
   private async fetchCurrentAutopilotRun(agentInstanceId: string, signal?: AbortSignal): Promise<ServstationAutopilotRun | null> {
@@ -644,7 +677,7 @@ export class ServstationAgentClient {
       });
       return response.run || null;
     } catch (error) {
-      if ((error as Error & { status?: number }).status === 404) {
+      if (isOptionalAgentFeatureMissing(error)) {
         return null;
       }
       throw error;
@@ -710,7 +743,7 @@ export class ServstationAgentClient {
 
   private async ensureAgentInstanceId(signal?: AbortSignal): Promise<string> {
     const config = this.host.getConfig();
-    const existing = config.agentInstanceId || this.host.getIdentityContext()?.agentInstanceId;
+    const existing = config.agentInstanceId?.trim() || this.host.getIdentityContext()?.agentInstanceId?.trim();
     if (existing) {
       return existing;
     }
@@ -810,6 +843,66 @@ function fallbackConversation(agentInstanceId: string, conversationId: string, j
   };
 }
 
+function toScheduledTaskInput(input: Partial<ServstationScheduledJobInput>): Record<string, unknown> {
+  const scheduleKind = input.scheduleKind?.trim();
+  return compactRecord({
+    name: input.title,
+    prompt: input.prompt,
+    scheduleType: scheduleTypeFromKind(scheduleKind),
+    cronExpression: input.cronExpr,
+    runAt: input.runAt,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    clientId: CLIENT_ID
+  });
+}
+
+function normalizeScheduledJob(input: ServstationScheduledJob | ServstationScheduledTask): ServstationScheduledJob {
+  const task = input as ServstationScheduledTask & ServstationScheduledJob;
+  const scheduleType = task.scheduleType || task.scheduleKind;
+  const cronExpr = task.cronExpression || task.cronExpr;
+  const now = new Date().toISOString();
+  return {
+    id: task.id || "",
+    agentInstanceId: task.agentInstanceId || "",
+    conversationId: task.conversationId || "",
+    title: task.title || task.name || "Scheduled prompt",
+    prompt: task.prompt || "",
+    scheduleKind: scheduleKindFromType(scheduleType, cronExpr),
+    runAt: task.runAt ?? null,
+    cronExpr,
+    enabled: typeof task.enabled === "boolean" ? task.enabled : task.status !== "paused" && task.status !== "deleted" && task.status !== "completed",
+    lastRunAt: task.lastRunAt ?? null,
+    nextRunAt: task.nextRunAt ?? null,
+    lastError: task.lastError,
+    createdAt: task.createdAt || now,
+    updatedAt: task.updatedAt || now
+  };
+}
+
+function scheduleTypeFromKind(kind: string | undefined): string | undefined {
+  if (!kind) {
+    return undefined;
+  }
+  if (kind === "cron" || kind === "daily") {
+    return "unbounded_recurring";
+  }
+  return kind;
+}
+
+function scheduleKindFromType(type: string | undefined, cronExpr: string | undefined): string {
+  if (type === "once") {
+    return "once";
+  }
+  if (type === "bounded_recurring" || type === "unbounded_recurring") {
+    return cronExpr ? "cron" : type;
+  }
+  return type || "once";
+}
+
+function compactRecord(record: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined && value !== ""));
+}
+
 function normalizeBaseUrl(value?: string): string | undefined {
   const trimmed = value?.trim();
   if (!trimmed) {
@@ -836,6 +929,12 @@ function errorMessage(value: unknown): string | undefined {
   }
   const record = value as Record<string, unknown>;
   return typeof record.error === "string" ? record.error : typeof record.message === "string" ? record.message : undefined;
+}
+
+function isOptionalAgentFeatureMissing(error: unknown): boolean {
+  const status = (error as Error & { status?: number }).status;
+  const message = (error as Error).message || "";
+  return status === 404 || (status === 400 && message.includes("missing agent instance id"));
 }
 
 function sanitizeMailAccount(account: ServstationMailAccount): ServstationMailAccount {

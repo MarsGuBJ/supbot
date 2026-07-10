@@ -1,7 +1,7 @@
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 
-const appPath = path.resolve("apps", "desktop", "release", "win-unpacked", "Supbot.exe");
+const appPath = path.resolve("apps", "desktop", "release", "win-unpacked", "HBClient.exe");
 const port = 9333;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -20,7 +20,7 @@ async function waitForPage() {
     }
     await sleep(300);
   }
-  throw new Error("No packaged Supbot page exposed through DevTools.");
+  throw new Error("No packaged HBClient page exposed through DevTools.");
 }
 
 async function evaluate(wsUrl, expression) {
@@ -84,7 +84,7 @@ async function main() {
   }, null, 2));
 
   if (!leftOverviewRemoved || !leftStartsWithCapabilities || railToggleCount !== 0 || topbarToggleCount < 2 || !composerFixed) {
-    throw new Error("Packaged Supbot window did not load the expected updated UI.");
+    throw new Error("Packaged HBClient window did not load the expected updated UI.");
   }
 }
 
