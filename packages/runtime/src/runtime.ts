@@ -266,6 +266,8 @@ export class SupbotRuntime extends EventEmitter {
       getConfig: () => this.state.servstationA2AConfig,
       getAccessToken: (signal) => this.servstationA2AAccessToken(signal),
       getIdentityContext: () => this.state.identityContext,
+      getSnapshot: () => this.snapshot(),
+      loadTranscript: (conversationId) => this.loadTranscript(conversationId),
       updateConfig: (input) => this.updateServstationA2AConfig(input),
       updateReverseState: (input) => this.updateServstationReverseState(input),
       sendReadOnlyPromptAndWait: (input) => this.sendRemotePromptAndWait(input),
@@ -286,6 +288,7 @@ export class SupbotRuntime extends EventEmitter {
 
   async init(): Promise<RuntimeSnapshot> {
     this.state = await this.storage.load();
+    this.resetServstationReverseStartupState();
     this.mcpManager.setServers(this.state.mcpServers);
     this.worktreeManager.setWorktrees(this.state.worktrees);
     this.loaded = true;
@@ -302,6 +305,25 @@ export class SupbotRuntime extends EventEmitter {
       this.servstationReverseBridgeClient.start();
     }
     return this.snapshot();
+  }
+
+  private resetServstationReverseStartupState(): void {
+    const reverse = this.state.servstationA2AConfig.reverse;
+    if (!reverse?.enabled || reverse.status === "disconnected") {
+      return;
+    }
+    this.state.servstationA2AConfig = {
+      ...this.state.servstationA2AConfig,
+      reverse: {
+        ...reverse,
+        status: "disconnected",
+        connectedAt: undefined,
+        lastHeartbeatAt: undefined,
+        lastError: undefined,
+        updatedAt: nowIso()
+      },
+      updatedAt: nowIso()
+    };
   }
 
   snapshot(): RuntimeSnapshot {

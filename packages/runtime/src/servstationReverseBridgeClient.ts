@@ -1,14 +1,19 @@
 import type {
+  ChatMessage,
   IdentityContext,
+  RuntimeSnapshot,
   ServstationA2AConfig,
   ServstationA2AConfigUpdate,
-  ServstationA2AReverseConfig
+  ServstationA2AReverseConfig,
+  TranscriptLoadResult
 } from "@supbot/shared";
 
 interface ReverseBridgeHost {
   getConfig(): ServstationA2AConfig;
   getAccessToken(signal?: AbortSignal): Promise<string | undefined>;
   getIdentityContext(): IdentityContext | undefined;
+  getSnapshot(): RuntimeSnapshot;
+  loadTranscript(conversationId: string): Promise<TranscriptLoadResult>;
   updateConfig(input: ServstationA2AConfigUpdate): Promise<ServstationA2AConfig>;
   updateReverseState(input: Partial<ServstationA2AReverseConfig>): Promise<void>;
   sendReadOnlyPromptAndWait(input: ReversePromptInput): Promise<ReversePromptResult>;
@@ -44,7 +49,9 @@ interface AgentConnectResponse {
 }
 
 interface ReverseRegisterResponse {
-  peer?: { id?: string };
+  peer?: { id?: string; agentInstanceId?: string };
+  agentId?: string;
+  agentInstanceId?: string;
   streamUrl?: string;
   heartbeatMs?: number;
   clientHeartbeatTimeoutMs?: number;
@@ -52,6 +59,7 @@ interface ReverseRegisterResponse {
 
 interface ReversePeerLink {
   id?: string;
+  agentInstanceId?: string;
   connectionMode?: string;
   clientInstanceId?: string;
 }
@@ -67,6 +75,12 @@ interface ReverseInvocationEvent {
   conversationId?: string;
   timeoutMs?: number;
   userContext?: IdentityContext;
+  agentInstanceId?: string;
+}
+
+interface ReverseRequestEvent {
+  requestId?: string;
+  conversationId?: string;
   agentInstanceId?: string;
 }
 
@@ -157,13 +171,17 @@ export class ServstationReverseBridgeClient {
     await this.host.updateReverseState({ enabled: true, status: "connecting", clientInstanceId });
     const agentInstanceId = await this.ensureAgentInstanceId(baseUrl, signal);
     const registration = await this.registerReverseConnection(baseUrl, agentInstanceId, clientInstanceId, signal);
+    const registeredAgentInstanceId = registration.agentInstanceId || registration.agentId || registration.peer?.agentInstanceId || agentInstanceId;
+    if (registeredAgentInstanceId !== agentInstanceId) {
+      await this.host.updateConfig({ agentInstanceId: registeredAgentInstanceId });
+    }
     const peerId = registration.peer?.id;
     if (!peerId) {
       throw new Error("Servstation reverse registration did not return a peer id.");
     }
-    const streamUrl = registration.streamUrl || `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/a2a-peers/${encodeURIComponent(peerId)}/events`;
+    const streamUrl = registration.streamUrl || `/api/v1/agent/${encodeURIComponent(registeredAgentInstanceId)}/a2a-peers/${encodeURIComponent(peerId)}/events`;
     await this.host.updateReverseState({ enabled: true, status: "connecting", peerId, clientInstanceId });
-    await this.openEventStream(baseUrl, streamUrl, agentInstanceId, peerId, signal);
+    await this.openEventStream(baseUrl, streamUrl, registeredAgentInstanceId, peerId, registration, signal);
   }
 
   private async registerReverseConnection(
@@ -180,6 +198,7 @@ export class ServstationReverseBridgeClient {
           method: "POST",
           signal,
           body: JSON.stringify({
+            agentInstanceId,
             clientInstanceId,
             displayName: "Supbot Desktop",
             capabilities: ["prompt.readOnly"],
@@ -244,6 +263,7 @@ export class ServstationReverseBridgeClient {
     streamUrl: string,
     agentInstanceId: string,
     peerId: string,
+    registration: ReverseRegisterResponse,
     signal: AbortSignal
   ): Promise<void> {
     const response = await fetch(joinUrl(baseUrl, streamUrl), {
@@ -257,38 +277,87 @@ export class ServstationReverseBridgeClient {
     }
     await this.host.updateReverseState({
       enabled: true,
-      status: "connected",
+      status: "connecting",
       peerId,
-      connectedAt: this.host.nowIso(),
+      connectedAt: undefined,
+      lastHeartbeatAt: undefined,
       lastError: undefined
     });
-
-    for await (const event of parseSse(response.body, signal)) {
-      if (event.event === "heartbeat") {
-        try {
-          await this.request(baseUrl, heartbeatPath(agentInstanceId, peerId), {
-            method: "POST",
-            signal,
-            body: JSON.stringify({ at: this.host.nowIso() })
-          });
-        } catch (error) {
+    const heartbeatEveryMs = reverseClientHeartbeatIntervalMs(registration);
+    let heartbeatInFlight: Promise<void> | undefined;
+    const postHeartbeat = (): Promise<void> => {
+      if (heartbeatInFlight) {
+        return heartbeatInFlight;
+      }
+      heartbeatInFlight = this.request(baseUrl, heartbeatPath(agentInstanceId, peerId), {
+        method: "POST",
+        signal,
+        body: JSON.stringify({ at: this.host.nowIso(), agentInstanceId, peerId })
+      })
+        .then(() => this.host.updateReverseState({
+          status: "connected",
+          connectedAt: connectedAtFor(this.host.getConfig().reverse, this.host.nowIso()),
+          peerId,
+          lastHeartbeatAt: this.host.nowIso(),
+          lastError: undefined
+        }))
+        .catch((error) => {
           if (!isRecoverableHeartbeatError(error)) {
             throw error;
           }
-        }
-        await this.host.updateReverseState({
-          status: "connected",
-          lastHeartbeatAt: this.host.nowIso(),
-          lastError: undefined
+          return this.host.updateReverseState({
+            status: "connected",
+            connectedAt: connectedAtFor(this.host.getConfig().reverse, this.host.nowIso()),
+            peerId,
+            lastHeartbeatAt: undefined,
+            lastError: undefined
+          });
+        })
+        .finally(() => {
+          heartbeatInFlight = undefined;
         });
-        continue;
+      return heartbeatInFlight;
+    };
+    await postHeartbeat();
+    const heartbeatTimer = setInterval(() => {
+      void postHeartbeat().catch((error) => {
+        if (signal.aborted) {
+          return;
+        }
+        void this.host.updateReverseState({
+          status: "error",
+          connectedAt: undefined,
+          lastHeartbeatAt: undefined,
+          lastError: (error as Error).message || "Servstation reverse heartbeat failed."
+        });
+        void response.body?.cancel().catch(() => undefined);
+      });
+    }, heartbeatEveryMs);
+    heartbeatTimer.unref?.();
+
+    try {
+      for await (const event of parseSse(response.body, signal)) {
+        if (event.event === "heartbeat") {
+          await postHeartbeat();
+          continue;
+        }
+        if (event.event === "invoke_prompt") {
+          void this.handleInvocation(baseUrl, agentInstanceId, peerId, event, signal);
+          continue;
+        }
+        if (event.event === "snapshot_request") {
+          void this.handleSnapshotRequest(baseUrl, agentInstanceId, peerId, event, signal);
+          continue;
+        }
+        if (event.event === "transcript_request") {
+          void this.handleTranscriptRequest(baseUrl, agentInstanceId, peerId, event, signal);
+        }
       }
-      if (event.event === "invoke_prompt") {
-        void this.handleInvocation(baseUrl, agentInstanceId, peerId, event, signal);
+      if (!signal.aborted) {
+        throw new Error("Servstation reverse event stream ended.");
       }
-    }
-    if (!signal.aborted) {
-      throw new Error("Servstation reverse event stream ended.");
+    } finally {
+      clearInterval(heartbeatTimer);
     }
   }
 
@@ -307,7 +376,7 @@ export class ServstationReverseBridgeClient {
       await this.request(baseUrl, invocationPath(agentInstanceId, peerId, invocationId, "ack"), {
         method: "POST",
         signal,
-        body: JSON.stringify({ requestId })
+        body: JSON.stringify({ requestId, agentInstanceId, peerId })
       });
       const result = await this.host.sendReadOnlyPromptAndWait({
         prompt,
@@ -325,7 +394,7 @@ export class ServstationReverseBridgeClient {
       await this.request(baseUrl, invocationPath(agentInstanceId, peerId, invocationId, "result"), {
         method: "POST",
         signal,
-        body: JSON.stringify(result)
+        body: JSON.stringify({ ...result, requestId, agentInstanceId, peerId })
       });
     } catch (error) {
       await this.request(baseUrl, invocationPath(agentInstanceId, peerId, invocationId, "result"), {
@@ -333,10 +402,103 @@ export class ServstationReverseBridgeClient {
         signal,
         body: JSON.stringify({
           status: "failed",
+          requestId,
+          agentInstanceId,
+          peerId,
           error: (error as Error).message
         })
       }).catch(() => undefined);
     }
+  }
+
+  private async handleSnapshotRequest(
+    baseUrl: string,
+    agentInstanceId: string,
+    peerId: string,
+    event: SseEvent,
+    signal: AbortSignal
+  ): Promise<void> {
+    const requestId = requestIdFromEvent(event);
+    try {
+      await this.ackRequest(baseUrl, agentInstanceId, peerId, requestId, signal);
+      await this.completeRequest(baseUrl, agentInstanceId, peerId, requestId, toSupbotSnapshot(this.host.getSnapshot()), signal);
+    } catch (error) {
+      await this.failRequest(baseUrl, agentInstanceId, peerId, requestId, error, signal);
+    }
+  }
+
+  private async handleTranscriptRequest(
+    baseUrl: string,
+    agentInstanceId: string,
+    peerId: string,
+    event: SseEvent,
+    signal: AbortSignal
+  ): Promise<void> {
+    const payload = safeJson(event.data) as ReverseRequestEvent;
+    const requestId = requiredString(payload.requestId || event.id, "requestId");
+    try {
+      const conversationId = requiredString(payload.conversationId, "conversationId");
+      await this.ackRequest(baseUrl, agentInstanceId, peerId, requestId, signal);
+      const transcript = await this.host.loadTranscript(conversationId);
+      const conversation = this.host.getSnapshot().conversations.find((item) => item.id === conversationId);
+      await this.completeRequest(baseUrl, agentInstanceId, peerId, requestId, {
+        conversation: conversation ? toSupbotConversation(conversation) : undefined,
+        messages: transcript.activeMessages.map(toSupbotMessage),
+        source: transcript.source,
+        diagnostics: transcript.diagnostics
+      }, signal);
+    } catch (error) {
+      await this.failRequest(baseUrl, agentInstanceId, peerId, requestId, error, signal);
+    }
+  }
+
+  private ackRequest(
+    baseUrl: string,
+    agentInstanceId: string,
+    peerId: string,
+    requestId: string,
+    signal: AbortSignal
+  ): Promise<unknown> {
+    return this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "ack"), {
+      method: "POST",
+      signal,
+      body: JSON.stringify({ agentInstanceId, peerId })
+    });
+  }
+
+  private completeRequest(
+    baseUrl: string,
+    agentInstanceId: string,
+    peerId: string,
+    requestId: string,
+    result: unknown,
+    signal: AbortSignal
+  ): Promise<unknown> {
+    return this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "result"), {
+      method: "POST",
+      signal,
+      body: JSON.stringify({ status: "completed", agentInstanceId, peerId, result })
+    });
+  }
+
+  private failRequest(
+    baseUrl: string,
+    agentInstanceId: string,
+    peerId: string,
+    requestId: string,
+    error: unknown,
+    signal: AbortSignal
+  ): Promise<unknown> {
+    return this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "result"), {
+      method: "POST",
+      signal,
+      body: JSON.stringify({
+        status: "failed",
+        agentInstanceId,
+        peerId,
+        error: (error as Error).message
+      })
+    }).catch(() => undefined);
   }
 
   private async request<T = unknown>(baseUrl: string, path: string, init: RequestInit): Promise<T> {
@@ -412,8 +574,53 @@ function invocationPath(agentInstanceId: string, peerId: string, invocationId: s
   return `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/a2a-peers/${encodeURIComponent(peerId)}/invocations/${encodeURIComponent(invocationId)}/${action}`;
 }
 
+function requestPath(agentInstanceId: string, peerId: string, requestId: string, action: "ack" | "result"): string {
+  return `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/a2a-peers/${encodeURIComponent(peerId)}/requests/${encodeURIComponent(requestId)}/${action}`;
+}
+
 function heartbeatPath(agentInstanceId: string, peerId: string): string {
   return `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/a2a-peers/${encodeURIComponent(peerId)}/heartbeat`;
+}
+
+function requestIdFromEvent(event: SseEvent): string {
+  const payload = safeJson(event.data) as ReverseRequestEvent;
+  return requiredString(payload.requestId || event.id, "requestId");
+}
+
+function toSupbotSnapshot(snapshot: RuntimeSnapshot): Record<string, unknown> {
+  const conversations = snapshot.conversations.map(toSupbotConversation);
+  return {
+    status: snapshot.status,
+    activeConversationId: conversations[0]?.id,
+    conversations
+  };
+}
+
+function toSupbotConversation(conversation: RuntimeSnapshot["conversations"][number]): Record<string, unknown> {
+  const lastMessage = conversation.messages.at(-1);
+  return {
+    id: conversation.id,
+    title: conversation.title,
+    createdAt: conversation.createdAt,
+    updatedAt: conversation.updatedAt,
+    lastMessageAt: conversation.lastMessageAt,
+    lastMessage: lastMessage?.text,
+    messageCount: conversation.messages.length
+  };
+}
+
+function toSupbotMessage(message: ChatMessage): Record<string, unknown> {
+  return {
+    id: message.id,
+    conversationId: message.conversationId,
+    role: message.role,
+    text: message.text,
+    createdAt: message.createdAt,
+    jobId: message.jobId,
+    status: message.status,
+    attachments: message.attachments,
+    generatedFiles: message.generatedFiles
+  };
 }
 
 class ServstationHttpError extends Error {
@@ -438,6 +645,27 @@ function isRecoverableHeartbeatError(error: unknown): boolean {
   return (error.status === 400 && message.includes("missing agent instance id"))
     || error.status === 404
     || error.status === 405;
+}
+
+function reverseClientHeartbeatIntervalMs(registration: ReverseRegisterResponse): number {
+  const heartbeatMs = positiveFinite(registration.heartbeatMs);
+  const timeoutMs = positiveFinite(registration.clientHeartbeatTimeoutMs);
+  const interval = Math.min(
+    heartbeatMs ?? 15_000,
+    timeoutMs ? Math.max(1_000, Math.floor(timeoutMs / 2)) : 15_000
+  );
+  return Math.max(1_000, Math.min(30_000, interval));
+}
+
+function connectedAtFor(
+  reverse: ReturnType<ReverseBridgeHost["getConfig"]>["reverse"] | undefined,
+  now: string
+): string {
+  return reverse?.status === "connected" && reverse.connectedAt ? reverse.connectedAt : now;
+}
+
+function positiveFinite(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value) : undefined;
 }
 
 function normalizeBaseUrl(value: string | undefined): string | undefined {

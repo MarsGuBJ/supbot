@@ -10,6 +10,7 @@ let runtime: SupbotRuntime | null = null;
 const servstationMessageEventSubscriptions = new Map<string, AbortController>();
 const isDev = !app.isPackaged;
 const allowedDevServerOrigin = "http://127.0.0.1:5173";
+const appIconPath = join(__dirname, "../../build/icon.ico");
 const productionCsp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'none'";
 let productionCspInstalled = false;
 
@@ -289,6 +290,7 @@ function openOidcLoginWindow(authorizationUrl: string, redirectUri: string, expe
       minWidth: 480,
       minHeight: 620,
       title: "Servstation Sign In",
+      icon: appIconPath,
       backgroundColor: "#ffffff",
       webPreferences: {
         contextIsolation: true,
@@ -440,6 +442,7 @@ async function createWindow(): Promise<void> {
     minHeight: 720,
     backgroundColor: "#0a0f16",
     title: "Supbot",
+    icon: appIconPath,
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
       contextIsolation: true,

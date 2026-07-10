@@ -2766,6 +2766,7 @@ describe("SupbotRuntime", () => {
         if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-reverse-1/a2a-peers/reverse-connections") {
           expect(request.headers["x-tenant-id"]).toBe("tenant-rev");
           const parsed = JSON.parse(body) as Record<string, unknown>;
+          expect(parsed.agentInstanceId).toBe("agent-reverse-1");
           expect(parsed.capabilities).toEqual(["prompt.readOnly"]);
           response.end(JSON.stringify({
             peer: { id: "peer-reverse-1" },
@@ -2786,6 +2787,9 @@ describe("SupbotRuntime", () => {
           return;
         }
         if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-reverse-1/a2a-peers/peer-reverse-1/heartbeat") {
+          const parsed = JSON.parse(body) as Record<string, unknown>;
+          expect(parsed.agentInstanceId).toBe("agent-reverse-1");
+          expect(parsed.peerId).toBe("peer-reverse-1");
           heartbeatPosts += 1;
           response.end(JSON.stringify({ status: "online" }));
           return;
@@ -2860,6 +2864,302 @@ describe("SupbotRuntime", () => {
       closeStream?.();
       await runtime.disconnectServstationReverseBridge();
       await mock.close();
+      await new Promise<void>((resolve, reject) => servstation.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  test("handles Servstation reverse SSE snapshot and transcript requests", async () => {
+    const runtime = await createRuntime();
+    const conversation = await runtime.createConversation("Reverse Supbot history");
+    let eventStream: import("node:http").ServerResponse | undefined;
+    let closeStream: (() => void) | undefined;
+    let heartbeatPosts = 0;
+    const requestResults = new Map<string, Record<string, unknown>>();
+    const servstation = createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        const url = new URL(request.url || "/", "http://127.0.0.1");
+        response.setHeader("Content-Type", "application/json");
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/connect") {
+          response.end(JSON.stringify({ agentInstanceId: "agent-reverse-1" }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-reverse-1/a2a-peers/reverse-connections") {
+          response.end(JSON.stringify({
+            peer: { id: "peer-reverse-1" },
+            streamUrl: "/api/v1/agent/agent-reverse-1/a2a-peers/peer-reverse-1/events",
+            heartbeatMs: 500
+          }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-reverse-1/a2a-peers/peer-reverse-1/events") {
+          response.writeHead(200, {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive"
+          });
+          eventStream = response;
+          closeStream = () => response.end();
+          response.write(`event: heartbeat\ndata: {"ok":true}\n\n`);
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-reverse-1/a2a-peers/peer-reverse-1/heartbeat") {
+          heartbeatPosts += 1;
+          response.end(JSON.stringify({ status: "online" }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname.includes("/requests/") && url.pathname.endsWith("/ack")) {
+          response.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname.includes("/requests/") && url.pathname.endsWith("/result")) {
+          const requestId = url.pathname.split("/requests/")[1]?.split("/")[0] || "";
+          requestResults.set(requestId, JSON.parse(body) as Record<string, unknown>);
+          response.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        response.statusCode = 404;
+        response.end(JSON.stringify({ error: "not found" }));
+      });
+    });
+    await new Promise<void>((resolve) => servstation.listen(0, "127.0.0.1", resolve));
+    const address = servstation.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    await runtime.updateIdentityContext({
+      tenantId: "tenant-rev",
+      organizationId: "org-rev",
+      departmentId: "dept-rev",
+      userId: "user-rev",
+      roleIds: ["user"],
+      source: "servstation",
+      servstationUrl: baseUrl
+    });
+    await runtime.updateServstationA2AConfig({ enabled: true, baseUrl, authMode: "identityHeaders" });
+    try {
+      await runtime.connectServstationReverseBridge();
+      await waitForCondition("reverse stream connected", () => runtime.snapshot().servstationA2A.config.reverse?.status === "connected" && Boolean(eventStream));
+      await waitForCondition("reverse heartbeat posted", () => heartbeatPosts > 0);
+      eventStream!.write([
+        "id: snapshot-1",
+        "event: snapshot_request",
+        `data: ${JSON.stringify({ requestId: "snapshot-1" })}`,
+        "",
+        ""
+      ].join("\n"));
+      await waitForCondition("snapshot request result", () => requestResults.has("snapshot-1"));
+      expect(requestResults.get("snapshot-1")).toMatchObject({
+        status: "completed",
+        result: {
+          conversations: [
+            {
+              id: conversation.id,
+              title: "Reverse Supbot history"
+            }
+          ],
+          activeConversationId: conversation.id
+        }
+      });
+
+      eventStream!.write([
+        "id: transcript-1",
+        "event: transcript_request",
+        `data: ${JSON.stringify({ requestId: "transcript-1", conversationId: conversation.id })}`,
+        "",
+        ""
+      ].join("\n"));
+      await waitForCondition("transcript request result", () => requestResults.has("transcript-1"));
+      expect(requestResults.get("transcript-1")).toMatchObject({
+        status: "completed",
+        result: {
+          conversation: {
+            id: conversation.id,
+            title: "Reverse Supbot history"
+          },
+          messages: []
+        }
+      });
+    } finally {
+      closeStream?.();
+      await runtime.disconnectServstationReverseBridge();
+      await new Promise<void>((resolve, reject) => servstation.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  test("does not report a persisted reverse SSE connection as live on startup", async () => {
+    const { runtime, dataDir, rootDir } = await createRuntimeWithPaths();
+    await runtime.updateIdentityContext({
+      tenantId: "tenant-stale",
+      organizationId: "org-stale",
+      departmentId: "dept-stale",
+      userId: "user-stale",
+      roleIds: ["user"],
+      source: "servstation",
+      servstationUrl: "http://127.0.0.1:9"
+    });
+    await runtime.updateServstationA2AConfig({
+      enabled: true,
+      baseUrl: "http://127.0.0.1:9",
+      authMode: "identityHeaders",
+      reverseEnabled: true,
+      agentInstanceId: "agent-stale-1"
+    });
+    await (runtime as unknown as { updateServstationReverseState(input: Record<string, unknown>): Promise<void> }).updateServstationReverseState({
+      enabled: true,
+      status: "connected",
+      peerId: "peer-stale-1",
+      connectedAt: "2026-01-01T00:00:00.000Z",
+      lastHeartbeatAt: "2026-01-01T00:00:01.000Z"
+    });
+
+    const restarted = new SupbotRuntime(new JsonFileStorage(dataDir), { rootDir });
+    try {
+      await restarted.init();
+      expect(restarted.snapshot().servstationA2A.config.reverse?.status).not.toBe("connected");
+      expect(restarted.snapshot().servstationA2A.config.reverse?.connectedAt).toBeUndefined();
+      expect(restarted.snapshot().servstationA2A.config.reverse?.lastHeartbeatAt).toBeUndefined();
+    } finally {
+      await restarted.disconnectServstationReverseBridge().catch(() => undefined);
+    }
+  });
+
+  test("keeps reverse SSE peers online with proactive client heartbeats", async () => {
+    const runtime = await createRuntime();
+    let eventStream: import("node:http").ServerResponse | undefined;
+    let heartbeatPosts = 0;
+    const servstation = createServer((request, response) => {
+      request.on("data", () => undefined);
+      request.on("end", () => {
+        const url = new URL(request.url || "/", "http://127.0.0.1");
+        response.setHeader("Content-Type", "application/json");
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/connect") {
+          response.end(JSON.stringify({ agentInstanceId: "agent-proactive-1" }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-proactive-1/a2a-peers/reverse-connections") {
+          response.end(JSON.stringify({
+            peer: { id: "peer-proactive-1" },
+            streamUrl: "/api/v1/agent/agent-proactive-1/a2a-peers/peer-proactive-1/events",
+            heartbeatMs: 1_000,
+            clientHeartbeatTimeoutMs: 3_000
+          }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-proactive-1/a2a-peers/peer-proactive-1/events") {
+          response.writeHead(200, {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive"
+          });
+          eventStream = response;
+          response.write(": open\n\n");
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-proactive-1/a2a-peers/peer-proactive-1/heartbeat") {
+          heartbeatPosts += 1;
+          response.end(JSON.stringify({ status: "online" }));
+          return;
+        }
+        response.statusCode = 404;
+        response.end(JSON.stringify({ error: "not found" }));
+      });
+    });
+    await new Promise<void>((resolve) => servstation.listen(0, "127.0.0.1", resolve));
+    const address = servstation.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    await runtime.updateIdentityContext({
+      tenantId: "tenant-proactive",
+      organizationId: "org-proactive",
+      departmentId: "dept-proactive",
+      userId: "user-proactive",
+      roleIds: ["user"],
+      source: "servstation",
+      servstationUrl: baseUrl
+    });
+    await runtime.updateServstationA2AConfig({ enabled: true, baseUrl, authMode: "identityHeaders" });
+    try {
+      await runtime.connectServstationReverseBridge();
+      await waitForCondition("reverse stream connected", () => runtime.snapshot().servstationA2A.config.reverse?.status === "connected" && Boolean(eventStream));
+      await waitForCondition("proactive heartbeat posted", () => heartbeatPosts > 0);
+    } finally {
+      eventStream?.end();
+      await runtime.disconnectServstationReverseBridge();
+      await new Promise<void>((resolve, reject) => servstation.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  test("marks reverse SSE as error when the server reports the peer offline", async () => {
+    const runtime = await createRuntime();
+    let eventStream: import("node:http").ServerResponse | undefined;
+    let heartbeatPosts = 0;
+    const servstation = createServer((request, response) => {
+      request.on("data", () => undefined);
+      request.on("end", () => {
+        const url = new URL(request.url || "/", "http://127.0.0.1");
+        response.setHeader("Content-Type", "application/json");
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/connect") {
+          response.end(JSON.stringify({ agentInstanceId: "agent-offline-1" }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-offline-1/a2a-peers/reverse-connections") {
+          response.end(JSON.stringify({
+            peer: { id: "peer-offline-1" },
+            streamUrl: "/api/v1/agent/agent-offline-1/a2a-peers/peer-offline-1/events",
+            heartbeatMs: 1_000,
+            clientHeartbeatTimeoutMs: 3_000
+          }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-offline-1/a2a-peers/peer-offline-1/events") {
+          response.writeHead(200, {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive"
+          });
+          eventStream = response;
+          response.write(": open\n\n");
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-offline-1/a2a-peers/peer-offline-1/heartbeat") {
+          heartbeatPosts += 1;
+          if (heartbeatPosts > 1) {
+            response.statusCode = 409;
+            response.end(JSON.stringify({ error: "a2a peer is offline", code: "peer_offline" }));
+            return;
+          }
+          response.end(JSON.stringify({ status: "online" }));
+          return;
+        }
+        response.statusCode = 404;
+        response.end(JSON.stringify({ error: "not found" }));
+      });
+    });
+    await new Promise<void>((resolve) => servstation.listen(0, "127.0.0.1", resolve));
+    const address = servstation.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    await runtime.updateIdentityContext({
+      tenantId: "tenant-offline",
+      organizationId: "org-offline",
+      departmentId: "dept-offline",
+      userId: "user-offline",
+      roleIds: ["user"],
+      source: "servstation",
+      servstationUrl: baseUrl
+    });
+    await runtime.updateServstationA2AConfig({ enabled: true, baseUrl, authMode: "identityHeaders" });
+    try {
+      await runtime.connectServstationReverseBridge();
+      await waitForCondition("first heartbeat posted", () => heartbeatPosts === 1);
+      eventStream?.write(`event: heartbeat\ndata: {"ok":true}\n\n`);
+      await waitForCondition("reverse status reflects server offline", () =>
+        runtime.snapshot().servstationA2A.config.reverse?.status === "error" &&
+        runtime.snapshot().servstationA2A.config.reverse?.lastError === "a2a peer is offline"
+      );
+    } finally {
+      eventStream?.end();
+      await runtime.disconnectServstationReverseBridge();
       await new Promise<void>((resolve, reject) => servstation.close((error) => error ? reject(error) : resolve()));
     }
   });
@@ -3689,7 +3989,7 @@ describe("SupbotRuntime", () => {
     }
   });
 
-  test("keeps Servstation reverse SSE connected when deployed heartbeat endpoint is unavailable", async () => {
+  test("keeps reverse SSE connected when deployed heartbeat cannot bind the agent instance", async () => {
     const runtime = await createRuntime();
     let eventStream: import("node:http").ServerResponse | undefined;
     let closeStream: (() => void) | undefined;
@@ -3752,6 +4052,7 @@ describe("SupbotRuntime", () => {
       await waitForCondition("reverse heartbeat attempted", () => heartbeatPosts > 0);
       expect(runtime.snapshot().servstationA2A.config.reverse).toMatchObject({
         status: "connected",
+        lastHeartbeatAt: undefined,
         lastError: undefined
       });
       expect(eventStream).toBeTruthy();
