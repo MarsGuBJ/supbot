@@ -248,6 +248,18 @@ async function main() {
       hasRunMonitor: Boolean(document.querySelector(".autopilot-run-panel")),
       hasRunMonitorCard: Boolean(document.querySelector(".autopilot-run-monitor-card")),
       hasRunSelect: Boolean(document.querySelector(".autopilot-run-monitor-card .autopilot-run-select .ant-select-selector")),
+      hasProfileControl: Boolean(document.querySelector(".autopilot-panel .ant-segmented")),
+      hasBudgetGrid: Boolean(document.querySelector(".autopilot-budget-grid")),
+      hasQualityGrid: Boolean(document.querySelector(".autopilot-quality-grid")),
+      hasHistoryPanel: Boolean(document.querySelector(".autopilot-history-panel")),
+      hasApprovalGate: Boolean(document.querySelector(".autopilot-decision")),
+      hasApprovalDetails: Boolean(document.querySelector(".autopilot-decision-grid")) && document.querySelectorAll(".autopilot-decision-fact").length >= 4 && Boolean(document.querySelector(".autopilot-decision-input")) && Boolean(document.querySelector(".autopilot-decision-comment")) && Boolean(document.querySelector(".autopilot-decision-diff")),
+      hasApprovalHistory: Boolean(document.querySelector(".autopilot-approval-history")),
+      hasReportBand: Boolean(document.querySelector(".autopilot-report-band")),
+      hasOpenReportButton: Boolean(document.querySelector(".autopilot-open-report")),
+      hasWorktreeBand: Boolean(document.querySelector(".autopilot-worktree-band")),
+      hasLoopFacts: Boolean(document.querySelector(".autopilot-run-facts")),
+      hasLoopIpc: typeof window.supbot?.startAutopilotRun === "function" && typeof window.supbot?.decideAutopilotApproval === "function" && typeof window.supbot?.retryAutopilotFromCheckpoint === "function" && typeof window.supbot?.applyAutopilotWorktree === "function" && typeof window.supbot?.discardAutopilotWorktree === "function" && typeof window.supbot?.getAutopilotQualitySummary === "function",
       hasEmptyRunInfo: document.body.innerText.includes("Register a project and start a data run."),
       hasDataSourceControls: Boolean(document.querySelector(".autopilot-source-row, .autopilot-source-kind, .autopilot-source-value, [name='sourceKind'], [name='sourceValue']")),
       hasProjectText: document.body.innerText.includes("Project data runs") || document.body.innerText.includes("DATA AUTOPILOT") || document.body.innerText.includes("项目数据任务"),
@@ -275,7 +287,7 @@ async function main() {
     })()`
   );
   console.log(JSON.stringify({ autopilotClick, autopilotUi, projectModalUi }, null, 2));
-  if (!autopilotClick?.clickedAutopilot || !autopilotUi?.hasPanel || !autopilotUi.hasIcon || !autopilotUi.hasNewProjectButton || autopilotUi.hasInlineProjectForm || !autopilotUi.hasProjectFolderIpc || !autopilotUi.hasRunMonitor || !autopilotUi.hasRunMonitorCard || !autopilotUi.hasRunSelect || autopilotUi.hasEmptyRunInfo || autopilotUi.hasDataSourceControls || !autopilotUi.hasProjectText || !autopilotUi.hasStartRunText || !projectModalUi?.hasModal || !projectModalUi.hasFolderPicker || !projectModalUi.hasFolderButton || !projectModalUi.hasRegisterText) {
+  if (!autopilotClick?.clickedAutopilot || !autopilotUi?.hasPanel || !autopilotUi.hasIcon || !autopilotUi.hasNewProjectButton || autopilotUi.hasInlineProjectForm || !autopilotUi.hasProjectFolderIpc || !autopilotUi.hasRunMonitor || !autopilotUi.hasRunMonitorCard || !autopilotUi.hasRunSelect || !autopilotUi.hasProfileControl || !autopilotUi.hasBudgetGrid || !autopilotUi.hasQualityGrid || !autopilotUi.hasHistoryPanel || !autopilotUi.hasApprovalGate || !autopilotUi.hasApprovalDetails || !autopilotUi.hasApprovalHistory || !autopilotUi.hasReportBand || !autopilotUi.hasOpenReportButton || !autopilotUi.hasWorktreeBand || !autopilotUi.hasLoopFacts || !autopilotUi.hasLoopIpc || autopilotUi.hasEmptyRunInfo || autopilotUi.hasDataSourceControls || !autopilotUi.hasProjectText || !autopilotUi.hasStartRunText || !projectModalUi?.hasModal || !projectModalUi.hasFolderPicker || !projectModalUi.hasFolderButton || !projectModalUi.hasRegisterText) {
     throw new Error(`Autopilot panel did not render correctly: ${JSON.stringify({ autopilotClick, autopilotUi, projectModalUi })}`);
   }
   const memoryClick = await evaluate(
@@ -469,6 +481,55 @@ async function main() {
   }
   if (!deleteMemory?.clicked || memoryRecordsAfterDelete >= deleteMemory.before) {
     throw new Error("Memory delete action did not remove a memory record.");
+  }
+  const autopilotApprovalAudit = await evaluate(
+    page.webSocketDebuggerUrl,
+    `(() => {
+      const autopilotTab = document.querySelector('#rc-tabs-0-tab-autopilot') ||
+        [...document.querySelectorAll('.activity-panel [role="tab"]')].find((el) => el.textContent?.includes("Autopilot") || el.textContent?.includes("鑷姩椹鹃┒"));
+      autopilotTab?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      return new Promise((resolve) => {
+        window.setTimeout(() => {
+          const textarea = document.querySelector(".autopilot-decision-comment");
+          const approve = document.querySelector(".autopilot-decision button.ant-btn-primary");
+          const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+          if (!textarea || !approve || !setValue) {
+            resolve({ clicked: false, hasTab: Boolean(autopilotTab), hasTextarea: Boolean(textarea), hasApprove: Boolean(approve) });
+            return;
+          }
+          setValue.call(textarea, "smoke approval comment");
+          textarea.dispatchEvent(new Event("input", { bubbles: true }));
+          approve.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+          let attempts = 0;
+          const poll = async () => {
+            attempts += 1;
+            const snapshot = await window.supbot.snapshot();
+            const event = snapshot.autopilotEvents.find((item) => item.runId === "aprun_smoke" && item.message === "Autopilot approval granted");
+            const pendingDecision = snapshot.autopilotRuns.find((item) => item.id === "aprun_smoke")?.pendingDecision?.id;
+            const historyText = document.querySelector(".autopilot-approval-history")?.textContent || "";
+            const historyHasComment = historyText.includes("smoke approval comment");
+            if ((event && !pendingDecision && historyHasComment) || attempts > 30) {
+              resolve({
+                clicked: true,
+                attempts,
+                eventMessage: event?.message,
+                eventComment: event?.data?.comment,
+                pendingDecision,
+                historyHasComment,
+                historyText: historyText.slice(0, 240)
+              });
+              return;
+            }
+            window.setTimeout(poll, 100);
+          };
+          void poll();
+        }, 150);
+      });
+    })()`
+  );
+  console.log(JSON.stringify({ autopilotApprovalAudit }, null, 2));
+  if (!autopilotApprovalAudit?.clicked || autopilotApprovalAudit.eventComment !== "smoke approval comment" || autopilotApprovalAudit.pendingDecision || !autopilotApprovalAudit.historyHasComment) {
+    throw new Error(`Autopilot approval comment did not reach the audit log: ${JSON.stringify(autopilotApprovalAudit)}`);
   }
   const configClick = await evaluate(
     page.webSocketDebuggerUrl,
@@ -793,6 +854,13 @@ function seedSmokeState(userDataDir, smokeMcpServerPath) {
   const ruleId = "rule_smoke";
   const memoryFactId = "mem_fact_smoke";
   const memoryPageId = "mem_page_smoke";
+  const projectRoot = path.join(userDataDir, "smoke-project");
+  const worktreePath = path.join(userDataDir, "smoke-worktree");
+  const reportPath = path.join(projectRoot, "reports", "autopilot-aprun_smoke-summary.md");
+  fs.mkdirSync(path.join(projectRoot, ".supbot", "runs", "aprun_smoke"), { recursive: true });
+  fs.mkdirSync(path.join(projectRoot, "reports"), { recursive: true });
+  fs.mkdirSync(worktreePath, { recursive: true });
+  fs.writeFileSync(reportPath, "# Smoke Autopilot Summary\n\n## Approval History\n- Pending smoke audit.\n", "utf8");
   fs.writeFileSync(path.join(dataDir, "state.json"), `${JSON.stringify({
     agentName: "Supbot Local Agent",
     modelConfig: {
@@ -861,6 +929,71 @@ function seedSmokeState(userDataDir, smokeMcpServerPath) {
       progress: ["Shell: pending_permission"]
     }],
     scheduledJobs: [],
+    projects: [{
+      id: "project_smoke",
+      name: "Smoke project",
+      rootPath: projectRoot,
+      metadataPath: path.join(projectRoot, ".supbot", "project.json"),
+      status: "active",
+      createdAt: now,
+      updatedAt: now
+    }],
+    autopilotRuns: [{
+      schemaVersion: 2,
+      id: "aprun_smoke",
+      projectId: "project_smoke",
+      projectRoot,
+      title: "Smoke loop engineering run",
+      goal: "Verify the Loop Engineering monitor",
+      goalSpec: { objective: "Verify the Loop Engineering monitor", deliverables: ["Visible monitor"], acceptanceCriteria: ["Budget and approval are visible"] },
+      profile: "coding",
+      resolvedProfile: "coding",
+      plan: { version: 2, profile: "coding", summary: "Smoke structured plan", taskIds: ["aptask_smoke"], createdAt: now, updatedAt: now },
+      status: "waiting_approval",
+      currentStage: "execute",
+      writePolicy: { mode: "projectSandbox", allowedWriteRoots: ["."], allowNetwork: false, allowMcp: false, maxRuntimeMinutes: 30, maxTasks: 8, maxRetries: 1 },
+      budget: { limits: { maxRuntimeMinutes: 30, maxIterations: 8, maxTasks: 8, maxModelTurns: 40, maxToolCalls: 60 }, usage: { iterations: 2, modelTurns: 6, toolCalls: 4, totalTokens: 1200, startedAt: now } },
+      loopIteration: 2,
+      noProgressCount: 0,
+      pendingDecision: { id: "apdecision_smoke", kind: "direct_write", title: "Approve smoke action", summary: "Review the impact before continuing.", risk: "high", impact: ["README.md"], rollbackPlan: "Restore the checkpoint backup.", input: { path: "README.md", contentPreview: "smoke" }, createdAt: now },
+      worktreeId: "wt_smoke",
+      dataSources: [],
+      taskIds: ["aptask_smoke"],
+      artifactIds: [],
+      checkpointIds: [],
+      evidence: [],
+      reportPath,
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now
+    }],
+    autopilotTasks: [{
+      id: "aptask_smoke",
+      runId: "aprun_smoke",
+      projectId: "project_smoke",
+      stage: "execute",
+      kind: "modify",
+      dependsOn: [],
+      risk: "medium",
+      allowedTools: ["ReadFile", "WriteFile", "Shell"],
+      validators: [],
+      staffAgent: "builder",
+      title: "Smoke implementation task",
+      prompt: "Exercise the monitor",
+      status: "running",
+      attempts: 1,
+      maxAttempts: 2,
+      artifactIds: [],
+      evidence: [],
+      actionFingerprints: [],
+      createdAt: now,
+      updatedAt: now
+    }],
+    autopilotEvents: [{ id: "apevent_smoke", runId: "aprun_smoke", projectId: "project_smoke", level: "info", message: "Smoke loop event", createdAt: now }],
+    autopilotCheckpoints: [],
+    autopilotActions: [{ id: "apaction_smoke", runId: "aprun_smoke", taskId: "aptask_smoke", fingerprint: "smoke", toolName: "ReadFile", status: "completed", retrySafety: "safe", inputSummary: "README.md", createdAt: now, updatedAt: now }],
+    dataArtifacts: [],
+    worktrees: [{ id: "wt_smoke", taskId: "aprun_smoke", jobId: "aprun_smoke", conversationId: "autopilot_aprun_smoke", baseRef: "HEAD", branchName: "supbot/smoke", rootPath: projectRoot, path: worktreePath, status: "completed", diffStatus: "dirty", diffSummary: { worktreeId: "wt_smoke", changedFiles: ["README.md"], summary: "1 file changed" }, createdAt: now, updatedAt: now, completedAt: now }],
     pendingToolPermissions: [{
       id: "perm_smoke",
       jobId,

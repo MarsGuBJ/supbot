@@ -1,0 +1,32 @@
+name: Verify
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      AUTOPILOT_BENCHMARK_REPORT: artifacts/autopilot-benchmark.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run verify
+      - name: Upload Autopilot benchmark report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autopilot-benchmark
+          path: artifacts/autopilot-benchmark.json
+          if-no-files-found: warn

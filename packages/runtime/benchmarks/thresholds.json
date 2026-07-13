@@ -1,0 +1,8 @@
+{
+  "minTaskCompletionRate": 0.9,
+  "minVerificationPassRate": 0.9,
+  "maxToolFailureRate": 0.3,
+  "maxRepeatedActionRate": 0.3,
+  "maxDurationMs": 300000,
+  "maxRegressionDelta": 0.2
+}

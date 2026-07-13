@@ -1,0 +1,33 @@
+{
+  "name": "data-success",
+  "run": {
+    "id": "bench-success",
+    "resolvedProfile": "data",
+    "status": "completed",
+    "createdAt": "2026-07-13T00:00:00.000Z",
+    "startedAt": "2026-07-13T00:00:01.000Z",
+    "finishedAt": "2026-07-13T00:01:01.000Z",
+    "updatedAt": "2026-07-13T00:01:01.000Z",
+    "loopIteration": 2,
+    "plan": { "version": 1 },
+    "budget": { "usage": { "iterations": 2, "modelTurns": 4, "toolCalls": 3, "totalTokens": 900 } }
+  },
+  "tasks": [
+    { "id": "task-1", "status": "completed", "attempts": 1, "lastEvaluation": { "passed": true } },
+    { "id": "task-2", "status": "completed", "attempts": 1, "lastEvaluation": { "passed": true } }
+  ],
+  "actions": [
+    { "id": "action-1", "fingerprint": "read", "status": "completed" },
+    { "id": "action-2", "fingerprint": "write", "status": "completed" },
+    { "id": "action-3", "fingerprint": "verify", "status": "completed" }
+  ],
+  "events": [],
+  "expect": {
+    "taskCompletionRate": 1,
+    "firstPass": true,
+    "toolFailureRate": 0,
+    "repeatedActionRate": 0,
+    "verificationPassRate": 1,
+    "planRevisions": 0
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "name": "coding-retry-and-approval",
+  "run": {
+    "id": "bench-retry",
+    "resolvedProfile": "coding",
+    "status": "completed",
+    "createdAt": "2026-07-13T00:00:00.000Z",
+    "startedAt": "2026-07-13T00:00:01.000Z",
+    "finishedAt": "2026-07-13T00:03:01.000Z",
+    "updatedAt": "2026-07-13T00:03:01.000Z",
+    "loopIteration": 4,
+    "plan": { "version": 3 },
+    "budget": { "usage": { "iterations": 4, "modelTurns": 8, "toolCalls": 4, "totalTokens": 2200 } }
+  },
+  "tasks": [
+    { "id": "task-1", "status": "completed", "attempts": 2, "lastEvaluation": { "passed": true } }
+  ],
+  "actions": [
+    { "id": "action-1", "fingerprint": "write-readme", "status": "completed" },
+    { "id": "action-2", "fingerprint": "write-readme", "status": "completed" },
+    { "id": "action-3", "fingerprint": "verify", "status": "failed" },
+    { "id": "action-4", "fingerprint": "verify-fixed", "status": "completed" }
+  ],
+  "events": [
+    { "id": "event-1", "message": "Autopilot approval requested" },
+    { "id": "event-2", "message": "Autopilot approval granted" },
+    { "id": "event-3", "message": "Autopilot recovered after restart" },
+    { "id": "event-4", "message": "Autopilot no-progress detector stopped a prior cycle" }
+  ],
+  "expect": {
+    "taskCompletionRate": 1,
+    "firstPass": false,
+    "toolFailureRate": 0.25,
+    "repeatedActionRate": 0.25,
+    "verificationPassRate": 1,
+    "planRevisions": 2,
+    "approvalsRequested": 1,
+    "approvalsGranted": 1,
+    "recoveryCount": 1,
+    "noProgressStops": 1
+  }
+}

@@ -18,7 +18,9 @@
     "build": "npm run build:renderer && npm run build:main",
     "build:renderer": "vite build",
     "build:main": "esbuild src/main/index.ts src/preload/index.ts --bundle --platform=node --target=node22 --format=cjs --outdir=dist --external:electron",
-    "dev": "npm run build:main && concurrently -k \"vite --host 127.0.0.1\" \"cross-env SUPBOT_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "dev": "npm run build:main && node scripts/dev-electron.cjs",
+    "dev:probe": "node scripts/dev-electron.cjs --probe",
+    "test:dev-port": "node scripts/dev-port-smoke.cjs",
     "start": "electron .",
     "dist:win": "electron-builder --win nsis",
     "dist:linux": "electron-builder --linux AppImage deb"
@@ -51,6 +53,7 @@
     },
     "files": [
       "dist/**/*",
+      "build/supbot-icon.ico",
       "package.json"
     ],
     "extraMetadata": {
@@ -60,7 +63,7 @@
       "target": [
         "nsis"
       ],
-      "icon": "build/icon.ico",
+      "icon": "build/supbot-icon.ico",
       "requestedExecutionLevel": "asInvoker",
       "verifyUpdateCodeSignature": false,
       "signtoolOptions": {
