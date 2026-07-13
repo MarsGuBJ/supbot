@@ -1,4 +1,4 @@
-# Supbot Runtime 4.2
+# Supbot Runtime 4.3
 
 Supbot runtime is organized around `SupbotRuntime` as the desktop-facing facade and `QueryEngine` as the per-turn execution core. The facade owns IPC-compatible state, jobs, snapshots, scheduled jobs, memory management, and local slash command compatibility. QueryEngine owns the agent turn lifecycle: context assembly, local memory recall, model loop, transcript writing, compact boundaries, runtime events, and final result accounting.
 
@@ -43,6 +43,20 @@ Uninstall removes the local package directory, the market capability, and any MC
 `PermissionPolicy` supports `default`, `acceptEdits`, `bypassPermissions`, and `plan` modes, plus session rules with `allow`, `deny`, or `ask` behavior. Rules match by tool name or `*`.
 
 Dangerous tool calls create `PendingToolPermission` records unless mode/rules allow or deny them directly. Desktop IPC can approve or deny once. Timeouts and denials are written back as tool errors so the model can continue with a safer plan.
+
+## Autopilot Loop Engine
+
+Autopilot 4.3 is a general project loop rather than a fixed data pipeline. `auto`, `coding`, `research`, `data`, `document`, and `generic` profiles produce dependency-ordered structured plans. The supervisor advances through explicit analyzing, planning, execution, verification, replanning, approval, and terminal states.
+
+Every run owns wall-clock, iteration, task, model-turn, and tool-call budgets. Deterministic validators check artifacts, structured files, repository commands, builds, and tests before the semantic goal review. Repeated evaluation fingerprints without new artifacts or action results trigger the no-progress stop condition.
+
+Autopilot tool contexts enforce task allowlists plus network and MCP policy. Reads, approved project writes, internal agents, and recognized verification commands can run automatically. Unknown shell commands, MCP calls, direct non-Git code writes, and uncertain external actions enter an explicit approval state. After restart, any in-flight non-safe action is restored as a recovery approval instead of being retried automatically.
+
+Coding profiles use a project-scoped Git worktree when possible. A completed run leaves a verified diff for explicit apply or discard; apply is rejected until the run and worktree are both completed. Non-Git projects require direct-write approval, and `WriteFile` preserves original content under the run backup directory before editing.
+
+Run state is persisted atomically under `.supbot/runs/<runId>/state.json`. Events and tool actions are appended to `events.jsonl` and `actions.jsonl`; the global runtime state keeps summaries for snapshots and backward compatibility. Legacy data runs are normalized to schema version 2 and resume from a paused checkpoint after restart.
+
+Each snapshot also includes per-run metrics and an aggregate quality summary. Historical comparison uses the previous run of the same resolved profile, applies configurable completion, verification, tool-failure, repeated-action, duration, and regression-delta thresholds, and aggregates terminal task failure categories. `npm run benchmark:autopilot` evaluates fixture expectations and the thresholds in `packages/runtime/benchmarks/thresholds.json`, returning a non-zero exit code on regression. The benchmark can write a versioned JSON report with `--output <path>` or `AUTOPILOT_BENCHMARK_REPORT`; the Windows verification workflow uploads that report as a CI artifact.
 
 ## Transcript, Compact, And Memory
 

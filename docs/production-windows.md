@@ -33,7 +33,7 @@ Memory backups are written under `data/memory-backups`. Restore tests should cov
 
 Renderer code runs with `contextIsolation`, `sandbox`, `webSecurity`, and `nodeIntegration: false`. Production builds reject `SUPBOT_DEV_SERVER_URL`, block external navigation/window creation, and deny renderer permission requests.
 
-IPC handlers validate arguments in the main process. `file:open` only opens paths Supbot created, imported, tracks as a worktree, or stores under the app data directory.
+IPC handlers validate arguments in the main process. `file:open` only opens paths Supbot created, imported, tracks as a worktree, records as a data artifact or Autopilot summary report, or stores under the app data directory.
 
 Dangerous tools (`WriteFile`, `Shell`, `Agent`, and MCP tools) must pass through permission policy. Slash commands follow the same rule: `/read` is direct, while `/write` and `/shell` require approval unless an explicit rule allows them.
 
