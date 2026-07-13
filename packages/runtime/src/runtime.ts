@@ -1872,6 +1872,7 @@ export class SupbotRuntime extends EventEmitter {
         apiKey: this.state.modelSecret,
         personality: this.state.personality,
         subagent,
+        capabilities: this.state.capabilities,
         messages: this.findConversation(conversation.id)?.messages.filter((message) => message.id !== assistantSeed.id) || [],
         compactBoundaries: this.state.compactBoundaries,
         memory: this.state.memory,
@@ -2264,6 +2265,7 @@ export class SupbotRuntime extends EventEmitter {
       apiKey: this.state.modelSecret,
       personality: this.state.personality,
       subagent: staff,
+      capabilities: this.state.capabilities,
       messages: [{
         id: randomId("msg"),
         conversationId: `autopilot_${run.id}`,
@@ -2729,6 +2731,7 @@ export class SupbotRuntime extends EventEmitter {
           modelConfig: this.state.modelConfig,
           apiKey: this.state.modelSecret,
           personality: this.state.personality,
+          capabilities: this.state.capabilities,
           subagents: this.state.subagents,
           compactBoundaries: this.state.compactBoundaries,
           memory: this.state.memory,

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, test } from "vitest";
 import { JsonFileStorage, MemoryManager, OpenAIChatCompletionsAdapter, normalizeChatCompletionsUrl, resolveMentionedSubagent, SupbotRuntime, ToolExecutor, ToolRegistry, TranscriptStore } from "../src";
+import { queryLoop } from "../src/queryLoop";
 import { normalizeMarketApiUrl } from "../src/toolMarket";
 import { defaultModelConfig } from "@supbot/shared";
 
@@ -324,6 +325,67 @@ describe("model client helpers", () => {
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
+  });
+
+  test("treats max-turn artifact creation as completed", async () => {
+    const controller = new AbortController();
+    const modelResult = {
+      text: "",
+      toolCalls: [{
+        id: "call_artifact",
+        type: "function" as const,
+        function: { name: "Shell", arguments: JSON.stringify({ command: "create deck" }) }
+      }]
+    };
+    const result = await queryLoop({
+      jobId: "job_artifact",
+      conversationId: "conv_artifact",
+      messages: [{ role: "user", content: "create a pptx" }],
+      model: {
+        complete: async () => modelResult,
+        stream: async function* () {
+          yield { type: "done" as const, result: modelResult };
+          return modelResult;
+        }
+      },
+      modelRequest: {
+        modelConfig: defaultModelConfig,
+        tools: [],
+        signal: controller.signal
+      },
+      registry: new ToolRegistry([{
+        name: "Shell",
+        description: "fake shell",
+        risk: "read",
+        concurrency: "exclusive",
+        interruptBehavior: "cancel",
+        parameters: {
+          type: "object",
+          properties: { command: { type: "string" } },
+          required: ["command"],
+          additionalProperties: false
+        },
+        summarize: () => "fake shell",
+        execute: async () => ({ text: "PPT saved to: C:\\Users\\me\\Desktop\\deck.pptx" })
+      }]),
+      toolContext: {
+        signal: controller.signal,
+        host: {
+          dataDir: tempDirs[tempDirs.length - 1] || tmpdir(),
+          workspacePath: tempDirs[tempDirs.length - 1] || tmpdir(),
+          randomId: (prefix: string) => `${prefix}_test`,
+          nowIso: () => new Date().toISOString()
+        },
+        subagents: [],
+        runSubagent: async () => ({ text: "unused" })
+      },
+      permissionMode: "bypassPermissions",
+      permissionRules: [],
+      maxTurns: 1,
+      requestPermission: async () => "approved",
+      onEvent: () => undefined
+    });
+    expect(result.text).toContain("PPT saved to");
   });
 });
 
@@ -778,6 +840,28 @@ describe("SupbotRuntime", () => {
     await runtime.uninstallToolMarketProduct("planner-subagent-kit");
     await expect(readFile(join(skillDir, "SKILL.md"), "utf8")).rejects.toThrow();
     await expect(readFile(join(pluginDir, ".codex-plugin", "plugin.json"), "utf8")).rejects.toThrow();
+  });
+
+  test("injects relevant enabled skill instructions into model context", async () => {
+    const runtime = await createRuntime();
+    await runtime.installToolMarketProduct("document-skills");
+    const mock = await withMockModel(runtime, (body) => {
+      const parsed = JSON.parse(body);
+      const system = parsed.messages.find((message: { role: string }) => message.role === "system")?.content || "";
+      expect(system).toContain("Tool calling rules:");
+      expect(system).toContain("<installed_skills>");
+      expect(system).toContain("Document Skills");
+      expect(system).toContain("path=");
+      return { choices: [{ message: { content: "Skill context received." } }] };
+    });
+    try {
+      const result = await runtime.sendPrompt({ prompt: "create a presentation deck" });
+      await waitForJob(runtime, result.job.id);
+      const assistant = runtime.snapshot().conversations.find((item) => item.id === result.conversation.id)?.messages.find((item) => item.role === "assistant");
+      expect(assistant?.text).toBe("Skill context received.");
+    } finally {
+      await mock.close();
+    }
   });
 
   test("saves remote tool market config while redacting the access token", async () => {
@@ -1575,6 +1659,43 @@ describe("SupbotRuntime", () => {
       expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe("denied");
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  test("feeds malformed tool call JSON back as a focused correction", async () => {
+    const runtime = await createRuntime();
+    const mock = await withMockModel(runtime, (body, call) => {
+      if (call === 1) {
+        return {
+          choices: [{
+            message: {
+              content: null,
+              tool_calls: [{
+                id: "call_write_malformed",
+                type: "function",
+                function: { name: "WriteFile", arguments: "{\"path\":\"generate_ppt.py\",\"content\":\"print(1)" }
+              }]
+            }
+          }]
+        };
+      }
+      const parsed = JSON.parse(body);
+      const toolMessage = parsed.messages.find((message: { role: string }) => message.role === "tool")?.content || "";
+      expect(toolMessage).toContain("Tool arguments for WriteFile must be valid JSON");
+      expect(toolMessage).toContain("Expected shape");
+      return { choices: [{ message: { content: "I will retry with valid JSON." } }] };
+    });
+    try {
+      const result = await runtime.sendPrompt({ prompt: "write a generated script" });
+      await waitForJob(runtime, result.job.id);
+      expect(runtime.snapshot().pendingToolPermissions).toHaveLength(0);
+      const record = runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0];
+      expect(record?.status).toBe("failed");
+      expect(record?.error).toContain("valid JSON");
+      const assistant = runtime.snapshot().conversations.find((item) => item.id === result.conversation.id)?.messages.find((item) => item.role === "assistant");
+      expect(assistant?.text).toBe("I will retry with valid JSON.");
+    } finally {
+      await mock.close();
     }
   });
 

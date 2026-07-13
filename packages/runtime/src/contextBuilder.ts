@@ -59,9 +59,21 @@ function buildSystemPrompt(input: ContextBuilderInput): string {
     input.personality.summary,
     input.personality.traits.length ? `Traits: ${input.personality.traits.join(", ")}` : "",
     input.personality.instructions,
+    toolUseGuidance(),
     "You may call tools when they help. Explain tool outcomes concisely after they complete. If a tool is denied, adjust your answer without repeating the same request.",
     systemContext ? `<system_context>\n${systemContext}\n</system_context>` : ""
   ].filter(Boolean).join("\n");
+}
+
+function toolUseGuidance(): string {
+  return [
+    "Tool calling rules:",
+    "- Tool arguments must be exactly one complete JSON object matching the tool schema. Do not send raw text, markdown fences, comments, placeholders, or partial JSON.",
+    "- WriteFile paths must be relative workspace paths unless the user explicitly provided an allowed project path. Never use placeholder paths such as /path/to/file.",
+    "- WriteFile cannot save directly outside the workspace. To place a final artifact on the Desktop or another external location, create scripts/assets in the workspace, then use Shell to generate or copy the final file to the requested location.",
+    "- For large artifacts, prefer a short script plus Shell execution over embedding a large generated file in WriteFile content.",
+    "- On Windows, Shell runs PowerShell."
+  ].join("\n");
 }
 
 function toOpenAiMessage(message: ChatMessage): OpenAiMessage {

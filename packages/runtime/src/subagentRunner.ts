@@ -1,5 +1,6 @@
 import type {
   AgentLoopTrace,
+  CapabilityDefinition,
   ChatMessage,
   CompactBoundary,
   GeneratedFile,
@@ -26,6 +27,7 @@ export interface SubagentRunnerHost {
   modelConfig: ModelConfig;
   apiKey?: string;
   personality: PersonalityConfig;
+  capabilities: CapabilityDefinition[];
   subagents: SubagentConfig[];
   compactBoundaries: CompactBoundary[];
   memory: MemorySnapshot;
@@ -93,6 +95,7 @@ export class SubagentRunner {
         apiKey: this.host.apiKey,
         personality: this.host.personality,
         subagent,
+        capabilities: this.host.capabilities,
         messages: subMessages,
         compactBoundaries: this.host.compactBoundaries,
         memory: this.host.memory,

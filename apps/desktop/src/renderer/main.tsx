@@ -141,6 +141,7 @@ import "./styles.css";
 type WorkspaceView = "chat" | "server" | "config" | "market";
 type DetailPanel = "memory" | "schedule" | "autopilot" | null;
 type Translator = (key: string, vars?: Record<string, string | number>) => string;
+type SelectionContextMenu = { x: number; y: number; text: string };
 const defaultToolMarketApiUrl = "https://i-shu.com";
 const defaultBotstationBaseUrl = "http://localhost:8081";
 const defaultBotstationIssuerUrl = "http://localhost:8092";
@@ -414,6 +415,24 @@ function App() {
     await refresh();
   };
 
+  const approveToolPermission = useCallback(async (id: string) => {
+    try {
+      await window.supbot.approveToolPermission(id);
+      await refresh();
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    }
+  }, [messageApi, refresh]);
+
+  const denyToolPermission = useCallback(async (id: string) => {
+    try {
+      await window.supbot.denyToolPermission(id);
+      await refresh();
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    }
+  }, [messageApi, refresh]);
+
   const pickAttachments = async () => {
     const picked = await window.supbot.pickAttachments();
     setAttachments((items) => [...items, ...picked]);
@@ -428,6 +447,36 @@ function App() {
     await navigator.clipboard.writeText(latest.text);
     messageApi.success(t("Copied latest response."));
   };
+
+  const copySelectedText = useCallback(async (text: string) => {
+    try {
+      await writeClipboardText(text);
+      messageApi.success(t("已复制选中文本。"));
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    }
+  }, [messageApi, t]);
+
+  const addSelectedTextToMemory = useCallback(async (text: string) => {
+    const content = text.trim();
+    if (!content) {
+      return;
+    }
+    try {
+      await window.supbot.addMemory({
+        type: "fact",
+        scope: "global",
+        title: selectionMemoryTitle(content),
+        content,
+        source: "chat-selection",
+        kind: "fact"
+      });
+      messageApi.success(t("Memory saved."));
+      await refresh();
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    }
+  }, [messageApi, refresh, t]);
 
   const compactActiveConversation = useCallback(async () => {
     if (!activeConversation) {
@@ -507,17 +556,22 @@ function App() {
               setAttachments={setAttachments}
               sending={sending}
               runningJob={runningJob}
+              pendingToolPermissions={snapshot.pendingToolPermissions}
+              approveToolPermission={approveToolPermission}
+              denyToolPermission={denyToolPermission}
               send={send}
               stopRunning={stopRunning}
               pickAttachments={pickAttachments}
               copyLatest={copyLatest}
+              copySelectedText={copySelectedText}
+              addSelectedTextToMemory={addSelectedTextToMemory}
               compactConversation={compactActiveConversation}
               loadTranscript={loadActiveTranscript}
-            scrollRef={scrollRef}
-            messageStackRef={messageStackRef}
-            onMessageScroll={updateMessageStickiness}
-            t={t}
-            slashCommands={slashCommandList}
+              scrollRef={scrollRef}
+              messageStackRef={messageStackRef}
+              onMessageScroll={updateMessageStickiness}
+              t={t}
+              slashCommands={slashCommandList}
             />
             <RightPanel
               snapshot={snapshot}
@@ -3096,6 +3150,58 @@ function numberField(record: Record<string, unknown> | undefined, key: string): 
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+function nodeInside(container: HTMLElement, node: Node | null): boolean {
+  return Boolean(node && (node === container || container.contains(node)));
+}
+
+function selectedTextWithin(container: HTMLElement): string {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || !nodeInside(container, selection.anchorNode) || !nodeInside(container, selection.focusNode)) {
+    return "";
+  }
+  return selection.toString().trim();
+}
+
+function selectionMemoryTitle(text: string): string {
+  const firstLine = text.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "Chat selection";
+  const compact = firstLine.replace(/\s+/g, " ");
+  return compact.length > 60 ? `${compact.slice(0, 57)}...` : compact;
+}
+
+function copyTextFallback(text: string): void {
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
+  document.body.appendChild(textarea);
+  try {
+    textarea.focus();
+    textarea.select();
+    const copied = document.execCommand("copy");
+    if (!copied) {
+      throw new Error("Copy failed.");
+    }
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
+async function writeClipboardText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall through to the textarea path for older or restricted Electron clipboard contexts.
+    }
+  }
+  copyTextFallback(text);
+}
+
 function ChatPanel({
   conversation,
   prompt,
@@ -3104,10 +3210,15 @@ function ChatPanel({
   setAttachments,
   sending,
   runningJob,
+  pendingToolPermissions,
+  approveToolPermission,
+  denyToolPermission,
   send,
   stopRunning,
   pickAttachments,
   copyLatest,
+  copySelectedText,
+  addSelectedTextToMemory,
   compactConversation,
   loadTranscript,
   scrollRef,
@@ -3123,10 +3234,15 @@ function ChatPanel({
   setAttachments: React.Dispatch<React.SetStateAction<Attachment[]>>;
   sending: boolean;
   runningJob?: AgentJob;
+  pendingToolPermissions: PendingToolPermission[];
+  approveToolPermission: (id: string) => Promise<void>;
+  denyToolPermission: (id: string) => Promise<void>;
   send: () => void;
   stopRunning: () => void;
   pickAttachments: () => void;
   copyLatest: () => void;
+  copySelectedText: (text: string) => Promise<void>;
+  addSelectedTextToMemory: (text: string) => Promise<void>;
   compactConversation: () => void;
   loadTranscript: () => void;
   scrollRef: React.RefObject<HTMLDivElement>;
@@ -3135,6 +3251,9 @@ function ChatPanel({
   t: (key: string, vars?: Record<string, string | number>) => string;
   slashCommands: ReturnType<typeof buildSlashCommands>;
 }) {
+  const selectionMenuRef = useRef<HTMLDivElement | null>(null);
+  const [selectionMenu, setSelectionMenu] = useState<SelectionContextMenu | null>(null);
+  const [selectionAction, setSelectionAction] = useState<"copy" | "memory" | null>(null);
   const filteredCommands = useMemo(() => {
     if (!prompt.startsWith("/")) {
       return [];
@@ -3142,6 +3261,89 @@ function ChatPanel({
     const query = prompt.trim().toLowerCase();
     return slashCommands.filter((item) => item.command.startsWith(query));
   }, [prompt, slashCommands]);
+  const composerPermissions = useMemo(() => {
+    const conversationId = conversation?.id || "";
+    return pendingToolPermissions.filter((permission) => {
+      if (conversationId && permission.conversationId === conversationId) {
+        return true;
+      }
+      if (runningJob && (permission.jobId === runningJob.id || permission.jobId.startsWith(`${runningJob.id}:`))) {
+        return true;
+      }
+      return !conversationId;
+    });
+  }, [conversation?.id, pendingToolPermissions, runningJob]);
+
+  const closeSelectionMenu = useCallback(() => setSelectionMenu(null), []);
+
+  const openSelectionMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const text = selectedTextWithin(event.currentTarget);
+    if (!text) {
+      setSelectionMenu(null);
+      return;
+    }
+    event.preventDefault();
+    const menuWidth = 176;
+    const menuHeight = 92;
+    setSelectionMenu({
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
+      text
+    });
+  }, []);
+
+  const handleMessageScroll = useCallback(() => {
+    closeSelectionMenu();
+    onMessageScroll();
+  }, [closeSelectionMenu, onMessageScroll]);
+
+  const runSelectionAction = useCallback(async (action: "copy" | "memory") => {
+    if (!selectionMenu) {
+      return;
+    }
+    setSelectionAction(action);
+    try {
+      if (action === "copy") {
+        await copySelectedText(selectionMenu.text);
+      } else {
+        await addSelectedTextToMemory(selectionMenu.text);
+      }
+      closeSelectionMenu();
+    } finally {
+      setSelectionAction(null);
+    }
+  }, [addSelectedTextToMemory, closeSelectionMenu, copySelectedText, selectionMenu]);
+
+  useEffect(() => {
+    if (!selectionMenu) {
+      return;
+    }
+    const onPointerDown = (event: PointerEvent) => {
+      if (selectionMenuRef.current?.contains(event.target as Node)) {
+        return;
+      }
+      closeSelectionMenu();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeSelectionMenu();
+      }
+    };
+    const onSelectionChange = () => {
+      const stream = scrollRef.current;
+      if (!stream || !selectedTextWithin(stream)) {
+        closeSelectionMenu();
+      }
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    document.addEventListener("selectionchange", onSelectionChange);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("selectionchange", onSelectionChange);
+    };
+  }, [closeSelectionMenu, scrollRef, selectionMenu]);
 
   useEffect(() => {
     const stream = scrollRef.current;
@@ -3179,7 +3381,7 @@ function ChatPanel({
           {runningJob ? <Tag color="cyan"><ClockCircleOutlined /> {statusLabel(runningJob.status, t)}</Tag> : <Tag color="green"><CheckCircleOutlined /> {t("Ready")}</Tag>}
         </Space>
       </div>
-      <div className="message-stream" ref={scrollRef} onScroll={onMessageScroll}>
+      <div className="message-stream" ref={scrollRef} onScroll={handleMessageScroll} onContextMenu={openSelectionMenu}>
         <div className="message-stack" ref={messageStackRef}>
           {!conversation || conversation.messages.length === 0 ? (
             <div className="chat-empty">
@@ -3190,7 +3392,43 @@ function ChatPanel({
           ) : conversation.messages.map((item) => <MessageBubble key={item.id} message={item} t={t} />)}
         </div>
       </div>
+      {selectionMenu ? (
+        <div
+          ref={selectionMenuRef}
+          className="selection-context-menu"
+          style={{ left: selectionMenu.x, top: selectionMenu.y }}
+          role="menu"
+          aria-label={t("选中文本操作")}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            disabled={Boolean(selectionAction)}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => void runSelectionAction("copy")}
+          >
+            <CopyOutlined />
+            <span>{t("复制")}</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={Boolean(selectionAction)}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => void runSelectionAction("memory")}
+          >
+            <StarOutlined />
+            <span>{t("加入记忆")}</span>
+          </button>
+        </div>
+      ) : null}
       <div className="composer">
+        <ComposerPermissionPrompt
+          permissions={composerPermissions}
+          approveToolPermission={approveToolPermission}
+          denyToolPermission={denyToolPermission}
+          t={t}
+        />
         {attachments.length ? (
           <div className="attachment-row">
             {attachments.map((attachment) => (
@@ -3248,6 +3486,76 @@ function ChatPanel({
         </div>
       </div>
     </section>
+  );
+}
+
+function ComposerPermissionPrompt({
+  permissions,
+  approveToolPermission,
+  denyToolPermission,
+  t
+}: {
+  permissions: PendingToolPermission[];
+  approveToolPermission: (id: string) => Promise<void>;
+  denyToolPermission: (id: string) => Promise<void>;
+  t: (key: string, vars?: Record<string, string | number>) => string;
+}) {
+  const [actingId, setActingId] = useState("");
+  if (!permissions.length) {
+    return null;
+  }
+  const run = async (id: string, action: (id: string) => Promise<void>) => {
+    setActingId(id);
+    try {
+      await action(id);
+    } finally {
+      setActingId("");
+    }
+  };
+  return (
+    <div className="composer-permission-popover" role="dialog" aria-live="assertive" aria-label={t("Tool approvals")}>
+      <div className="composer-permission-head">
+        <div>
+          <div className="eyebrow">{t("pending_permission")}</div>
+          <strong>{t("Tool approvals")}</strong>
+        </div>
+        <Tag color="gold">{permissions.length}</Tag>
+      </div>
+      <div className="composer-permission-list">
+        {permissions.map((permission) => (
+          <div className="composer-permission-card" key={permission.id}>
+            <div className="composer-permission-copy">
+              <div className="composer-permission-title">
+                <ToolOutlined />
+                <strong>{permission.toolName}</strong>
+              </div>
+              <span>{permission.summary}</span>
+              {permission.executionPath ? <small className="muted mono">{permission.executionPath}</small> : null}
+            </div>
+            <Space wrap>
+              <Button
+                size="small"
+                type="primary"
+                loading={actingId === permission.id}
+                disabled={Boolean(actingId) && actingId !== permission.id}
+                onClick={() => void run(permission.id, approveToolPermission)}
+              >
+                {t("Allow once")}
+              </Button>
+              <Button
+                size="small"
+                danger
+                loading={actingId === permission.id}
+                disabled={Boolean(actingId) && actingId !== permission.id}
+                onClick={() => void run(permission.id, denyToolPermission)}
+              >
+                {t("Deny")}
+              </Button>
+            </Space>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

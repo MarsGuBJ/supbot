@@ -41,7 +41,7 @@ export class ToolExecutor {
       jobId: input.jobId,
       conversationId: input.conversationId,
       toolName,
-      input: parsedInput,
+      input: parsedInput.value,
       status: "running",
       createdAt: now,
       updatedAt: now
@@ -55,11 +55,16 @@ export class ToolExecutor {
       await emit({ status: "failed", error: `Unknown tool: ${requestedToolName}` });
       return { record, toolResultText: `Error: ${record.error}`, generatedFiles };
     }
+    if (parsedInput.error) {
+      const message = invalidToolArgumentsMessage(tool.name, parsedInput.error);
+      await emit({ status: "failed", error: message });
+      return { record, toolResultText: `Error: ${message}`, generatedFiles };
+    }
     if (tool.validationError) {
       await emit({ status: "failed", error: tool.validationError });
       return { record, toolResultText: `Error: ${tool.validationError}`, generatedFiles };
     }
-    const validationError = validateToolInput(parsedInput, tool.parameters);
+    const validationError = validateToolInput(parsedInput.value, tool.parameters);
     if (validationError) {
       await emit({ status: "failed", error: validationError });
       return { record, toolResultText: `Error: ${validationError}`, generatedFiles };
@@ -69,7 +74,7 @@ export class ToolExecutor {
       await emit({ status: "denied", error: message });
       return { record, toolResultText: `Error: ${message}`, generatedFiles };
     }
-    const projectBoundaryError = validateProjectBoundary(tool, parsedInput, input.context);
+    const projectBoundaryError = validateProjectBoundary(tool, parsedInput.value, input.context);
     if (projectBoundaryError) {
       await emit({ status: "denied", error: projectBoundaryError });
       return { record, toolResultText: `Error: ${projectBoundaryError}`, generatedFiles };
@@ -95,7 +100,7 @@ export class ToolExecutor {
       conversationId: input.conversationId,
       toolCallId: record.id,
       tool,
-      input: parsedInput,
+      input: parsedInput.value,
       nowIso
     });
     if (decision.behavior === "deny") {
@@ -125,7 +130,7 @@ export class ToolExecutor {
     }
 
     try {
-      const result = await tool.execute(parsedInput, executionContext);
+      const result = await tool.execute(parsedInput.value, executionContext);
       generatedFiles.push(...(result.generatedFiles || []));
       await emit({
         status: "completed",
@@ -142,15 +147,37 @@ export class ToolExecutor {
   }
 }
 
-function parseToolArguments(raw: string): unknown {
+interface ParsedToolArguments {
+  value: unknown;
+  error?: string;
+}
+
+function parseToolArguments(raw: string): ParsedToolArguments {
   if (!raw.trim()) {
-    return {};
+    return { value: {} };
   }
   try {
-    return JSON.parse(raw);
-  } catch {
-    return { raw };
+    return { value: JSON.parse(raw) };
+  } catch (error) {
+    return {
+      value: { raw: truncateRawToolArguments(raw) },
+      error: (error as Error).message
+    };
   }
+}
+
+function invalidToolArgumentsMessage(toolName: string, parseError: string): string {
+  const example = toolName === "WriteFile"
+    ? ' Expected shape: {"path":"relative-file-name","content":"complete UTF-8 text"}.'
+    : toolName === "Shell"
+      ? ' Expected shape: {"command":"PowerShell or shell command","timeoutMs":120000}. timeoutMs is optional.'
+      : "";
+  return `Tool arguments for ${toolName} must be valid JSON. Send exactly one complete JSON object matching the tool schema; do not send raw text, markdown, placeholders, or partial JSON.${example} JSON parse error: ${parseError}`;
+}
+
+function truncateRawToolArguments(raw: string): string {
+  const maxLength = 8_000;
+  return raw.length <= maxLength ? raw : `${raw.slice(0, maxLength)}\n\n[truncated ${raw.length - maxLength} chars]`;
 }
 
 function validateToolInput(input: unknown, schema: { type: string; properties: Record<string, unknown>; required?: string[]; additionalProperties?: boolean }): string | undefined {

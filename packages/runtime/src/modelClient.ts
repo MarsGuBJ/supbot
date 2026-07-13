@@ -38,6 +38,8 @@ export interface GenerateAgentTurnInput {
   signal?: AbortSignal;
 }
 
+const TOOL_REQUEST_MIN_MAX_TOKENS = 4096;
+
 export async function generateReply(input: GenerateReplyInput): Promise<GenerateReplyResult> {
   const context = buildContext(input);
   return generateAgentTurn({
@@ -81,7 +83,7 @@ export async function generateAgentTurn(input: GenerateAgentTurnInput): Promise<
   const body: Record<string, unknown> = {
     model: input.modelConfig.model,
     temperature: input.modelConfig.temperature,
-    max_tokens: input.modelConfig.maxTokens,
+    max_tokens: input.tools?.length ? Math.max(input.modelConfig.maxTokens, TOOL_REQUEST_MIN_MAX_TOKENS) : input.modelConfig.maxTokens,
     messages: input.messages
   };
   if (input.tools?.length) {

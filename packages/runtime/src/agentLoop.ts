@@ -41,7 +41,7 @@ export interface AgentLoopResult {
 }
 
 export async function runAgentLoop(input: AgentLoopInput): Promise<AgentLoopResult> {
-  const maxTurns = input.maxTurns ?? 12;
+  const maxTurns = input.maxTurns ?? 32;
   const context = buildContext({
     personality: input.personality,
     subagent: input.subagent,

@@ -48,6 +48,8 @@ type ToolCallAccumulator = {
   };
 };
 
+const TOOL_REQUEST_MIN_MAX_TOKENS = 4096;
+
 export class OpenAIChatCompletionsAdapter implements ModelAdapter {
   async complete(input: ModelTurnRequest): Promise<ModelTurnResult> {
     const apiKey = normalizeModelApiKey(input.apiKey);
@@ -180,7 +182,7 @@ function chatCompletionsBody(input: ModelTurnRequest): Record<string, unknown> {
   const body: Record<string, unknown> = {
     model: input.modelConfig.model,
     temperature: input.modelConfig.temperature,
-    max_tokens: input.modelConfig.maxTokens,
+    max_tokens: effectiveMaxTokens(input),
     messages: input.messages
   };
   if (input.tools?.length) {
@@ -188,6 +190,13 @@ function chatCompletionsBody(input: ModelTurnRequest): Record<string, unknown> {
     body.tool_choice = "auto";
   }
   return body;
+}
+
+function effectiveMaxTokens(input: ModelTurnRequest): number {
+  if (!input.tools?.length) {
+    return input.modelConfig.maxTokens;
+  }
+  return Math.max(input.modelConfig.maxTokens, TOOL_REQUEST_MIN_MAX_TOKENS);
 }
 
 async function* completeAsStream(adapter: OpenAIChatCompletionsAdapter, input: ModelTurnRequest): AsyncGenerator<ModelStreamEvent, ModelTurnResult, unknown> {

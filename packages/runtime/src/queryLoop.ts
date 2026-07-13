@@ -45,7 +45,7 @@ export interface QueryLoopResult {
 }
 
 export async function queryLoop(input: QueryLoopInput): Promise<QueryLoopResult> {
-  const maxTurns = input.maxTurns ?? 12;
+  const maxTurns = input.maxTurns ?? 32;
   const messages = [...input.messages];
   const trace: AgentLoopTrace = {
     jobId: input.jobId,
@@ -107,6 +107,11 @@ export async function queryLoop(input: QueryLoopInput): Promise<QueryLoopResult>
         });
         await emit(input, events, { type: "tool_result", record: envelope.record });
       }
+    }
+    const artifactCompletionText = artifactCompletionFromTrace(trace);
+    if (artifactCompletionText) {
+      await emit(input, events, { type: "turn_complete", text: artifactCompletionText, trace, generatedFiles });
+      return { text: artifactCompletionText, trace, generatedFiles, events };
     }
     throw new Error(`Agent loop reached maxTurns (${maxTurns}) before producing a final answer.`);
   } catch (error) {
@@ -174,6 +179,27 @@ async function executeOne(toolCall: AdapterToolCall, input: QueryLoopInput, exec
 
 function upsertRecord(records: ToolCallRecord[], record: ToolCallRecord): ToolCallRecord[] {
   return [...records.filter((item) => item.id !== record.id), record];
+}
+
+function artifactCompletionFromTrace(trace: AgentLoopTrace): string | undefined {
+  const completedOutputs = [...trace.toolCalls]
+    .reverse()
+    .filter((record) => record.status === "completed" && record.output?.trim())
+    .map((record) => record.output || "");
+  for (const output of completedOutputs) {
+    const summary = artifactSummaryLine(output);
+    if (summary) {
+      return `Completed. ${summary}`;
+    }
+  }
+  return undefined;
+}
+
+function artifactSummaryLine(output: string): string | undefined {
+  const artifactExtension = /\.(pptx|docx|xlsx|pdf|csv|tsv|txt|md|html|png|jpe?g|webp)\b/i;
+  const lines = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  return lines.find((line) => /(saved to|wrote|created|copied|fullpath|path|name)/i.test(line) && artifactExtension.test(line))
+    || lines.find((line) => artifactExtension.test(line) && /[\\/]/.test(line));
 }
 
 async function emit(input: QueryLoopInput, events: RuntimeEventRecord[], event: QueryLoopEvent): Promise<void> {

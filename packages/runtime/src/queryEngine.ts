@@ -1,5 +1,6 @@
 import type {
   AgentLoopTrace,
+  CapabilityDefinition,
   ChatMessage,
   CompactBoundary,
   GeneratedFile,
@@ -34,6 +35,7 @@ export interface QueryEngineInput {
   apiKey?: string;
   personality: PersonalityConfig;
   subagent?: SubagentConfig;
+  capabilities: CapabilityDefinition[];
   messages: ChatMessage[];
   compactBoundaries: CompactBoundary[];
   memory: MemorySnapshot;
@@ -204,6 +206,7 @@ export class QueryEngine {
       cwd: this.input.cwd,
       personality: this.input.personality,
       subagent: this.input.subagent,
+      capabilities: this.input.capabilities,
       messages: this.input.messages,
       compactBoundaries: compactBoundary ? [compactBoundary, ...this.input.compactBoundaries] : this.input.compactBoundaries,
       memoryBlock: recall.block,

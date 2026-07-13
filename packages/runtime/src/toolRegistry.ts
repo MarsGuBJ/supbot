@@ -144,7 +144,8 @@ export function defaultToolDefinitions(): ToolDefinition[] {
       parameters: {
         type: "object",
         properties: {
-          command: { type: "string", description: "Command to execute." }
+          command: { type: "string", description: "Command to execute." },
+          timeoutMs: { type: "number", description: "Optional timeout in milliseconds, between 1000 and 300000." }
         },
         required: ["command"],
         additionalProperties: false
@@ -155,7 +156,12 @@ export function defaultToolDefinitions(): ToolDefinition[] {
       },
       async execute(input, context) {
         const parsed = objectInput(input);
-        return shellLocalCommand(requiredString(parsed.command, "command"), context.signal, context.host.shellTimeoutMs, context.host.cwd || context.host.workspacePath);
+        return shellLocalCommand(
+          requiredString(parsed.command, "command"),
+          context.signal,
+          normalizeTimeoutMs(parsed.timeoutMs, context.host.shellTimeoutMs),
+          context.host.cwd || context.host.workspacePath
+        );
       }
     },
     {
@@ -202,4 +208,11 @@ function requiredString(value: unknown, label: string): string {
     throw new Error(`${label} is required.`);
   }
   return value;
+}
+
+function normalizeTimeoutMs(value: unknown, fallback = 60_000): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(1_000, Math.min(300_000, Math.round(value)));
 }
