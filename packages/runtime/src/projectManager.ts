@@ -65,13 +65,12 @@ export class ProjectManager {
 
   defaultWritePolicy(overrides: Partial<AutopilotWritePolicy> = {}): AutopilotWritePolicy {
     return {
-      ...overrides,
       mode: "projectSandbox",
-      allowNetwork: true,
-      allowMcp: true,
-      maxRuntimeMinutes: 120,
-      maxTasks: 16,
-      maxRetries: 1,
+      allowNetwork: overrides.allowNetwork ?? true,
+      allowMcp: overrides.allowMcp ?? true,
+      maxRuntimeMinutes: positive(overrides.maxRuntimeMinutes, 120),
+      maxTasks: positive(overrides.maxTasks, 16),
+      maxRetries: nonNegative(overrides.maxRetries, 1),
       allowedWriteRoots: normalizeAllowedWriteRoots(overrides.allowedWriteRoots || projectSandboxRoots)
     };
   }
@@ -141,4 +140,12 @@ function requiredString(value: unknown, label: string): string {
     throw new Error(`${label} is required.`);
   }
   return value;
+}
+
+function positive(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value) : fallback;
+}
+
+function nonNegative(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.round(value) : fallback;
 }

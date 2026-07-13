@@ -28,15 +28,16 @@ export class WorktreeManager {
     return this.worktrees.find((item) => item.id === id);
   }
 
-  async createForJob(input: { jobId: string; conversationId: string }): Promise<TaskWorktree> {
-    await ensureGitWorktreeReady(this.host.rootDir);
+  async createForJob(input: { jobId: string; conversationId: string; rootDir?: string }): Promise<TaskWorktree> {
+    const rootDir = resolve(input.rootDir || this.host.rootDir);
+    await ensureGitWorktreeReady(rootDir);
     const now = this.host.nowIso();
     const id = this.host.randomId("wt");
     const safeJobId = slug(input.jobId);
     const branchName = `supbot/${safeJobId}-${id}`;
     const path = join(this.host.dataDir, "worktrees", `${safeJobId}-${id}`);
     await mkdir(dirname(path), { recursive: true });
-    const baseRef = (await runGit(this.host.rootDir, ["rev-parse", "--short", "HEAD"])).stdout.trim() || "HEAD";
+    const baseRef = (await runGit(rootDir, ["rev-parse", "--short", "HEAD"])).stdout.trim() || "HEAD";
     let worktree: TaskWorktree = {
       id,
       taskId: input.jobId,
@@ -44,6 +45,7 @@ export class WorktreeManager {
       conversationId: input.conversationId,
       baseRef,
       branchName,
+      rootPath: rootDir,
       path,
       status: "creating",
       diffStatus: "unavailable",
@@ -53,7 +55,7 @@ export class WorktreeManager {
     this.upsert(worktree);
     await this.emit("Worktree creating", worktree);
     try {
-      await runGit(this.host.rootDir, ["worktree", "add", "-b", branchName, path, "HEAD"]);
+      await runGit(rootDir, ["worktree", "add", "-b", branchName, path, "HEAD"]);
       worktree = { ...worktree, status: "active", updatedAt: this.host.nowIso() };
       this.upsert(worktree);
       await this.emit("Worktree active", worktree);
@@ -130,7 +132,7 @@ export class WorktreeManager {
     const current = this.require(id);
     const diff = await this.getDiff(id, true);
     if (diff.patch?.trim()) {
-      await runGit(this.host.rootDir, ["apply", "-"], diff.patch);
+      await runGit(current.rootPath || this.host.rootDir, ["apply", "-"], diff.patch);
     }
     const next: TaskWorktree = {
       ...current,
@@ -167,11 +169,12 @@ export class WorktreeManager {
     if (!target.startsWith(root)) {
       throw new Error(`Refusing to remove worktree outside runtime data dir: ${target}`);
     }
-    await runGit(this.host.rootDir, ["worktree", "remove", "--force", worktree.path]).catch(async () => {
+    const rootPath = worktree.rootPath || this.host.rootDir;
+    await runGit(rootPath, ["worktree", "remove", "--force", worktree.path]).catch(async () => {
       await rm(worktree.path, { recursive: true, force: true });
-      await runGit(this.host.rootDir, ["worktree", "prune"]).catch(() => undefined);
+      await runGit(rootPath, ["worktree", "prune"]).catch(() => undefined);
     });
-    await runGit(this.host.rootDir, ["branch", "-D", worktree.branchName]).catch(() => undefined);
+    await runGit(rootPath, ["branch", "-D", worktree.branchName]).catch(() => undefined);
   }
 
   private require(id: string): TaskWorktree {

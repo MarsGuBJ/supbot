@@ -1,5 +1,8 @@
 export { generateReply, normalizeChatCompletionsUrl } from "./modelClient";
 export { AutopilotOrchestrator } from "./autopilotOrchestrator";
+export { calculateAutopilotMetrics, summarizeAutopilotQuality, DEFAULT_AUTOPILOT_QUALITY_THRESHOLDS } from "./autopilotMetrics";
+export { autopilotBudgetExceeded, canTransitionAutopilot, classifyAutopilotFailure, createAutopilotBudget, createAutopilotGoalSpec, progressFingerprint, resolveAutopilotProfile, validateAutopilotPlan } from "./autopilotLoop";
+export { AutopilotRunStore } from "./autopilotRunStore";
 export { JsonFileStorage, createInitialState, type RuntimeState, type StorageAdapter } from "./storage";
 export { ensureRuntimeDirs, redactModelConfig, redactToolMarketConfig, resolveMentionedSubagent, SupbotRuntime } from "./runtime";
 export { ContextManager } from "./contextManager";

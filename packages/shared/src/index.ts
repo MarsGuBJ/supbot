@@ -304,6 +304,7 @@ export interface TaskWorktree {
   conversationId: string;
   baseRef: string;
   branchName: string;
+  rootPath?: string;
   path: string;
   status: TaskWorktreeStatus;
   diffStatus: WorktreeDiffStatus;
@@ -1144,6 +1145,11 @@ export interface AgentLoopTrace {
   conversationId: string;
   turns: number;
   toolCalls: ToolCallRecord[];
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+  };
   startedAt: string;
   updatedAt: string;
 }
@@ -1324,7 +1330,205 @@ export interface DataSourceSpec {
 
 export type DataArtifactKind = "raw" | "processed" | "analysis" | "report" | "output";
 
-export type AutopilotStage = "clarify" | "inventory" | "collect" | "process" | "analyze" | "report" | "review";
+export type AutopilotProfile = "auto" | "coding" | "research" | "data" | "document" | "generic";
+
+export type AutopilotStage =
+  | "clarify"
+  | "inventory"
+  | "collect"
+  | "process"
+  | "analyze"
+  | "report"
+  | "review"
+  | "plan"
+  | "execute"
+  | "verify"
+  | "replan";
+
+export type AutopilotTaskKind = "inspect" | "collect" | "modify" | "analyze" | "produce" | "verify" | "review";
+
+export type AutopilotRiskLevel = "low" | "medium" | "high";
+
+export type AutopilotFailureCategory =
+  | "transient"
+  | "invalid_input"
+  | "validation"
+  | "permission"
+  | "budget"
+  | "no_progress"
+  | "external_side_effect"
+  | "unrecoverable";
+
+export type AutopilotValidatorKind = "artifact_exists" | "json_parse" | "csv_parse" | "command" | "model_review";
+
+export interface AutopilotValidatorSpec {
+  id: string;
+  kind: AutopilotValidatorKind;
+  label: string;
+  path?: string;
+  command?: string;
+  criterion?: string;
+  required: boolean;
+}
+
+export interface AutopilotValidationCheck {
+  validatorId: string;
+  label: string;
+  passed: boolean;
+  deterministic: boolean;
+  evidence?: string;
+  error?: string;
+}
+
+export interface AutopilotEvaluation {
+  passed: boolean;
+  checks: AutopilotValidationCheck[];
+  violations: string[];
+  evidence: string[];
+  fingerprint: string;
+  evaluatedAt: string;
+}
+
+export interface AutopilotGoalSpec {
+  objective: string;
+  deliverables: string[];
+  acceptanceCriteria: string[];
+}
+
+export interface AutopilotPlan {
+  version: number;
+  profile: Exclude<AutopilotProfile, "auto">;
+  summary: string;
+  taskIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AutopilotBudgetLimits {
+  maxRuntimeMinutes: number;
+  maxIterations: number;
+  maxTasks: number;
+  maxModelTurns: number;
+  maxToolCalls: number;
+}
+
+export interface AutopilotBudgetUsage {
+  iterations: number;
+  modelTurns: number;
+  toolCalls: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  startedAt?: string;
+  deadlineAt?: string;
+}
+
+export interface AutopilotBudget {
+  limits: AutopilotBudgetLimits;
+  usage: AutopilotBudgetUsage;
+}
+
+export interface AutopilotPendingDecision {
+  id: string;
+  kind: "plan" | "tool" | "direct_write" | "external_side_effect" | "recovery";
+  title: string;
+  summary: string;
+  risk: AutopilotRiskLevel;
+  impact: string[];
+  rollbackPlan?: string;
+  taskId?: string;
+  toolName?: string;
+  input?: unknown;
+  createdAt: string;
+}
+
+export interface AutopilotApprovalDecisionInput {
+  runId: string;
+  decisionId: string;
+  decision: "approved" | "denied";
+  comment?: string;
+}
+
+export interface AutopilotActionRecord {
+  id: string;
+  runId: string;
+  taskId: string;
+  fingerprint: string;
+  toolName: string;
+  status: "started" | "completed" | "failed" | "denied";
+  retrySafety: "safe" | "confirm" | "never";
+  durationMs?: number;
+  inputSummary: string;
+  outputSummary?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AutopilotRunMetrics {
+  runId: string;
+  outcome: AutopilotRunStatus;
+  profile?: Exclude<AutopilotProfile, "auto">;
+  startedAt?: string;
+  finishedAt?: string;
+  durationMs: number;
+  taskCount: number;
+  completedTaskCount: number;
+  failedTaskCount: number;
+  blockedTaskCount: number;
+  taskCompletionRate: number;
+  firstPass: boolean;
+  iterations: number;
+  planRevisions: number;
+  modelTurns: number;
+  toolCalls: number;
+  toolFailureRate: number;
+  repeatedActionRate: number;
+  verificationPassRate: number;
+  approvalsRequested: number;
+  approvalsGranted: number;
+  approvalsDenied: number;
+  recoveryCount: number;
+  noProgressStops: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+}
+
+export type AutopilotQualityMetric = "taskCompletionRate" | "verificationPassRate" | "toolFailureRate" | "repeatedActionRate" | "durationMs";
+
+export interface AutopilotQualityThresholds {
+  minTaskCompletionRate: number;
+  minVerificationPassRate: number;
+  maxToolFailureRate: number;
+  maxRepeatedActionRate: number;
+  maxDurationMs?: number;
+  maxRegressionDelta: number;
+}
+
+export interface AutopilotQualityRegression {
+  metric: AutopilotQualityMetric;
+  actual: number;
+  baseline?: number;
+  threshold?: number;
+  source: "threshold" | "baseline";
+  message: string;
+}
+
+export interface AutopilotQualitySummary {
+  runCount: number;
+  terminalRunCount: number;
+  completedRunCount: number;
+  successRate: number;
+  averageTaskCompletionRate: number;
+  averageVerificationPassRate: number;
+  averageToolFailureRate: number;
+  averageDurationMs: number;
+  latestRunId?: string;
+  baselineRunId?: string;
+  regressions: AutopilotQualityRegression[];
+  failureCategories: Partial<Record<AutopilotFailureCategory, number>>;
+}
 
 export interface DataArtifact {
   id: string;
@@ -1352,7 +1556,22 @@ export interface AutopilotWritePolicy {
   maxRetries: number;
 }
 
-export type AutopilotRunStatus = "queued" | "planning" | "running" | "paused" | "blocked" | "reviewing" | "completed" | "failed" | "canceled";
+export type AutopilotRunStatus =
+  | "queued"
+  | "analyzing"
+  | "planning"
+  | "waiting_approval"
+  | "running"
+  | "verifying"
+  | "replanning"
+  | "paused"
+  | "blocked"
+  | "reviewing"
+  | "completed"
+  | "partially_completed"
+  | "budget_exhausted"
+  | "failed"
+  | "canceled";
 
 export type AutopilotTaskStatus = "queued" | "running" | "completed" | "failed" | "blocked" | "skipped";
 
@@ -1361,6 +1580,11 @@ export interface AutopilotTask {
   runId: string;
   projectId: string;
   stage: AutopilotStage;
+  kind?: AutopilotTaskKind;
+  dependsOn?: string[];
+  risk?: AutopilotRiskLevel;
+  allowedTools?: string[];
+  validators?: AutopilotValidatorSpec[];
   staffAgent: string;
   title: string;
   prompt: string;
@@ -1369,6 +1593,9 @@ export interface AutopilotTask {
   maxAttempts: number;
   artifactIds: string[];
   evidence: string[];
+  actionFingerprints?: string[];
+  failureCategory?: AutopilotFailureCategory;
+  lastEvaluation?: AutopilotEvaluation;
   output?: string;
   error?: string;
   startedAt?: string;
@@ -1386,6 +1613,8 @@ export interface AutopilotCheckpoint {
   summary: string;
   taskIds: string[];
   artifactIds: string[];
+  planVersion?: number;
+  budgetUsage?: AutopilotBudgetUsage;
   createdAt: string;
 }
 
@@ -1401,14 +1630,28 @@ export interface AutopilotEvent {
 }
 
 export interface AutopilotRun {
+  schemaVersion?: 2;
   id: string;
   projectId: string;
   projectRoot: string;
   title: string;
   goal: string;
+  goalSpec?: AutopilotGoalSpec;
+  profile?: AutopilotProfile;
+  resolvedProfile?: Exclude<AutopilotProfile, "auto">;
+  plan?: AutopilotPlan;
   status: AutopilotRunStatus;
   currentStage?: AutopilotStage;
   writePolicy: AutopilotWritePolicy;
+  budget?: AutopilotBudget;
+  loopIteration?: number;
+  noProgressCount?: number;
+  lastProgressFingerprint?: string;
+  lastEvaluation?: AutopilotEvaluation;
+  pendingDecision?: AutopilotPendingDecision;
+  worktreeId?: string;
+  directWriteApproved?: boolean;
+  planApproved?: boolean;
   dataSources: DataSourceSpec[];
   taskIds: string[];
   artifactIds: string[];
@@ -1430,6 +1673,18 @@ export interface AutopilotStartDataRunInput {
   writePolicy?: Partial<AutopilotWritePolicy>;
 }
 
+export interface AutopilotStartInput {
+  projectId: string;
+  goal: string;
+  title?: string;
+  profile?: AutopilotProfile;
+  deliverables?: string[];
+  acceptanceCriteria?: string[];
+  dataSources?: DataSourceSpec[];
+  writePolicy?: Partial<AutopilotWritePolicy>;
+  budget?: Partial<AutopilotBudgetLimits>;
+}
+
 export interface AutopilotRunReport {
   run: AutopilotRun;
   project?: Project;
@@ -1437,6 +1692,8 @@ export interface AutopilotRunReport {
   artifacts: DataArtifact[];
   checkpoints: AutopilotCheckpoint[];
   events: AutopilotEvent[];
+  actions?: AutopilotActionRecord[];
+  metrics?: AutopilotRunMetrics;
 }
 
 export interface RuntimeSnapshot {
@@ -1456,6 +1713,9 @@ export interface RuntimeSnapshot {
   autopilotTasks: AutopilotTask[];
   autopilotEvents: AutopilotEvent[];
   autopilotCheckpoints: AutopilotCheckpoint[];
+  autopilotActions: AutopilotActionRecord[];
+  autopilotMetrics: AutopilotRunMetrics[];
+  autopilotQuality: AutopilotQualitySummary;
   dataArtifacts: DataArtifact[];
   pendingToolPermissions: PendingToolPermission[];
   agentLoopTraces: AgentLoopTrace[];

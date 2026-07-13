@@ -27,6 +27,11 @@ export interface ModelTurnRequest {
 export interface ModelTurnResult {
   text: string;
   toolCalls: AdapterToolCall[];
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+  };
 }
 
 export type ModelStreamEvent =
@@ -88,7 +93,7 @@ export class OpenAIChatCompletionsAdapter implements ModelAdapter {
         "content-type": "application/json",
         authorization: `Bearer ${apiKey}`
       },
-      body: JSON.stringify({ ...chatCompletionsBody(input), stream: true }),
+      body: JSON.stringify({ ...chatCompletionsBody(input), stream: true, stream_options: { include_usage: true } }),
       signal: input.signal
     });
     if (!response.ok) {
@@ -116,6 +121,7 @@ export class OpenAIChatCompletionsAdapter implements ModelAdapter {
     let buffer = "";
     let text = "";
     let streamDone = false;
+    let usage: ModelTurnResult["usage"];
 
     while (!streamDone) {
       const { value, done } = await reader.read();
@@ -135,6 +141,9 @@ export class OpenAIChatCompletionsAdapter implements ModelAdapter {
           break;
         }
         const event = parseStreamPayload(payload);
+        if (event?.usage) {
+          usage = normalizeUsage(event.usage);
+        }
         const delta = event?.choices?.[0]?.delta;
         if (!delta) {
           continue;
@@ -156,7 +165,7 @@ export class OpenAIChatCompletionsAdapter implements ModelAdapter {
     if (!text.trim() && !toolCalls.length) {
       throw new Error("Model returned an empty stream.");
     }
-    const result = { text, toolCalls };
+    const result = { text, toolCalls, usage };
     yield { type: "done", result };
     return result;
   }
@@ -166,6 +175,7 @@ function parseChatCompletionJson(json: unknown): ModelTurnResult {
   const parsed = json as {
     choices?: Array<{ message?: { content?: string | null; tool_calls?: AdapterToolCall[] } }>;
     output_text?: string;
+    usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; input_tokens?: number; output_tokens?: number };
   };
   const message = parsed.choices?.[0]?.message;
   const text = parsed.output_text || message?.content || "";
@@ -173,7 +183,7 @@ function parseChatCompletionJson(json: unknown): ModelTurnResult {
   if (!text.trim() && !toolCalls.length) {
     throw new Error("Model returned an empty response.");
   }
-  return { text, toolCalls };
+  return { text, toolCalls, usage: normalizeUsage(parsed.usage) };
 }
 
 function chatCompletionsBody(input: ModelTurnRequest): Record<string, unknown> {
@@ -202,12 +212,23 @@ async function* completeAsStream(adapter: OpenAIChatCompletionsAdapter, input: M
   return result;
 }
 
-function parseStreamPayload(payload: string): { choices?: Array<{ delta?: { content?: string; tool_calls?: StreamToolCallDelta[] } }> } | undefined {
+function parseStreamPayload(payload: string): { choices?: Array<{ delta?: { content?: string; tool_calls?: StreamToolCallDelta[] } }>; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; input_tokens?: number; output_tokens?: number } } | undefined {
   try {
     return JSON.parse(payload) as { choices?: Array<{ delta?: { content?: string; tool_calls?: StreamToolCallDelta[] } }> };
   } catch {
     return undefined;
   }
+}
+
+function normalizeUsage(value: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; input_tokens?: number; output_tokens?: number } | undefined): ModelTurnResult["usage"] {
+  if (!value) {
+    return undefined;
+  }
+  return {
+    inputTokens: value.input_tokens ?? value.prompt_tokens,
+    outputTokens: value.output_tokens ?? value.completion_tokens,
+    totalTokens: value.total_tokens
+  };
 }
 
 interface StreamToolCallDelta {

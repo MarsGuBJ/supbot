@@ -222,7 +222,7 @@ export class QueryEngine {
         modelRequest: {
           modelConfig: this.input.modelConfig,
           apiKey: this.input.apiKey,
-          tools: this.input.registry.toOpenAiTools(),
+          tools: this.input.registry.toOpenAiTools(this.input.toolContext.autopilotPolicy?.allowedTools),
           signal: this.input.signal
         },
         registry: this.input.registry,

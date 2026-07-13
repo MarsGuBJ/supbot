@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { GeneratedFile } from "@supbot/shared";
 import { resolveProjectWriteTarget } from "./projectManager";
@@ -17,6 +17,7 @@ export interface LocalToolHost {
   projectId?: string;
   projectRoot?: string;
   allowedWriteRoots?: string[];
+  backupRoot?: string;
   randomId(prefix: string): string;
   nowIso(): string;
   shellTimeoutMs?: number;
@@ -34,6 +35,9 @@ export async function writeLocalFile(target: string, content: string, host: Loca
   const outputPath = host.projectRoot && host.allowedWriteRoots?.length
     ? resolveProjectWriteTarget(host.projectRoot, target, host.allowedWriteRoots)
     : resolveLocalWritePath(outputRoot, target);
+  if (host.backupRoot && host.projectRoot) {
+    await backupExistingFile(host.projectRoot, outputPath, host.backupRoot);
+  }
   await mkdir(dirname(outputPath), { recursive: true });
   await writeFile(outputPath, content, "utf8");
   const info = await stat(outputPath);
@@ -48,6 +52,26 @@ export async function writeLocalFile(target: string, content: string, host: Loca
     text: `Wrote ${generatedFile.name} (${generatedFile.size} bytes)\n${outputPath}`,
     generatedFiles: [generatedFile]
   };
+}
+
+async function backupExistingFile(projectRoot: string, outputPath: string, backupRoot: string): Promise<void> {
+  try {
+    await access(outputPath);
+  } catch {
+    return;
+  }
+  const relativePath = relative(resolve(projectRoot), resolve(outputPath));
+  if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    throw new Error(`Backup target must stay inside ${projectRoot}.`);
+  }
+  const backupPath = resolve(backupRoot, relativePath);
+  try {
+    await access(backupPath);
+    return;
+  } catch {
+    await mkdir(dirname(backupPath), { recursive: true });
+    await copyFile(outputPath, backupPath);
+  }
 }
 
 function resolveLocalWritePath(outputRoot: string, target: string): string {

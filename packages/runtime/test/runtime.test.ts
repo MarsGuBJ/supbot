@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, test } from "vitest";
-import { JsonFileStorage, MemoryManager, OpenAIChatCompletionsAdapter, normalizeChatCompletionsUrl, resolveMentionedSubagent, SupbotRuntime, ToolExecutor, ToolRegistry, TranscriptStore } from "../src";
+import { autopilotBudgetExceeded, canTransitionAutopilot, createAutopilotBudget, JsonFileStorage, MemoryManager, OpenAIChatCompletionsAdapter, normalizeChatCompletionsUrl, progressFingerprint, resolveAutopilotProfile, resolveMentionedSubagent, SupbotRuntime, ToolExecutor, ToolRegistry, TranscriptStore } from "../src";
 import { normalizeMarketApiUrl } from "../src/toolMarket";
 import { defaultModelConfig } from "@supbot/shared";
 
@@ -1149,6 +1149,379 @@ describe("SupbotRuntime", () => {
     await expect(readFile(join(project.rootPath, "README.md"), "utf8")).rejects.toThrow();
   });
 
+  test("enforces explicit autopilot state transitions and budgets", () => {
+    expect(canTransitionAutopilot("queued", "analyzing")).toBe(true);
+    expect(canTransitionAutopilot("queued", "completed")).toBe(false);
+    expect(canTransitionAutopilot("verifying", "replanning")).toBe(true);
+    const budget = createAutopilotBudget({ maxIterations: 2, maxToolCalls: 3 }, "2026-07-12T00:00:00.000Z");
+    budget.usage.iterations = 2;
+    const run = {
+      budget,
+      taskIds: [],
+      writePolicy: { maxTasks: 8 }
+    } as unknown as import("@supbot/shared").AutopilotRun;
+    expect(autopilotBudgetExceeded(run, true, new Date("2026-07-12T00:01:00.000Z").getTime())).toContain("Iteration");
+    expect(autopilotBudgetExceeded(run, false, new Date("2026-07-12T00:01:00.000Z").getTime())).toBeUndefined();
+    expect(resolveAutopilotProfile("auto", "Fix the failing TypeScript tests")).toBe("coding");
+    expect(resolveAutopilotProfile("auto", "Analyze this CSV dataset")).toBe("data");
+    const baseTask = { id: "task", title: "Implement", status: "completed", attempts: 1, actionFingerprints: ["action"] } as import("@supbot/shared").AutopilotTask;
+    const reviewOne = { id: "review_1", title: "Goal-output alignment review 1", status: "completed", attempts: 1 } as import("@supbot/shared").AutopilotTask;
+    const reviewTwo = { id: "review_2", title: "Goal-output alignment review 2", status: "completed", attempts: 1 } as import("@supbot/shared").AutopilotTask;
+    expect(progressFingerprint([baseTask, reviewOne], ["artifact"], "evaluation")).toBe(progressFingerprint([baseTask, reviewTwo], ["artifact"], "evaluation"));
+  });
+
+  test("blocks network tools when an autopilot task disables network access", async () => {
+    const executor = new ToolExecutor();
+    const registry = new ToolRegistry();
+    const dir = await mkdtemp(join(tmpdir(), "supbot-network-policy-"));
+    tempDirs.push(dir);
+    const result = await executor.execute({
+      jobId: "aprun_policy:task_policy",
+      conversationId: "autopilot_policy",
+      toolCall: {
+        id: "call_network_policy",
+        type: "function",
+        function: { name: "Shell", arguments: JSON.stringify({ command: "curl https://example.com" }) }
+      },
+      registry,
+      context: {
+        signal: new AbortController().signal,
+        workspaceMode: "main",
+        host: { dataDir: dir, workspacePath: dir, cwd: dir, randomId: (prefix) => `${prefix}_test`, nowIso: () => new Date().toISOString() },
+        subagents: [],
+        runSubagent: async () => ({ text: "unused" }),
+        autopilotPolicy: {
+          allowedTools: ["Shell"],
+          allowNetwork: false,
+          allowMcp: false,
+          autoApproveSandboxWrites: true,
+          autoApproveVerificationCommands: true
+        }
+      },
+      permissionMode: "bypassPermissions",
+      permissionRules: [],
+      requestPermission: async () => "approved",
+      onProgress: async () => undefined
+    });
+    expect(result.record.status).toBe("denied");
+    expect(result.record.error).toContain("disabled network access");
+  });
+
+  test("blocks MCP tools when an autopilot task disables MCP access", async () => {
+    const executor = new ToolExecutor();
+    let executed = false;
+    const registry = new ToolRegistry([{
+      name: "mcp.mock.echo",
+      modelName: "mcp__mock__echo",
+      description: "Mock MCP echo",
+      risk: "dangerous",
+      concurrency: "exclusive",
+      interruptBehavior: "block",
+      parameters: {
+        type: "object",
+        properties: { message: { type: "string" } },
+        required: ["message"],
+        additionalProperties: false
+      },
+      summarize: () => "Mock MCP echo",
+      execute: async () => {
+        executed = true;
+        return { text: "should not execute" };
+      }
+    }]);
+    const dir = await mkdtemp(join(tmpdir(), "supbot-mcp-policy-"));
+    tempDirs.push(dir);
+    const result = await executor.execute({
+      jobId: "aprun_policy:task_policy",
+      conversationId: "autopilot_policy",
+      toolCall: {
+        id: "call_mcp_policy",
+        type: "function",
+        function: { name: "mcp__mock__echo", arguments: JSON.stringify({ message: "blocked" }) }
+      },
+      registry,
+      context: {
+        signal: new AbortController().signal,
+        workspaceMode: "main",
+        host: { dataDir: dir, workspacePath: dir, cwd: dir, randomId: (prefix) => `${prefix}_test`, nowIso: () => new Date().toISOString() },
+        subagents: [],
+        runSubagent: async () => ({ text: "unused" }),
+        autopilotPolicy: {
+          allowedTools: ["mcp.*"],
+          allowNetwork: true,
+          allowMcp: false,
+          autoApproveSandboxWrites: true,
+          autoApproveVerificationCommands: true
+        }
+      },
+      permissionMode: "bypassPermissions",
+      permissionRules: [],
+      requestPermission: async () => "approved",
+      onProgress: async () => undefined
+    });
+    expect(result.record.status).toBe("denied");
+    expect(result.record.error).toContain("disabled MCP tools");
+    expect(executed).toBe(false);
+  });
+
+  test("backs up direct Autopilot writes before modifying an existing file", async () => {
+    const executor = new ToolExecutor();
+    const registry = new ToolRegistry();
+    const dir = await mkdtemp(join(tmpdir(), "supbot-direct-backup-"));
+    tempDirs.push(dir);
+    await writeFile(join(dir, "README.md"), "before\n", "utf8");
+    const backupRoot = join(dir, ".supbot", "runs", "aprun_backup", "backups");
+    const result = await executor.execute({
+      jobId: "aprun_backup:task_write",
+      conversationId: "autopilot_backup",
+      toolCall: { id: "call_backup", type: "function", function: { name: "WriteFile", arguments: JSON.stringify({ path: "README.md", content: "after\n" }) } },
+      registry,
+      context: {
+        signal: new AbortController().signal,
+        workspaceMode: "main",
+        projectRoot: dir,
+        allowedWriteRoots: [dir],
+        host: { dataDir: dir, workspacePath: dir, cwd: dir, projectRoot: dir, allowedWriteRoots: [dir], backupRoot, randomId: (prefix) => `${prefix}_backup`, nowIso: () => new Date().toISOString() },
+        subagents: [],
+        runSubagent: async () => ({ text: "unused" }),
+        autopilotPolicy: { allowedTools: ["WriteFile"], allowNetwork: false, allowMcp: false, autoApproveSandboxWrites: true, autoApproveVerificationCommands: false }
+      },
+      permissionMode: "default",
+      permissionRules: [],
+      requestPermission: async () => "approved",
+      onProgress: async () => undefined
+    });
+    expect(result.record.status).toBe("completed");
+    expect(await readFile(join(dir, "README.md"), "utf8")).toBe("after\n");
+    expect(await readFile(join(backupRoot, "README.md"), "utf8")).toBe("before\n");
+  });
+
+  test("creates a general coding plan and requests approval for non-Git direct writes", async () => {
+    const runtime = await createRuntime();
+    const projectDir = await mkdtemp(join(tmpdir(), "supbot-nongit-code-"));
+    tempDirs.push(projectDir);
+    const project = await runtime.createProjectFromFolder({ rootPath: projectDir, name: "Non Git Code" });
+    const run = await runtime.startAutopilotRun({
+      projectId: project.id,
+      profile: "coding",
+      goal: "Implement a small code change and verify it",
+      acceptanceCriteria: ["Repository verification succeeds"],
+      budget: { maxIterations: 8, maxToolCalls: 20 }
+    });
+    await waitForCondition("coding direct-write approval", () => runtime.snapshot().autopilotRuns.find((item) => item.id === run.id)?.status === "waiting_approval");
+    const waiting = runtime.snapshot().autopilotRuns.find((item) => item.id === run.id)!;
+    expect(waiting.resolvedProfile).toBe("coding");
+    expect(waiting.plan?.taskIds.length).toBeGreaterThan(3);
+    expect(waiting.pendingDecision?.kind).toBe("direct_write");
+    expect(runtime.snapshot().autopilotTasks.filter((task) => task.runId === run.id).some((task) => task.validators?.some((validator) => validator.kind === "command"))).toBe(true);
+    await runtime.decideAutopilotApproval({ runId: run.id, decisionId: waiting.pendingDecision!.id, decision: "approved", comment: "allow direct write for smoke audit" });
+    expect(runtime.snapshot().autopilotRuns.find((item) => item.id === run.id)?.directWriteApproved).toBe(true);
+    const approvalEvent = runtime.snapshot().autopilotEvents.find((event) => event.runId === run.id && event.message === "Autopilot approval granted");
+    expect(approvalEvent?.data).toMatchObject({ comment: "allow direct write for smoke audit" });
+    expect(await readFile(join(project.rootPath, ".supbot", "runs", run.id, "events.jsonl"), "utf8")).toContain("allow direct write for smoke audit");
+    await runtime.cancelAutopilotRun(run.id);
+  });
+
+  test("blocks non-Git coding runs when direct-write approval is denied", async () => {
+    const runtime = await createRuntime();
+    const projectDir = await mkdtemp(join(tmpdir(), "supbot-nongit-denied-"));
+    tempDirs.push(projectDir);
+    const project = await runtime.createProjectFromFolder({ rootPath: projectDir, name: "Denied Non Git Code" });
+    const run = await runtime.startAutopilotRun({
+      projectId: project.id,
+      profile: "coding",
+      goal: "Implement a small code change and verify it",
+      acceptanceCriteria: ["Repository verification succeeds"],
+      budget: { maxIterations: 8, maxToolCalls: 20 }
+    });
+    await waitForCondition("coding direct-write denial approval", () => runtime.snapshot().autopilotRuns.find((item) => item.id === run.id)?.status === "waiting_approval");
+    const waiting = runtime.snapshot().autopilotRuns.find((item) => item.id === run.id)!;
+    expect(waiting.pendingDecision?.kind).toBe("direct_write");
+    await runtime.decideAutopilotApproval({ runId: run.id, decisionId: waiting.pendingDecision!.id, decision: "denied", comment: "do not modify this folder" });
+    const blocked = runtime.snapshot().autopilotRuns.find((item) => item.id === run.id)!;
+    expect(blocked.status).toBe("blocked");
+    expect(blocked.directWriteApproved).not.toBe(true);
+    expect(blocked.error).toContain("do not modify this folder");
+    const deniedEvent = runtime.snapshot().autopilotEvents.find((event) => event.runId === run.id && event.message === "Autopilot approval denied");
+    expect(deniedEvent?.data).toMatchObject({ comment: "do not modify this folder" });
+    expect(await readFile(join(project.rootPath, ".supbot", "runs", run.id, "events.jsonl"), "utf8")).toContain("do not modify this folder");
+    expect(runtime.snapshot().autopilotActions.filter((action) => action.runId === run.id)).toHaveLength(0);
+  });
+
+  test("routes ambiguous goals through plan approval before tools execute", async () => {
+    const runtime = await createRuntime();
+    const projectDir = await mkdtemp(join(tmpdir(), "supbot-ambiguous-plan-"));
+    tempDirs.push(projectDir);
+    const project = await runtime.createProjectFromFolder({ rootPath: projectDir, name: "Ambiguous" });
+    const run = await runtime.startAutopilotRun({ projectId: project.id, goal: "do it", profile: "generic" });
+    await waitForCondition("ambiguous plan approval", () => runtime.snapshot().autopilotRuns.find((item) => item.id === run.id)?.status === "waiting_approval");
+    const waiting = runtime.snapshot().autopilotRuns.find((item) => item.id === run.id)!;
+    expect(waiting.pendingDecision?.kind).toBe("plan");
+    expect(runtime.snapshot().autopilotActions.filter((action) => action.runId === run.id)).toHaveLength(0);
+    await runtime.decideAutopilotApproval({ runId: run.id, decisionId: waiting.pendingDecision!.id, decision: "denied" });
+    expect(runtime.snapshot().autopilotRuns.find((item) => item.id === run.id)?.status).toBe("blocked");
+  });
+
+  test("writes approval history into the completed Autopilot summary report", async () => {
+    const runtime = await createRuntime();
+    const projectDir = await mkdtemp(join(tmpdir(), "supbot-approval-report-"));
+    tempDirs.push(projectDir);
+    const project = await runtime.createProjectFromFolder({ rootPath: projectDir, name: "Approval Report" });
+    const mock = await withMockModel(runtime, (body) => {
+      const parsed = JSON.parse(body);
+      const userText = parsed.messages.filter((message: { role: string }) => message.role === "user").at(-1)?.content || "";
+      if (userText.includes("Goal-output alignment review")) {
+        return { choices: [{ message: { content: "PASS\nThe approved plan produced the requested outcome." } }] };
+      }
+      return { choices: [{ message: { content: "Stage complete with recorded evidence." } }] };
+    });
+    try {
+      const run = await runtime.startAutopilotRun({
+        projectId: project.id,
+        profile: "generic",
+        goal: "do it",
+        budget: { maxTasks: 8, maxIterations: 10, maxModelTurns: 40 }
+      });
+      await waitForCondition("generic plan approval", () => runtime.snapshot().autopilotRuns.find((item) => item.id === run.id)?.status === "waiting_approval");
+      const waiting = runtime.snapshot().autopilotRuns.find((item) => item.id === run.id)!;
+      expect(waiting.pendingDecision?.kind).toBe("plan");
+      await runtime.decideAutopilotApproval({
+        runId: run.id,
+        decisionId: waiting.pendingDecision!.id,
+        decision: "approved",
+        comment: "approved after clarifying the smoke scope"
+      });
+      await waitForAutopilotRun(runtime, run.id);
+      const completed = runtime.snapshot().autopilotRuns.find((item) => item.id === run.id)!;
+      expect(completed.status).toBe("completed");
+      expect(runtime.isKnownSafePath(completed.reportPath!)).toBe(true);
+      const report = await readFile(completed.reportPath!, "utf8");
+      expect(report).toContain("## Approval History");
+      expect(report).toContain("Approved");
+      expect(report).toContain("Approve Autopilot plan");
+      expect(report).toContain("Type: plan");
+      expect(report).toContain("Risk: high");
+      expect(report).toContain("approved after clarifying the smoke scope");
+    } finally {
+      await mock.close();
+    }
+  });
+
+  test("runs coding autopilot inside a project-scoped Git worktree", async () => {
+    const { runtime, rootDir } = await createRuntimeWithPaths();
+    const project = await runtime.createProjectFromFolder({ rootPath: rootDir, name: "Git Code" });
+    const run = await runtime.startAutopilotRun({ projectId: project.id, profile: "coding", goal: "Inspect and verify this repository" });
+    await waitForCondition("coding worktree", () => Boolean(runtime.snapshot().autopilotRuns.find((item) => item.id === run.id)?.worktreeId));
+    const active = runtime.snapshot().autopilotRuns.find((item) => item.id === run.id)!;
+    const worktree = runtime.snapshot().worktrees.find((item) => item.id === active.worktreeId)!;
+    expect(worktree.rootPath).toBe(rootDir);
+    expect(worktree.path).not.toBe(rootDir);
+    expect(active.pendingDecision).toBeUndefined();
+    await runtime.cancelAutopilotRun(run.id);
+    await waitForCondition("coding run cleanup", () => runtime.snapshot().status === "ready");
+    await runtime.discardAutopilotWorktree(run.id);
+    await runtime.shutdown();
+  });
+
+  test("applies and discards completed Autopilot worktrees through run controls", async () => {
+    const { runtime, dataDir, rootDir } = await createRuntimeWithPaths();
+    await runtime.shutdown();
+    const storage = new JsonFileStorage(dataDir);
+    const state = await storage.load();
+    const now = new Date().toISOString();
+    const project = {
+      id: "project_worktree_controls",
+      name: "Worktree Controls",
+      rootPath: rootDir,
+      metadataPath: join(rootDir, ".supbot", "project.json"),
+      status: "active" as const,
+      createdAt: now,
+      updatedAt: now
+    };
+    const policy = {
+      mode: "projectSandbox" as const,
+      allowedWriteRoots: ["datasets/raw", "datasets/processed", "outputs", "reports", ".supbot/runs"],
+      allowNetwork: true,
+      allowMcp: true,
+      maxRuntimeMinutes: 120,
+      maxTasks: 16,
+      maxRetries: 1
+    };
+    const runFor = (id: string, worktreeId: string, status: "completed" | "running") => ({
+      schemaVersion: 2 as const,
+      id,
+      projectId: project.id,
+      projectRoot: project.rootPath,
+      title: id,
+      goal: "Apply or discard worktree changes",
+      goalSpec: { objective: "Apply or discard worktree changes", deliverables: [], acceptanceCriteria: ["The requested outcome is produced and supported by recorded evidence."] },
+      profile: "coding" as const,
+      resolvedProfile: "coding" as const,
+      status,
+      currentStage: "review" as const,
+      writePolicy: policy,
+      budget: createAutopilotBudget({ maxTasks: 16 }, now),
+      loopIteration: 0,
+      noProgressCount: 0,
+      dataSources: [],
+      taskIds: [],
+      artifactIds: [],
+      checkpointIds: [],
+      evidence: [],
+      worktreeId,
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now,
+      finishedAt: status === "completed" ? now : undefined
+    });
+    const worktreeFor = (id: string, branchName: string, path: string, status: "completed" | "active") => ({
+      id,
+      taskId: id,
+      jobId: id,
+      conversationId: `autopilot_${id}`,
+      baseRef: "HEAD",
+      branchName,
+      rootPath: rootDir,
+      path,
+      status,
+      diffStatus: status === "completed" ? "dirty" as const : "unavailable" as const,
+      diffSummary: status === "completed" ? { worktreeId: id, changedFiles: ["README.md"], summary: "1 file changed" } : undefined,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: status === "completed" ? now : undefined
+    });
+    const discardPath = join(dataDir, "worktrees", "discard-wt");
+    const applyPath = join(dataDir, "worktrees", "apply-wt");
+    await runGit(rootDir, ["worktree", "add", "-b", "supbot/test-discard", discardPath, "HEAD"]);
+    await runGit(rootDir, ["worktree", "add", "-b", "supbot/test-apply", applyPath, "HEAD"]);
+    await writeFile(join(discardPath, "README.md"), "discarded\n", "utf8");
+    await writeFile(join(applyPath, "README.md"), "applied\n", "utf8");
+    state.projects = [project];
+    state.autopilotRuns = [
+      runFor("run_active_apply", "wt_active", "running"),
+      runFor("run_discard", "wt_discard", "completed"),
+      runFor("run_apply", "wt_apply", "completed")
+    ];
+    state.worktrees = [
+      worktreeFor("wt_active", "supbot/test-active", join(dataDir, "worktrees", "active-wt"), "active"),
+      worktreeFor("wt_discard", "supbot/test-discard", discardPath, "completed"),
+      worktreeFor("wt_apply", "supbot/test-apply", applyPath, "completed")
+    ];
+    await storage.save(state);
+
+    const restarted = new SupbotRuntime(storage, { rootDir });
+    await restarted.init();
+    await expect(restarted.applyAutopilotWorktree("run_active_apply")).rejects.toThrow("completes successfully");
+    await restarted.discardAutopilotWorktree("run_discard");
+    expect(await readFile(join(rootDir, "README.md"), "utf8")).toBe("baseline\n");
+    await restarted.applyAutopilotWorktree("run_apply");
+    expect((await readFile(join(rootDir, "README.md"), "utf8")).replace(/\r\n/g, "\n")).toBe("applied\n");
+    const snapshot = restarted.snapshot();
+    expect(snapshot.worktrees.find((item) => item.id === "wt_discard")?.status).toBe("discarded");
+    expect(snapshot.worktrees.find((item) => item.id === "wt_apply")?.status).toBe("applied");
+    await restarted.shutdown();
+  });
+
   test("runs a project data autopilot workflow and records artifacts", async () => {
     const runtime = await createRuntime();
     const projectDir = await mkdtemp(join(tmpdir(), "supbot-data-run-"));
@@ -1203,6 +1576,9 @@ describe("SupbotRuntime", () => {
       expect(artifacts.map((artifact) => artifact.kind)).toEqual(expect.arrayContaining(["raw", "processed", "analysis", "report"]));
       expect(snapshot.autopilotTasks.filter((task) => task.runId === run.id).every((task) => task.status === "completed")).toBe(true);
       expect(await readFile(join(project.rootPath, ".supbot", "runs", run.id, "checkpoint.json"), "utf8")).toContain("Completed");
+      expect(await readFile(join(project.rootPath, ".supbot", "runs", run.id, "state.json"), "utf8")).toContain('"schemaVersion": 2');
+      expect(await readFile(join(project.rootPath, ".supbot", "runs", run.id, "events.jsonl"), "utf8")).toContain("Autopilot project run queued");
+      expect(await readFile(join(project.rootPath, ".supbot", "runs", run.id, "actions.jsonl"), "utf8")).toContain("WriteFile");
     } finally {
       await mock.close();
     }
@@ -1327,8 +1703,106 @@ describe("SupbotRuntime", () => {
     await restarted.init();
     const recovered = restarted.snapshot().autopilotRuns.find((run) => run.id === "run_recover");
     expect(recovered?.status).toBe("paused");
+    expect(recovered?.schemaVersion).toBe(2);
+    expect(recovered?.resolvedProfile).toBe("data");
+    expect(recovered?.budget?.limits.maxIterations).toBe(12);
     expect(recovered?.error).toContain("Recovered");
     expect(await readFile(join(project.rootPath, ".supbot", "runs", "run_recover", "checkpoint.json"), "utf8")).toContain("Recovered");
+    await restarted.shutdown();
+  });
+
+  test("recovers uncertain Autopilot side effects into an approval gate", async () => {
+    const { runtime, dataDir, rootDir } = await createRuntimeWithPaths();
+    await runtime.shutdown();
+    const projectDir = await mkdtemp(join(tmpdir(), "supbot-recover-uncertain-project-"));
+    tempDirs.push(projectDir);
+    await mkdir(join(projectDir, ".supbot"), { recursive: true });
+    const storage = new JsonFileStorage(dataDir);
+    const state = await storage.load();
+    const now = new Date().toISOString();
+    const project = {
+      id: "project_recover_uncertain",
+      name: "Recover Uncertain Project",
+      rootPath: projectDir,
+      metadataPath: join(projectDir, ".supbot", "project.json"),
+      status: "active" as const,
+      createdAt: now,
+      updatedAt: now
+    };
+    state.projects = [project];
+    state.autopilotRuns = [{
+      id: "run_recover_uncertain",
+      projectId: project.id,
+      projectRoot: project.rootPath,
+      title: "Recover uncertain run",
+      goal: "Recover after an uncertain action",
+      status: "running",
+      currentStage: "collect",
+      writePolicy: {
+        mode: "projectSandbox",
+        allowedWriteRoots: ["datasets/raw", "datasets/processed", "outputs", "reports", ".supbot/runs"],
+        allowNetwork: true,
+        allowMcp: true,
+        maxRuntimeMinutes: 120,
+        maxTasks: 16,
+        maxRetries: 1
+      },
+      dataSources: [],
+      taskIds: ["task_uncertain"],
+      artifactIds: [],
+      checkpointIds: [],
+      evidence: [],
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now
+    }];
+    state.autopilotTasks = [{
+      id: "task_uncertain",
+      runId: "run_recover_uncertain",
+      projectId: project.id,
+      stage: "collect",
+      kind: "collect",
+      dependsOn: [],
+      risk: "medium",
+      allowedTools: ["Shell"],
+      validators: [],
+      staffAgent: "collector",
+      title: "Collect with external action",
+      prompt: "Run an external side-effecting action.",
+      status: "running",
+      attempts: 1,
+      maxAttempts: 2,
+      artifactIds: [],
+      evidence: [],
+      actionFingerprints: ["shell:external"],
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now
+    }];
+    state.autopilotActions = [{
+      id: "action_uncertain",
+      runId: "run_recover_uncertain",
+      taskId: "task_uncertain",
+      fingerprint: "shell:external",
+      toolName: "Shell",
+      status: "started",
+      retrySafety: "confirm",
+      inputSummary: "{\"command\":\"deploy --once\"}",
+      createdAt: now,
+      updatedAt: now
+    }];
+    await storage.save(state);
+    const restarted = new SupbotRuntime(storage, { rootDir });
+    await restarted.init();
+    const recovered = restarted.snapshot().autopilotRuns.find((run) => run.id === "run_recover_uncertain")!;
+    expect(recovered.status).toBe("waiting_approval");
+    expect(recovered.pendingDecision?.kind).toBe("recovery");
+    expect(recovered.error).toContain("uncertain external side effect");
+    await restarted.decideAutopilotApproval({ runId: recovered.id, decisionId: recovered.pendingDecision!.id, decision: "denied", comment: "manual inspection required" });
+    const blocked = restarted.snapshot().autopilotRuns.find((run) => run.id === recovered.id)!;
+    expect(blocked.status).toBe("blocked");
+    expect(blocked.error).toContain("manual inspection required");
+    expect(await readFile(join(project.rootPath, ".supbot", "runs", recovered.id, "checkpoint.json"), "utf8")).toContain("Approval denied");
     await restarted.shutdown();
   });
 

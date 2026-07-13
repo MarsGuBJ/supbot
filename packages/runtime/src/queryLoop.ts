@@ -86,6 +86,7 @@ export async function queryLoop(input: QueryLoopInput): Promise<QueryLoopResult>
       }
 
       if (!result.toolCalls.length) {
+        trace.usage = addUsage(trace.usage, result.usage);
         await emit(input, events, { type: "turn_complete", text: result.text, trace, generatedFiles });
         return { text: result.text, trace, generatedFiles, events };
       }
@@ -95,6 +96,7 @@ export async function queryLoop(input: QueryLoopInput): Promise<QueryLoopResult>
         content: result.text || null,
         tool_calls: result.toolCalls
       });
+      trace.usage = addUsage(trace.usage, result.usage);
 
       const envelopes = await executeToolBatch(result.toolCalls, input, toolExecutor, trace);
       for (const envelope of envelopes) {
@@ -114,6 +116,21 @@ export async function queryLoop(input: QueryLoopInput): Promise<QueryLoopResult>
     await emit(input, events, { type: "turn_failed", error: message, trace });
     throw error;
   }
+}
+
+function addUsage(current: AgentLoopTrace["usage"], next: AgentLoopTrace["usage"]): AgentLoopTrace["usage"] {
+  if (!current && !next) {
+    return undefined;
+  }
+  return {
+    inputTokens: sumOptional(current?.inputTokens, next?.inputTokens),
+    outputTokens: sumOptional(current?.outputTokens, next?.outputTokens),
+    totalTokens: sumOptional(current?.totalTokens, next?.totalTokens)
+  };
+}
+
+function sumOptional(left: number | undefined, right: number | undefined): number | undefined {
+  return left === undefined && right === undefined ? undefined : (left || 0) + (right || 0);
 }
 
 async function executeToolBatch(

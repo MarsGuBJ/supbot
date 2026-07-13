@@ -22,6 +22,14 @@ export interface ToolExecutionContext {
   projectId?: string;
   projectRoot?: string;
   allowedWriteRoots?: string[];
+  autopilotPolicy?: {
+    allowedTools: string[];
+    allowNetwork: boolean;
+    allowMcp: boolean;
+    autoApproveSandboxWrites: boolean;
+    autoApproveVerificationCommands: boolean;
+  };
+  completedActionFingerprints?: string[];
   ensureIsolatedWorkspace?(toolName: string): Promise<LocalToolHost | undefined>;
   subagents: SubagentConfig[];
   runSubagent(input: { subagentType?: string; prompt: string; signal: AbortSignal }): Promise<ToolExecutionResult>;
@@ -74,8 +82,8 @@ export class ToolRegistry {
     this.providers.push(provider);
   }
 
-  toOpenAiTools(): OpenAiToolDefinition[] {
-    return this.list().map((tool) => ({
+  toOpenAiTools(allowedTools?: string[]): OpenAiToolDefinition[] {
+    return this.list().filter((tool) => !allowedTools?.length || toolAllowed(tool.name, allowedTools)).map((tool) => ({
       type: "function",
       function: {
         name: tool.modelName || tool.name,
@@ -84,6 +92,10 @@ export class ToolRegistry {
       }
     }));
   }
+}
+
+export function toolAllowed(toolName: string, allowedTools: string[]): boolean {
+  return allowedTools.some((allowed) => allowed === "*" || allowed === toolName || (allowed.endsWith(".*") && toolName.startsWith(allowed.slice(0, -1))));
 }
 
 export function defaultToolDefinitions(): ToolDefinition[] {

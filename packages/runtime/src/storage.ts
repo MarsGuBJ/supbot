@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import {
   type AgentJob,
   type AgentLoopTrace,
+  type AutopilotActionRecord,
   type AutopilotCheckpoint,
   type AutopilotEvent,
   type AutopilotRun,
@@ -57,6 +58,7 @@ export interface RuntimeState {
   autopilotTasks: AutopilotTask[];
   autopilotEvents: AutopilotEvent[];
   autopilotCheckpoints: AutopilotCheckpoint[];
+  autopilotActions: AutopilotActionRecord[];
   dataArtifacts: DataArtifact[];
   pendingToolPermissions: PendingToolPermission[];
   agentLoopTraces: AgentLoopTrace[];
@@ -185,6 +187,7 @@ export function createInitialState(): RuntimeState {
     autopilotTasks: [],
     autopilotEvents: [],
     autopilotCheckpoints: [],
+    autopilotActions: [],
     dataArtifacts: [],
     pendingToolPermissions: [],
     agentLoopTraces: [],
@@ -295,6 +298,7 @@ function normalizeState(input: Partial<RuntimeState>): RuntimeState {
     autopilotTasks: Array.isArray(input.autopilotTasks) ? input.autopilotTasks.map(normalizeAutopilotTask).filter(Boolean) as AutopilotTask[] : [],
     autopilotEvents: Array.isArray(input.autopilotEvents) ? input.autopilotEvents.map(normalizeAutopilotEvent).filter(Boolean) as AutopilotEvent[] : [],
     autopilotCheckpoints: Array.isArray(input.autopilotCheckpoints) ? input.autopilotCheckpoints.map(normalizeAutopilotCheckpoint).filter(Boolean) as AutopilotCheckpoint[] : [],
+    autopilotActions: Array.isArray(input.autopilotActions) ? input.autopilotActions.map(normalizeAutopilotAction).filter(Boolean) as AutopilotActionRecord[] : [],
     dataArtifacts: Array.isArray(input.dataArtifacts) ? input.dataArtifacts.map(normalizeDataArtifact).filter(Boolean) as DataArtifact[] : [],
     pendingToolPermissions: Array.isArray(input.pendingToolPermissions) ? input.pendingToolPermissions : [],
     agentLoopTraces: Array.isArray(input.agentLoopTraces) ? input.agentLoopTraces : [],
@@ -393,11 +397,38 @@ function normalizeAutopilotRun(run: AutopilotRun): AutopilotRun | undefined {
   }
   const now = new Date().toISOString();
   return {
+    schemaVersion: 2,
     id: run.id,
     projectId: run.projectId,
     projectRoot: typeof run.projectRoot === "string" ? run.projectRoot : "",
     title: typeof run.title === "string" && run.title.trim() ? run.title : "Data run",
     goal: typeof run.goal === "string" ? run.goal : "",
+    goalSpec: run.goalSpec && typeof run.goalSpec === "object" ? {
+      objective: typeof run.goalSpec.objective === "string" ? run.goalSpec.objective : run.goal,
+      deliverables: stringArray(run.goalSpec.deliverables),
+      acceptanceCriteria: stringArray(run.goalSpec.acceptanceCriteria)
+    } : {
+      objective: typeof run.goal === "string" ? run.goal : "",
+      deliverables: [],
+      acceptanceCriteria: ["The requested outcome is produced and supported by recorded evidence."]
+    },
+    profile: normalizeAutopilotProfile(run.profile) || "data",
+    resolvedProfile: normalizeResolvedAutopilotProfile(run.resolvedProfile) || "data",
+    plan: run.plan && typeof run.plan === "object" ? {
+      version: normalizePositiveNumber(run.plan.version, 1),
+      profile: normalizeResolvedAutopilotProfile(run.plan.profile) || "data",
+      summary: typeof run.plan.summary === "string" ? run.plan.summary : "Migrated Autopilot plan",
+      taskIds: stringArray(run.plan.taskIds),
+      createdAt: typeof run.plan.createdAt === "string" ? run.plan.createdAt : now,
+      updatedAt: typeof run.plan.updatedAt === "string" ? run.plan.updatedAt : now
+    } : {
+      version: 1,
+      profile: "data",
+      summary: "Migrated legacy data Autopilot plan",
+      taskIds: stringArray(run.taskIds),
+      createdAt: typeof run.createdAt === "string" ? run.createdAt : now,
+      updatedAt: typeof run.updatedAt === "string" ? run.updatedAt : now
+    },
     status: normalizeAutopilotRunStatus(run.status),
     currentStage: normalizeAutopilotStage(run.currentStage),
     writePolicy: {
@@ -409,6 +440,15 @@ function normalizeAutopilotRun(run: AutopilotRun): AutopilotRun | undefined {
       maxTasks: normalizePositiveNumber(run.writePolicy?.maxTasks, 16),
       maxRetries: normalizePositiveNumber(run.writePolicy?.maxRetries, 1)
     },
+    budget: normalizeAutopilotBudget(run),
+    loopIteration: normalizeNonNegativeNumber(run.loopIteration, 0),
+    noProgressCount: normalizeNonNegativeNumber(run.noProgressCount, 0),
+    lastProgressFingerprint: typeof run.lastProgressFingerprint === "string" ? run.lastProgressFingerprint : undefined,
+    lastEvaluation: normalizeAutopilotEvaluation(run.lastEvaluation),
+    pendingDecision: normalizeAutopilotPendingDecision(run.pendingDecision),
+    worktreeId: typeof run.worktreeId === "string" ? run.worktreeId : undefined,
+    directWriteApproved: Boolean(run.directWriteApproved),
+    planApproved: Boolean(run.planApproved),
     dataSources: Array.isArray(run.dataSources) ? run.dataSources : [],
     taskIds: Array.isArray(run.taskIds) ? run.taskIds.filter((item): item is string => typeof item === "string") : [],
     artifactIds: Array.isArray(run.artifactIds) ? run.artifactIds.filter((item): item is string => typeof item === "string") : [],
@@ -433,6 +473,11 @@ function normalizeAutopilotTask(task: AutopilotTask): AutopilotTask | undefined 
     runId: task.runId,
     projectId: typeof task.projectId === "string" ? task.projectId : "",
     stage: normalizeAutopilotStage(task.stage) || "clarify",
+    kind: normalizeAutopilotTaskKind(task.kind),
+    dependsOn: stringArray(task.dependsOn),
+    risk: task.risk === "medium" || task.risk === "high" ? task.risk : "low",
+    allowedTools: stringArray(task.allowedTools),
+    validators: Array.isArray(task.validators) ? task.validators.filter((item) => item && typeof item.id === "string" && typeof item.kind === "string") : [],
     staffAgent: typeof task.staffAgent === "string" ? task.staffAgent : "collector",
     title: typeof task.title === "string" ? task.title : "Autopilot task",
     prompt: typeof task.prompt === "string" ? task.prompt : "",
@@ -441,6 +486,9 @@ function normalizeAutopilotTask(task: AutopilotTask): AutopilotTask | undefined 
     maxAttempts: normalizePositiveNumber(task.maxAttempts, 2),
     artifactIds: Array.isArray(task.artifactIds) ? task.artifactIds.filter((item): item is string => typeof item === "string") : [],
     evidence: Array.isArray(task.evidence) ? task.evidence.filter((item): item is string => typeof item === "string") : [],
+    actionFingerprints: stringArray(task.actionFingerprints),
+    failureCategory: normalizeAutopilotFailureCategory(task.failureCategory),
+    lastEvaluation: normalizeAutopilotEvaluation(task.lastEvaluation),
     output: typeof task.output === "string" ? task.output : undefined,
     error: typeof task.error === "string" ? task.error : undefined,
     startedAt: typeof task.startedAt === "string" ? task.startedAt : undefined,
@@ -479,7 +527,31 @@ function normalizeAutopilotCheckpoint(checkpoint: AutopilotCheckpoint): Autopilo
     summary: typeof checkpoint.summary === "string" ? checkpoint.summary : "",
     taskIds: Array.isArray(checkpoint.taskIds) ? checkpoint.taskIds.filter((item): item is string => typeof item === "string") : [],
     artifactIds: Array.isArray(checkpoint.artifactIds) ? checkpoint.artifactIds.filter((item): item is string => typeof item === "string") : [],
+    planVersion: typeof checkpoint.planVersion === "number" ? checkpoint.planVersion : undefined,
+    budgetUsage: checkpoint.budgetUsage,
     createdAt: typeof checkpoint.createdAt === "string" ? checkpoint.createdAt : new Date().toISOString()
+  };
+}
+
+function normalizeAutopilotAction(action: AutopilotActionRecord): AutopilotActionRecord | undefined {
+  if (!action || typeof action !== "object" || typeof action.id !== "string" || typeof action.runId !== "string" || typeof action.taskId !== "string") {
+    return undefined;
+  }
+  const now = new Date().toISOString();
+  return {
+    id: action.id,
+    runId: action.runId,
+    taskId: action.taskId,
+    fingerprint: typeof action.fingerprint === "string" ? action.fingerprint : action.id,
+    toolName: typeof action.toolName === "string" ? action.toolName : "unknown",
+    status: action.status === "completed" || action.status === "failed" || action.status === "denied" ? action.status : "started",
+    retrySafety: action.retrySafety === "confirm" || action.retrySafety === "never" ? action.retrySafety : "safe",
+    durationMs: typeof action.durationMs === "number" ? action.durationMs : undefined,
+    inputSummary: typeof action.inputSummary === "string" ? action.inputSummary : "",
+    outputSummary: typeof action.outputSummary === "string" ? action.outputSummary : undefined,
+    error: typeof action.error === "string" ? action.error : undefined,
+    createdAt: typeof action.createdAt === "string" ? action.createdAt : now,
+    updatedAt: typeof action.updatedAt === "string" ? action.updatedAt : now
   };
 }
 
@@ -593,6 +665,7 @@ function normalizeWorktree(value: TaskWorktree): TaskWorktree | undefined {
     conversationId: typeof value.conversationId === "string" ? value.conversationId : "",
     baseRef: typeof value.baseRef === "string" ? value.baseRef : "HEAD",
     branchName: typeof value.branchName === "string" ? value.branchName : `supbot/${value.id}`,
+    rootPath: typeof value.rootPath === "string" ? value.rootPath : undefined,
     status: normalizeWorktreeStatus(value.status),
     diffStatus: normalizeDiffStatus(value.diffStatus),
     createdAt: typeof value.createdAt === "string" ? value.createdAt : now,
@@ -611,7 +684,7 @@ function normalizeDiffStatus(value: unknown): TaskWorktree["diffStatus"] {
 }
 
 function normalizeAutopilotRunStatus(value: unknown): AutopilotRun["status"] {
-  return value === "queued" || value === "planning" || value === "running" || value === "paused" || value === "blocked" || value === "reviewing" || value === "completed" || value === "failed" || value === "canceled"
+  return value === "queued" || value === "analyzing" || value === "planning" || value === "waiting_approval" || value === "running" || value === "verifying" || value === "replanning" || value === "paused" || value === "blocked" || value === "reviewing" || value === "completed" || value === "partially_completed" || value === "budget_exhausted" || value === "failed" || value === "canceled"
     ? value
     : "queued";
 }
@@ -623,9 +696,90 @@ function normalizeAutopilotTaskStatus(value: unknown): AutopilotTask["status"] {
 }
 
 function normalizeAutopilotStage(value: unknown): AutopilotTask["stage"] | undefined {
-  return value === "clarify" || value === "inventory" || value === "collect" || value === "process" || value === "analyze" || value === "report" || value === "review"
+  return value === "clarify" || value === "inventory" || value === "collect" || value === "process" || value === "analyze" || value === "report" || value === "review" || value === "plan" || value === "execute" || value === "verify" || value === "replan"
     ? value
     : undefined;
+}
+
+function normalizeAutopilotProfile(value: unknown): AutopilotRun["profile"] | undefined {
+  return value === "auto" || value === "coding" || value === "research" || value === "data" || value === "document" || value === "generic" ? value : undefined;
+}
+
+function normalizeResolvedAutopilotProfile(value: unknown): NonNullable<AutopilotRun["resolvedProfile"]> | undefined {
+  return value === "coding" || value === "research" || value === "data" || value === "document" || value === "generic" ? value : undefined;
+}
+
+function normalizeAutopilotTaskKind(value: unknown): AutopilotTask["kind"] {
+  return value === "inspect" || value === "collect" || value === "modify" || value === "analyze" || value === "produce" || value === "verify" || value === "review" ? value : "produce";
+}
+
+function normalizeAutopilotFailureCategory(value: unknown): AutopilotTask["failureCategory"] {
+  return value === "transient" || value === "invalid_input" || value === "validation" || value === "permission" || value === "budget" || value === "no_progress" || value === "external_side_effect" || value === "unrecoverable" ? value : undefined;
+}
+
+function normalizeAutopilotBudget(run: AutopilotRun): NonNullable<AutopilotRun["budget"]> {
+  const maxRuntimeMinutes = normalizePositiveNumber(run.budget?.limits.maxRuntimeMinutes ?? run.writePolicy?.maxRuntimeMinutes, 120);
+  const startedAt = typeof run.budget?.usage.startedAt === "string" ? run.budget.usage.startedAt : run.startedAt;
+  return {
+    limits: {
+      maxRuntimeMinutes,
+      maxIterations: normalizePositiveNumber(run.budget?.limits.maxIterations, 12),
+      maxTasks: normalizePositiveNumber(run.budget?.limits.maxTasks ?? run.writePolicy?.maxTasks, 24),
+      maxModelTurns: normalizePositiveNumber(run.budget?.limits.maxModelTurns, 160),
+      maxToolCalls: normalizePositiveNumber(run.budget?.limits.maxToolCalls, 240)
+    },
+    usage: {
+      iterations: normalizeNonNegativeNumber(run.budget?.usage.iterations, 0),
+      modelTurns: normalizeNonNegativeNumber(run.budget?.usage.modelTurns, 0),
+      toolCalls: normalizeNonNegativeNumber(run.budget?.usage.toolCalls, 0),
+      inputTokens: optionalNonNegativeNumber(run.budget?.usage.inputTokens),
+      outputTokens: optionalNonNegativeNumber(run.budget?.usage.outputTokens),
+      totalTokens: optionalNonNegativeNumber(run.budget?.usage.totalTokens),
+      startedAt,
+      deadlineAt: typeof run.budget?.usage.deadlineAt === "string" ? run.budget.usage.deadlineAt : startedAt ? new Date(new Date(startedAt).getTime() + maxRuntimeMinutes * 60_000).toISOString() : undefined
+    }
+  };
+}
+
+function normalizeAutopilotEvaluation(value: AutopilotRun["lastEvaluation"]): AutopilotRun["lastEvaluation"] {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  return {
+    passed: Boolean(value.passed),
+    checks: Array.isArray(value.checks) ? value.checks.filter((item) => item && typeof item.validatorId === "string") : [],
+    violations: stringArray(value.violations),
+    evidence: stringArray(value.evidence),
+    fingerprint: typeof value.fingerprint === "string" ? value.fingerprint : "",
+    evaluatedAt: typeof value.evaluatedAt === "string" ? value.evaluatedAt : new Date().toISOString()
+  };
+}
+
+function normalizeAutopilotPendingDecision(value: AutopilotRun["pendingDecision"]): AutopilotRun["pendingDecision"] {
+  if (!value || typeof value !== "object" || typeof value.id !== "string") {
+    return undefined;
+  }
+  return {
+    id: value.id,
+    kind: value.kind === "tool" || value.kind === "direct_write" || value.kind === "external_side_effect" || value.kind === "recovery" ? value.kind : "plan",
+    title: typeof value.title === "string" ? value.title : "Autopilot approval",
+    summary: typeof value.summary === "string" ? value.summary : "",
+    risk: value.risk === "low" || value.risk === "medium" ? value.risk : "high",
+    impact: stringArray(value.impact),
+    rollbackPlan: typeof value.rollbackPlan === "string" ? value.rollbackPlan : undefined,
+    taskId: typeof value.taskId === "string" ? value.taskId : undefined,
+    toolName: typeof value.toolName === "string" ? value.toolName : undefined,
+    input: value.input,
+    createdAt: typeof value.createdAt === "string" ? value.createdAt : new Date().toISOString()
+  };
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function optionalNonNegativeNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.round(value) : undefined;
 }
 
 function normalizePositiveNumber(value: unknown, fallback: number): number {

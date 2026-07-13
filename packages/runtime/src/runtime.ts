@@ -5,14 +5,21 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import {
   clampNumber,
   type AgentJob,
+  type AgentLoopTrace,
   type Attachment,
+  type AutopilotActionRecord,
+  type AutopilotApprovalDecisionInput,
   type AutopilotCheckpoint,
   type AutopilotEvent,
   type AutopilotRun,
   type AutopilotRunReport,
+  type AutopilotRunMetrics,
+  type AutopilotQualitySummary,
   type AutopilotStage,
   type AutopilotStartDataRunInput,
+  type AutopilotStartInput,
   type AutopilotTask,
+  type AutopilotValidationCheck,
   type AutopilotWritePolicy,
   type CapabilityDefinition,
   type ChatMessage,
@@ -119,7 +126,20 @@ import {
   type ToolMarketQuery
 } from "@supbot/shared";
 import { AutopilotOrchestrator } from "./autopilotOrchestrator";
-import { stripQuotes, type LocalToolHost, type LocalToolResult } from "./localTools";
+import { calculateAutopilotMetrics, summarizeAutopilotQuality } from "./autopilotMetrics";
+import {
+  autopilotBudgetExceeded,
+  canTransitionAutopilot,
+  classifyAutopilotFailure,
+  compactAutopilotContext,
+  createAutopilotBudget,
+  createAutopilotGoalSpec,
+  progressFingerprint,
+  resolveAutopilotProfile,
+  validateAutopilotPlan
+} from "./autopilotLoop";
+import { AutopilotRunStore } from "./autopilotRunStore";
+import { runShellCommand, stripQuotes, type LocalToolHost, type LocalToolResult } from "./localTools";
 import { MemoryManager } from "./memoryManager";
 import { McpManager } from "./mcpManager";
 import { generateReply } from "./modelClient";
@@ -155,6 +175,10 @@ interface RunningAutopilotRun {
 interface ProjectToolContextOptions {
   project?: Project;
   policy?: AutopilotWritePolicy;
+  task?: AutopilotTask;
+  workspacePath?: string;
+  allowedWriteRoots?: string[];
+  directWriteBackupRoot?: string;
 }
 
 interface PendingPermissionWaiter {
@@ -176,6 +200,7 @@ export class SupbotRuntime extends EventEmitter {
   private readonly memoryManager = new MemoryManager({ randomId, nowIso });
   private readonly projectManager = new ProjectManager({ randomId, nowIso });
   private readonly autopilotOrchestrator = new AutopilotOrchestrator({ randomId, nowIso });
+  private readonly autopilotRunStore = new AutopilotRunStore();
   private remoteMarketCache: ToolMarketProduct[] = [];
   private loaded = false;
   private readonly secretStorageKind: ModelConfig["apiKeyStorage"];
@@ -345,6 +370,9 @@ export class SupbotRuntime extends EventEmitter {
       autopilotTasks: this.state.autopilotTasks,
       autopilotEvents: this.state.autopilotEvents,
       autopilotCheckpoints: this.state.autopilotCheckpoints,
+      autopilotActions: this.state.autopilotActions,
+      autopilotMetrics: this.state.autopilotRuns.map((run) => this.calculateAutopilotRunMetrics(run.id)),
+      autopilotQuality: this.calculateAutopilotQuality(),
       dataArtifacts: this.state.dataArtifacts,
       pendingToolPermissions: this.state.pendingToolPermissions,
       agentLoopTraces: this.state.agentLoopTraces,
@@ -444,21 +472,39 @@ export class SupbotRuntime extends EventEmitter {
   }
 
   async startDataRun(input: AutopilotStartDataRunInput): Promise<AutopilotRun> {
+    return this.startAutopilotRun({ ...input, profile: "data" });
+  }
+
+  async startAutopilotRun(input: AutopilotStartInput): Promise<AutopilotRun> {
     this.assertLoaded();
     const project = this.requireProject(requiredString(input.projectId, "Project id"));
     this.projectManager.validateProjectPath(project);
     await this.projectManager.ensureProjectFolders(project.rootPath);
     const now = nowIso();
     const policy = this.projectManager.defaultWritePolicy(input.writePolicy || {});
+    const profile = input.profile || "auto";
+    const resolvedProfile = resolveAutopilotProfile(profile, input.goal);
+    const budget = createAutopilotBudget({
+      ...input.budget,
+      maxRuntimeMinutes: input.budget?.maxRuntimeMinutes || policy.maxRuntimeMinutes,
+      maxTasks: input.budget?.maxTasks || policy.maxTasks
+    }, now);
     const run: AutopilotRun = {
+      schemaVersion: 2,
       id: randomId("aprun"),
       projectId: project.id,
       projectRoot: project.rootPath,
       title: input.title?.trim() || titleFromPrompt(input.goal),
       goal: requiredString(input.goal, "Autopilot goal"),
+      goalSpec: createAutopilotGoalSpec(input.goal, input.deliverables, input.acceptanceCriteria),
+      profile,
+      resolvedProfile,
       status: "queued",
       currentStage: "clarify",
       writePolicy: policy,
+      budget,
+      loopIteration: 0,
+      noProgressCount: 0,
       dataSources: normalizeDataSources(input.dataSources || []),
       taskIds: [],
       artifactIds: [],
@@ -468,12 +514,17 @@ export class SupbotRuntime extends EventEmitter {
       updatedAt: now
     };
     const tasks = this.autopilotOrchestrator.createTasks(run);
-    const nextRun = { ...run, taskIds: tasks.map((task) => task.id) };
+    const plan = this.autopilotOrchestrator.createPlan(run, tasks);
+    const planValidation = validateAutopilotPlan(plan, tasks);
+    if (!planValidation.ok) {
+      throw new Error(`Autopilot planner produced an invalid plan: ${planValidation.errors.join(" ")}`);
+    }
+    const nextRun = { ...run, taskIds: tasks.map((task) => task.id), plan };
     this.state.autopilotRuns = [nextRun, ...this.state.autopilotRuns];
     this.state.autopilotTasks = [...tasks, ...this.state.autopilotTasks];
     this.state.projects = this.state.projects.map((item) => item.id === project.id ? { ...item, lastRunAt: now, updatedAt: now } : item);
-    await this.addAutopilotCheckpoint(nextRun, "Autopilot data run queued");
-    await this.addAutopilotEvent(nextRun, "info", "Autopilot data run queued", { taskCount: tasks.length });
+    await this.addAutopilotCheckpoint(nextRun, "Autopilot project run queued");
+    await this.addAutopilotEvent(nextRun, "info", "Autopilot project run queued", { taskCount: tasks.length, profile: resolvedProfile });
     await this.persistAndBroadcast();
     void this.runAutopilot(nextRun.id);
     return this.requireAutopilotRun(nextRun.id);
@@ -483,7 +534,8 @@ export class SupbotRuntime extends EventEmitter {
     this.assertLoaded();
     const run = this.requireAutopilotRun(id);
     this.runningAutopilotRuns.get(id)?.controller.abort();
-    const next = this.patchAutopilotRun(id, { status: "paused", updatedAt: nowIso(), error: undefined });
+    this.resolveJobPermissions(id, "denied");
+    const next = this.transitionAutopilotRun(id, "paused", { updatedAt: nowIso(), error: undefined, pendingDecision: undefined });
     await this.addAutopilotEvent(next, "info", "Autopilot data run paused");
     await this.addAutopilotCheckpoint(next, "Paused by user");
     await this.persistAndBroadcast();
@@ -493,10 +545,18 @@ export class SupbotRuntime extends EventEmitter {
   async resumeAutopilotRun(id: string): Promise<AutopilotRun> {
     this.assertLoaded();
     const run = this.requireAutopilotRun(id);
-    if (run.status !== "paused" && run.status !== "blocked" && run.status !== "failed") {
+    if (run.status !== "paused" && run.status !== "blocked" && run.status !== "failed" && run.status !== "budget_exhausted" && run.status !== "partially_completed") {
       return run;
     }
-    const next = this.patchAutopilotRun(id, { status: "queued", updatedAt: nowIso(), error: undefined });
+    if (run.status !== "paused") {
+      this.resetRetryableAutopilotTasks(id);
+    }
+    const next = this.transitionAutopilotRun(id, "queued", {
+      updatedAt: nowIso(),
+      error: undefined,
+      finishedAt: undefined,
+      budget: run.status === "budget_exhausted" ? resetAutopilotBudgetWindow(run.budget) : run.budget
+    });
     await this.addAutopilotEvent(next, "info", "Autopilot data run resumed");
     await this.persistAndBroadcast();
     void this.runAutopilot(id);
@@ -507,11 +567,16 @@ export class SupbotRuntime extends EventEmitter {
     this.assertLoaded();
     const run = this.requireAutopilotRun(id);
     this.runningAutopilotRuns.get(id)?.controller.abort();
+    this.resolveJobPermissions(id, "denied");
     const now = nowIso();
-    const next = this.patchAutopilotRun(id, { status: "canceled", updatedAt: now, finishedAt: now });
+    const next = this.transitionAutopilotRun(id, "canceled", { updatedAt: now, finishedAt: now, pendingDecision: undefined });
     this.state.autopilotTasks = this.state.autopilotTasks.map((task) => task.runId === id && (task.status === "queued" || task.status === "running")
       ? { ...task, status: "skipped", updatedAt: now, finishedAt: now, error: "Run canceled" }
       : task);
+    if (run.worktreeId) {
+      const abandoned = await this.worktreeManager.abandon(run.worktreeId, "Autopilot run canceled");
+      this.upsertWorktreeState(abandoned);
+    }
     await this.addAutopilotEvent(next, "warning", "Autopilot data run canceled");
     await this.addAutopilotCheckpoint(next, "Canceled by user");
     await this.persistAndBroadcast();
@@ -527,8 +592,126 @@ export class SupbotRuntime extends EventEmitter {
       tasks: this.state.autopilotTasks.filter((task) => task.runId === id),
       artifacts: this.state.dataArtifacts.filter((artifact) => artifact.runId === id),
       checkpoints: this.state.autopilotCheckpoints.filter((checkpoint) => checkpoint.runId === id),
-      events: this.state.autopilotEvents.filter((event) => event.runId === id)
+      events: this.state.autopilotEvents.filter((event) => event.runId === id),
+      actions: this.state.autopilotActions.filter((action) => action.runId === id),
+      metrics: this.calculateAutopilotRunMetrics(id)
     };
+  }
+
+  getAutopilotRunMetrics(id: string): AutopilotRunMetrics {
+    this.assertLoaded();
+    return this.calculateAutopilotRunMetrics(id);
+  }
+
+  getAutopilotQualitySummary(): AutopilotQualitySummary {
+    this.assertLoaded();
+    return this.calculateAutopilotQuality();
+  }
+
+  async decideAutopilotApproval(input: AutopilotApprovalDecisionInput): Promise<AutopilotRun> {
+    this.assertLoaded();
+    const run = this.requireAutopilotRun(input.runId);
+    const decision = run.pendingDecision;
+    if (!decision || decision.id !== input.decisionId) {
+      throw new Error("Autopilot approval request is no longer pending.");
+    }
+    if (decision.kind === "tool") {
+      const nextStatus = decision.taskId && this.requireAutopilotTask(decision.taskId).stage === "review" ? "reviewing" : "running";
+      const next = this.transitionAutopilotRun(run.id, nextStatus, { pendingDecision: undefined, updatedAt: nowIso() });
+      if (input.decision === "approved") {
+        await this.approveToolPermission(decision.id);
+      } else {
+        await this.denyToolPermission(decision.id);
+      }
+      await this.addAutopilotEvent(next, input.decision === "approved" ? "info" : "warning", `Autopilot tool approval ${input.decision}`, { decision, comment: input.comment });
+      await this.persistAndBroadcast();
+      return this.requireAutopilotRun(run.id);
+    }
+    if (input.decision === "denied") {
+      const blocked = this.transitionAutopilotRun(run.id, "blocked", {
+        pendingDecision: undefined,
+        error: input.comment?.trim() || `User denied ${decision.title}.`,
+        updatedAt: nowIso()
+      });
+      await this.addAutopilotEvent(blocked, "warning", "Autopilot approval denied", { decision, comment: input.comment });
+      await this.addAutopilotCheckpoint(blocked, `Approval denied: ${decision.title}`);
+      await this.persistAndBroadcast();
+      return blocked;
+    }
+    const next = this.transitionAutopilotRun(run.id, "queued", {
+      pendingDecision: undefined,
+      directWriteApproved: decision.kind === "direct_write" ? true : run.directWriteApproved,
+      planApproved: decision.kind === "plan" ? true : run.planApproved,
+      error: undefined,
+      updatedAt: nowIso()
+    });
+    await this.addAutopilotEvent(next, "info", "Autopilot approval granted", { decision, comment: input.comment });
+    await this.persistAndBroadcast();
+    void this.runAutopilot(run.id);
+    return this.requireAutopilotRun(run.id);
+  }
+
+  async retryAutopilotFromCheckpoint(id: string): Promise<AutopilotRun> {
+    const run = this.requireAutopilotRun(id);
+    if (!["paused", "blocked", "failed", "budget_exhausted", "partially_completed"].includes(run.status)) {
+      return run;
+    }
+    this.resetRetryableAutopilotTasks(id);
+    const next = this.transitionAutopilotRun(id, "queued", {
+      error: undefined,
+      finishedAt: undefined,
+      noProgressCount: 0,
+      budget: run.status === "budget_exhausted" ? resetAutopilotBudgetWindow(run.budget) : run.budget,
+      updatedAt: nowIso()
+    });
+    await this.addAutopilotEvent(next, "info", "Autopilot retry requested from latest checkpoint");
+    await this.persistAndBroadcast();
+    void this.runAutopilot(id);
+    return this.requireAutopilotRun(id);
+  }
+
+  async applyAutopilotWorktree(id: string): Promise<AutopilotRun> {
+    const run = this.requireAutopilotRun(id);
+    if (!run.worktreeId) {
+      throw new Error("Autopilot run has no worktree.");
+    }
+    if (run.status !== "completed") {
+      throw new Error("Autopilot worktree can only be applied after the run completes successfully.");
+    }
+    const currentWorktree = this.worktreeManager.get(run.worktreeId);
+    if (!currentWorktree) {
+      throw new Error(`Worktree not found: ${run.worktreeId}`);
+    }
+    if (currentWorktree.status !== "completed") {
+      throw new Error("Autopilot worktree can only be applied after its diff is completed.");
+    }
+    const worktree = await this.worktreeManager.apply(run.worktreeId);
+    this.upsertWorktreeState(worktree);
+    await this.addAutopilotEvent(run, "info", "Autopilot worktree applied", { worktreeId: worktree.id });
+    await this.persistAndBroadcast();
+    return this.requireAutopilotRun(id);
+  }
+
+  async discardAutopilotWorktree(id: string): Promise<AutopilotRun> {
+    const run = this.requireAutopilotRun(id);
+    if (!run.worktreeId) {
+      throw new Error("Autopilot run has no worktree.");
+    }
+    const currentWorktree = this.worktreeManager.get(run.worktreeId);
+    if (!currentWorktree) {
+      throw new Error(`Worktree not found: ${run.worktreeId}`);
+    }
+    if (currentWorktree.status === "applied" || currentWorktree.status === "discarded") {
+      throw new Error(`Autopilot worktree is already ${currentWorktree.status}.`);
+    }
+    if (["queued", "analyzing", "planning", "running", "verifying", "replanning", "reviewing", "waiting_approval"].includes(run.status)) {
+      throw new Error("Pause or cancel the Autopilot run before discarding its worktree.");
+    }
+    const worktree = await this.worktreeManager.discard(run.worktreeId);
+    this.upsertWorktreeState(worktree);
+    await this.addAutopilotEvent(run, "warning", "Autopilot worktree discarded", { worktreeId: worktree.id });
+    await this.persistAndBroadcast();
+    return this.requireAutopilotRun(id);
   }
 
   async sendPrompt(input: SendPromptInput): Promise<SendPromptResult> {
@@ -1803,6 +1986,8 @@ export class SupbotRuntime extends EventEmitter {
       return true;
     }
     const knownPaths = [
+      ...this.state.dataArtifacts.map((artifact) => artifact.path),
+      ...this.state.autopilotRuns.map((run) => run.reportPath).filter((path): path is string => Boolean(path)),
       ...this.state.worktrees.map((worktree) => worktree.path),
       ...this.state.conversations.flatMap((conversation) => conversation.messages.flatMap((message) => [
         ...(message.attachments || []).map((attachment) => attachment.path).filter((path): path is string => Boolean(path)),
@@ -1964,7 +2149,7 @@ export class SupbotRuntime extends EventEmitter {
       return;
     }
     let run = this.requireAutopilotRun(runId);
-    if (["completed", "canceled", "running"].includes(run.status)) {
+    if (["completed", "canceled", "running", "verifying", "replanning", "analyzing", "planning", "waiting_approval"].includes(run.status)) {
       return;
     }
     const project = this.requireProject(run.projectId);
@@ -1972,14 +2157,44 @@ export class SupbotRuntime extends EventEmitter {
     this.runningAutopilotRuns.set(runId, { controller });
     try {
       const now = nowIso();
-      run = this.patchAutopilotRun(runId, {
-        status: "running",
+      run = this.transitionAutopilotRun(runId, "analyzing", {
         startedAt: run.startedAt || now,
+        budget: run.budget ? {
+          ...run.budget,
+          usage: {
+            ...run.budget.usage,
+            startedAt: run.budget.usage.startedAt || now,
+            deadlineAt: run.budget.usage.deadlineAt || new Date(new Date(now).getTime() + run.budget.limits.maxRuntimeMinutes * 60_000).toISOString()
+          }
+        } : undefined,
         updatedAt: now,
         error: undefined
       });
-      await this.addAutopilotEvent(run, "info", "Autopilot supervisor started", { projectRoot: project.rootPath });
-      await this.addAutopilotCheckpoint(run, "Supervisor started");
+      await this.addAutopilotEvent(run, "info", "Autopilot supervisor analyzing run", { projectRoot: project.rootPath, profile: run.resolvedProfile });
+      run = this.transitionAutopilotRun(runId, "planning", { updatedAt: nowIso() });
+      if (this.autopilotPlanRequiresApproval(run)) {
+        const decision = {
+          id: randomId("apdecision"),
+          kind: "plan" as const,
+          title: "Approve Autopilot plan",
+          summary: "The goal is ambiguous or the generated plan contains a high-risk task. Review the plan before execution.",
+          risk: "high" as const,
+          impact: this.state.autopilotTasks.filter((task) => task.runId === run.id).map((task) => `${task.title} [${task.risk || "low"}]`),
+          rollbackPlan: "Denying the plan blocks the run without executing project tools.",
+          createdAt: nowIso()
+        };
+        const waiting = this.transitionAutopilotRun(run.id, "waiting_approval", { pendingDecision: decision, updatedAt: nowIso() });
+        await this.addAutopilotEvent(waiting, "warning", "Autopilot plan requires approval", { decision });
+        await this.addAutopilotCheckpoint(waiting, "Waiting for plan approval");
+        await this.persistAndBroadcast();
+        return;
+      }
+      const workspaceReady = await this.prepareAutopilotWorkspace(project, run);
+      if (!workspaceReady) {
+        return;
+      }
+      run = this.transitionAutopilotRun(runId, "running", { updatedAt: nowIso() });
+      await this.addAutopilotCheckpoint(run, "Supervisor started structured plan");
       await this.persistAndBroadcast();
 
       while (!controller.signal.aborted) {
@@ -1994,12 +2209,27 @@ export class SupbotRuntime extends EventEmitter {
           return;
         }
         const nextTaskId = this.nextPendingAutopilotTaskId(run);
+        const budgetError = autopilotBudgetExceeded(run, Boolean(nextTaskId));
+        if (budgetError) {
+          const exhausted = this.transitionAutopilotRun(runId, "budget_exhausted", {
+            error: budgetError,
+            updatedAt: nowIso(),
+            finishedAt: nowIso()
+          });
+          await this.addAutopilotEvent(exhausted, "warning", "Autopilot budget exhausted", { reason: budgetError, budget: exhausted.budget });
+          await this.addAutopilotCheckpoint(exhausted, `Budget exhausted: ${budgetError}`);
+          await this.persistAndBroadcast();
+          return;
+        }
         if (!nextTaskId) {
+          run = this.transitionAutopilotRun(runId, "verifying", { currentStage: "verify", updatedAt: nowIso() });
           const alignment = await this.ensureAutopilotGoalAligned(project, run, controller.signal);
           if (alignment === "aligned") {
             break;
           }
           if (alignment === "queued-fix") {
+            this.transitionAutopilotRun(runId, "replanning", { currentStage: "replan", updatedAt: nowIso() });
+            this.transitionAutopilotRun(runId, "running", { updatedAt: nowIso() });
             continue;
           }
           return;
@@ -2008,6 +2238,7 @@ export class SupbotRuntime extends EventEmitter {
         if (task.status === "completed" || task.status === "skipped") {
           continue;
         }
+        this.incrementAutopilotBudget(runId, { iterations: 1 });
         await this.runAutopilotTask(project, run, task, controller.signal);
       }
 
@@ -2019,14 +2250,17 @@ export class SupbotRuntime extends EventEmitter {
       if (completed) {
         const reportArtifact = await this.writeAutopilotRunReportArtifact(run);
         const finishedAt = nowIso();
-        const next = this.patchAutopilotRun(runId, {
-          status: "completed",
+        const next = this.transitionAutopilotRun(runId, "completed", {
           artifactIds: uniqueStrings([...run.artifactIds, reportArtifact.id]),
           reportPath: reportArtifact.path,
           updatedAt: finishedAt,
           finishedAt
         });
         this.state.dataArtifacts = [reportArtifact, ...this.state.dataArtifacts.filter((artifact) => artifact.id !== reportArtifact.id)];
+        if (next.worktreeId) {
+          const completedWorktree = await this.worktreeManager.complete(next.worktreeId);
+          this.upsertWorktreeState(completedWorktree);
+        }
         await this.addAutopilotEvent(next, "info", "Autopilot data run completed", { reportPath: reportArtifact.path });
         await this.addAutopilotCheckpoint(next, "Completed all data-run stages");
         await this.persistAndBroadcast();
@@ -2037,8 +2271,7 @@ export class SupbotRuntime extends EventEmitter {
         return;
       }
       const now = nowIso();
-      const failed = this.patchAutopilotRun(runId, {
-        status: "failed",
+      const failed = this.transitionAutopilotRun(runId, "failed", {
         error: (error as Error).message,
         updatedAt: now,
         finishedAt: now
@@ -2055,8 +2288,66 @@ export class SupbotRuntime extends EventEmitter {
   private nextPendingAutopilotTaskId(run: AutopilotRun): string | undefined {
     return run.taskIds.find((taskId) => {
       const task = this.state.autopilotTasks.find((item) => item.id === taskId);
-      return task && task.status !== "completed" && task.status !== "skipped";
+      if (!task || task.status === "completed" || task.status === "skipped") {
+        return false;
+      }
+      return (task.dependsOn || []).every((dependencyId) => {
+        const dependency = this.state.autopilotTasks.find((item) => item.id === dependencyId);
+        return dependency?.status === "completed" || dependency?.status === "skipped";
+      });
     });
+  }
+
+  private async prepareAutopilotWorkspace(project: Project, run: AutopilotRun): Promise<boolean> {
+    if (run.resolvedProfile !== "coding" || run.worktreeId || run.directWriteApproved) {
+      return true;
+    }
+    try {
+      const worktree = await this.worktreeManager.createForJob({
+        jobId: run.id,
+        conversationId: `autopilot_${run.id}`,
+        rootDir: project.rootPath
+      });
+      this.upsertWorktreeState(worktree);
+      const next = this.patchAutopilotRun(run.id, { worktreeId: worktree.id, updatedAt: nowIso() });
+      await this.addAutopilotEvent(next, "info", "Coding worktree created", { worktreeId: worktree.id, path: worktree.path });
+      await this.persistAndBroadcast();
+      return true;
+    } catch (error) {
+      const message = (error as Error).message;
+      const decision = {
+        id: randomId("apdecision"),
+        kind: "direct_write" as const,
+        title: "Allow direct writes to a non-Git project",
+        summary: "The coding profile could not create an isolated Git worktree. Continuing will modify the registered project directly.",
+        risk: "high" as const,
+        impact: [project.rootPath, message],
+        rollbackPlan: `Original file contents will be copied under .supbot/runs/${run.id}/backups before WriteFile changes.`,
+        createdAt: nowIso()
+      };
+      const waiting = this.transitionAutopilotRun(run.id, "waiting_approval", {
+        pendingDecision: decision,
+        error: message,
+        updatedAt: nowIso()
+      });
+      await this.addAutopilotEvent(waiting, "warning", "Coding run requires direct-write approval", { decision });
+      await this.addAutopilotCheckpoint(waiting, "Waiting for direct-write approval");
+      await this.persistAndBroadcast();
+      return false;
+    }
+  }
+
+  private autopilotPlanRequiresApproval(run: AutopilotRun): boolean {
+    if (run.planApproved) {
+      return false;
+    }
+    const tasks = this.state.autopilotTasks.filter((task) => task.runId === run.id);
+    const ambiguous = run.goal.trim().length < 12 || /\b(do it|whatever|something|improve it|handle this)\b|处理一下|优化一下|随便|看着办/i.test(run.goal);
+    const unverifiableResearch = run.resolvedProfile === "research"
+      && !run.goalSpec?.deliverables.length
+      && run.goalSpec?.acceptanceCriteria.length === 1
+      && run.goalSpec.acceptanceCriteria[0] === "The requested outcome is produced and supported by recorded evidence.";
+    return ambiguous || unverifiableResearch || tasks.some((task) => task.risk === "high");
   }
 
   private async ensureAutopilotGoalAligned(project: Project, run: AutopilotRun, signal: AbortSignal): Promise<"aligned" | "queued-fix" | "blocked"> {
@@ -2064,8 +2355,7 @@ export class SupbotRuntime extends EventEmitter {
       return "blocked";
     }
     if (!this.canAppendAutopilotTask(run.id)) {
-      const blocked = this.patchAutopilotRun(run.id, {
-        status: "blocked",
+      const blocked = this.transitionAutopilotRun(run.id, "blocked", {
         error: "Autopilot task budget exhausted before goal-output review could run.",
         updatedAt: nowIso()
       });
@@ -2093,8 +2383,7 @@ export class SupbotRuntime extends EventEmitter {
       return "blocked";
     }
     if (completedReview.status !== "completed") {
-      const blocked = this.patchAutopilotRun(run.id, {
-        status: "blocked",
+      const blocked = this.transitionAutopilotRun(run.id, "blocked", {
         error: completedReview.error || "Goal-output review did not complete.",
         updatedAt: nowIso()
       });
@@ -2104,16 +2393,56 @@ export class SupbotRuntime extends EventEmitter {
       return "blocked";
     }
 
-    if (goalReviewPassed(completedReview.output || "")) {
+    activeRun = this.transitionAutopilotRun(run.id, "verifying", { currentStage: "verify", updatedAt: nowIso() });
+    const reviewPassed = goalReviewPassed(completedReview.output || "");
+    const reviewCheck: AutopilotValidationCheck = {
+      validatorId: "goal-alignment",
+      label: "Goal and acceptance criteria alignment",
+      passed: reviewPassed,
+      deterministic: false,
+      evidence: completedReview.output?.slice(0, 2_000)
+    };
+    const reviewViolations = reviewPassed ? [] : extractReviewViolations(completedReview.output || "Goal-output review failed.");
+    const evaluationFingerprint = createHash("sha256").update(JSON.stringify({ passed: reviewPassed, violations: reviewViolations.map((item) => item.toLowerCase()).sort() })).digest("hex");
+    const evaluation = {
+      passed: reviewPassed,
+      checks: [reviewCheck],
+      violations: reviewViolations,
+      evidence: uniqueStrings([...activeRun.evidence, ...(completedReview.evidence || [])]),
+      fingerprint: evaluationFingerprint,
+      evaluatedAt: nowIso()
+    };
+    const runTasks = this.state.autopilotTasks.filter((task) => task.runId === run.id);
+    const artifactHashes = this.state.dataArtifacts.filter((artifact) => artifact.runId === run.id).map((artifact) => artifact.sha256 || artifact.path);
+    const fingerprint = progressFingerprint(runTasks, artifactHashes, evaluationFingerprint);
+    const noProgressCount = reviewPassed ? 0 : fingerprint === activeRun.lastProgressFingerprint ? (activeRun.noProgressCount || 1) + 1 : 1;
+    activeRun = this.patchAutopilotRun(run.id, {
+      lastEvaluation: evaluation,
+      lastProgressFingerprint: fingerprint,
+      noProgressCount,
+      updatedAt: nowIso()
+    });
+
+    if (reviewPassed) {
       await this.addAutopilotEvent(activeRun, "info", "Goal-output review passed", { taskId: completedReview.id });
       await this.addAutopilotCheckpoint(activeRun, "Goal-output review passed");
       await this.persistAndBroadcast();
       return "aligned";
     }
 
+    if (noProgressCount >= 3) {
+      const blocked = this.transitionAutopilotRun(run.id, "blocked", {
+        error: "Autopilot stopped after three verification cycles without measurable progress.",
+        updatedAt: nowIso()
+      });
+      await this.addAutopilotEvent(blocked, "error", "Autopilot no-progress detector stopped the run", { fingerprint, noProgressCount });
+      await this.addAutopilotCheckpoint(blocked, "Blocked: no measurable progress");
+      await this.persistAndBroadcast();
+      return "blocked";
+    }
+
     if (!this.canAppendAutopilotTask(run.id)) {
-      const blocked = this.patchAutopilotRun(run.id, {
-        status: "blocked",
+      const blocked = this.transitionAutopilotRun(run.id, "blocked", {
         error: "Goal-output review failed and no task budget remains for another fix iteration.",
         updatedAt: nowIso()
       });
@@ -2129,7 +2458,11 @@ export class SupbotRuntime extends EventEmitter {
       title: `Revise outputs to match goal ${this.nextAutopilotIteration(run.id)}`,
       prompt: this.buildGoalAlignmentFixPrompt(run.id, completedReview.output || "Goal-output review failed.")
     });
-    const queuedRun = this.requireAutopilotRun(run.id);
+    const currentPlan = this.requireAutopilotRun(run.id).plan;
+    const queuedRun = this.patchAutopilotRun(run.id, {
+      plan: currentPlan ? { ...currentPlan, version: currentPlan.version + 1, taskIds: [...currentPlan.taskIds, fixTask.id], updatedAt: nowIso() } : currentPlan,
+      updatedAt: nowIso()
+    });
     await this.addAutopilotEvent(queuedRun, "warning", "Goal-output review failed; queued fix iteration", { reviewTaskId: completedReview.id, fixTaskId: fixTask.id });
     await this.addAutopilotCheckpoint(queuedRun, "Goal-output review failed; queued fix iteration");
     await this.persistAndBroadcast();
@@ -2138,7 +2471,7 @@ export class SupbotRuntime extends EventEmitter {
 
   private canAppendAutopilotTask(runId: string): boolean {
     const run = this.requireAutopilotRun(runId);
-    return run.taskIds.length < run.writePolicy.maxTasks;
+    return run.taskIds.length < (run.budget?.limits.maxTasks || run.writePolicy.maxTasks);
   }
 
   private nextAutopilotIteration(runId: string): number {
@@ -2153,6 +2486,11 @@ export class SupbotRuntime extends EventEmitter {
       runId: run.id,
       projectId: run.projectId,
       stage: input.stage,
+      kind: input.stage === "review" ? "review" : "produce",
+      dependsOn: [],
+      risk: "low",
+      allowedTools: input.stage === "review" ? ["ReadFile"] : ["ReadFile", "WriteFile", "Shell"],
+      validators: [],
       staffAgent: input.staffAgent,
       title: input.title,
       prompt: input.prompt,
@@ -2161,6 +2499,7 @@ export class SupbotRuntime extends EventEmitter {
       maxAttempts: Math.max(1, run.writePolicy.maxRetries + 1),
       artifactIds: [],
       evidence: [],
+      actionFingerprints: [],
       createdAt: now,
       updatedAt: now
     };
@@ -2183,11 +2522,9 @@ export class SupbotRuntime extends EventEmitter {
         status: "running",
         attempts: currentTask.attempts + 1,
         startedAt: currentTask.startedAt || startedAt,
-        updatedAt: startedAt,
-        error: undefined
+        updatedAt: startedAt
       });
-      const activeRun = this.patchAutopilotRun(run.id, {
-        status: currentTask.stage === "review" ? "reviewing" : "running",
+      const activeRun = this.transitionAutopilotRun(run.id, currentTask.stage === "review" ? "reviewing" : "running", {
         currentStage: currentTask.stage,
         updatedAt: startedAt
       });
@@ -2197,7 +2534,14 @@ export class SupbotRuntime extends EventEmitter {
 
       try {
         const result = await this.runAutopilotTaskEngine(project, activeRun, currentTask, signal);
-        const artifacts = await this.artifactsFromGeneratedFiles(project, activeRun, currentTask, result.generatedFiles);
+        this.incrementAutopilotBudget(run.id, {
+          modelTurns: result.trace.turns,
+          inputTokens: result.trace.usage?.inputTokens,
+          outputTokens: result.trace.usage?.outputTokens,
+          totalTokens: result.trace.usage?.totalTokens
+        });
+        const artifactProject = this.autopilotWorkspaceProject(project, activeRun);
+        const artifacts = await this.artifactsFromGeneratedFiles(artifactProject, activeRun, currentTask, result.generatedFiles);
         const artifactIds = artifacts.map((artifact) => artifact.id);
         this.state.dataArtifacts = [
           ...artifacts,
@@ -2206,12 +2550,19 @@ export class SupbotRuntime extends EventEmitter {
         for (const artifact of artifacts) {
           this.emitTyped({ type: "data_artifact", artifact });
         }
+        const evaluation = await this.evaluateAutopilotTask(artifactProject, activeRun, currentTask, artifacts, result.text, signal);
+        if (!evaluation.passed) {
+          throw new Error(`Task validation failed: ${evaluation.violations.join("; ")}`);
+        }
         const finishedAt = nowIso();
         currentTask = this.patchAutopilotTask(currentTask.id, {
           status: "completed",
           output: result.text,
           artifactIds: uniqueStrings([...currentTask.artifactIds, ...artifactIds]),
           evidence: uniqueStrings([...currentTask.evidence, ...artifacts.map((artifact) => artifact.path), ...extractEvidencePaths(result.text)]),
+          lastEvaluation: evaluation,
+          error: undefined,
+          failureCategory: undefined,
           updatedAt: finishedAt,
           finishedAt
         });
@@ -2229,19 +2580,20 @@ export class SupbotRuntime extends EventEmitter {
           return;
         }
         const message = (error as Error).message;
+        const failureCategory = classifyAutopilotFailure(message);
         const failedAt = nowIso();
         currentTask = this.patchAutopilotTask(currentTask.id, {
           status: currentTask.attempts >= currentTask.maxAttempts ? "blocked" : "failed",
           error: message,
+          failureCategory,
           updatedAt: failedAt,
           finishedAt: currentTask.attempts >= currentTask.maxAttempts ? failedAt : undefined
         });
         const level = currentTask.status === "blocked" ? "error" : "warning";
         const currentRun = this.requireAutopilotRun(run.id);
-        await this.addAutopilotEvent(currentRun, level, `${currentTask.title} ${currentTask.status}`, { taskId: currentTask.id, error: message });
+        await this.addAutopilotEvent(currentRun, level, `${currentTask.title} ${currentTask.status}`, { taskId: currentTask.id, error: message, failureCategory });
         if (currentTask.status === "blocked") {
-          const blocked = this.patchAutopilotRun(run.id, {
-            status: "blocked",
+          const blocked = this.transitionAutopilotRun(run.id, "blocked", {
             error: message,
             updatedAt: failedAt
           });
@@ -2249,20 +2601,34 @@ export class SupbotRuntime extends EventEmitter {
           await this.persistAndBroadcast();
           return;
         }
-        await this.addAutopilotCheckpoint(currentRun, `${currentTask.title} will retry: ${message}`);
+        if (failureCategory === "validation" || failureCategory === "invalid_input") {
+          const latest = this.requireAutopilotRun(run.id);
+          const replanning = this.transitionAutopilotRun(run.id, "replanning", {
+            plan: latest.plan ? { ...latest.plan, version: latest.plan.version + 1, updatedAt: nowIso() } : latest.plan,
+            currentStage: "replan",
+            updatedAt: nowIso()
+          });
+          await this.addAutopilotEvent(replanning, "warning", "Autopilot locally replanned the failed task", { taskId: currentTask.id, failureCategory, error: message });
+        }
+        await this.addAutopilotCheckpoint(this.requireAutopilotRun(run.id), `${currentTask.title} will retry: ${message}`);
         await this.persistAndBroadcast();
+        if (failureCategory === "transient") {
+          await waitWithAbort(Math.min(8_000, 500 * 2 ** Math.max(0, currentTask.attempts - 1)), signal);
+        }
       }
     }
   }
 
-  private async runAutopilotTaskEngine(project: Project, run: AutopilotRun, task: AutopilotTask, signal: AbortSignal): Promise<{ text: string; generatedFiles: GeneratedFile[] }> {
+  private async runAutopilotTaskEngine(project: Project, run: AutopilotRun, task: AutopilotTask, signal: AbortSignal): Promise<{ text: string; generatedFiles: GeneratedFile[]; trace: AgentLoopTrace }> {
     const staff = this.resolveStaffSubagent(task.staffAgent);
+    const workspaceProject = this.autopilotWorkspaceProject(project, run);
+    const directWrite = run.resolvedProfile === "coding" && !run.worktreeId;
     const query = new QueryEngine({
       id: randomId("query"),
       jobId: `${run.id}:${task.id}`,
       conversationId: `autopilot_${run.id}`,
       dataDir: this.storage.getDataDir(),
-      cwd: project.rootPath,
+      cwd: workspaceProject.rootPath,
       modelConfig: this.state.modelConfig,
       apiKey: this.state.modelSecret,
       personality: this.state.personality,
@@ -2277,8 +2643,15 @@ export class SupbotRuntime extends EventEmitter {
       compactBoundaries: this.state.compactBoundaries,
       memory: this.state.memory,
       registry: this.toolRegistry,
-      toolContext: this.createToolExecutionContext(signal, `${run.id}:${task.id}`, 0, { project, policy: run.writePolicy }),
-      permissionMode: "bypassPermissions",
+      toolContext: this.createToolExecutionContext(signal, `${run.id}:${task.id}`, 0, {
+        project: workspaceProject,
+        policy: run.writePolicy,
+        task,
+        workspacePath: workspaceProject.rootPath,
+        allowedWriteRoots: run.resolvedProfile === "coding" ? [workspaceProject.rootPath] : undefined,
+        directWriteBackupRoot: directWrite ? join(project.rootPath, ".supbot", "runs", run.id, "backups") : undefined
+      }),
+      permissionMode: "default",
       permissionRules: this.state.permissionRules,
       signal,
       maxTurns: 8,
@@ -2300,6 +2673,7 @@ export class SupbotRuntime extends EventEmitter {
       },
       onToolProgress: async (toolCall) => {
         this.upsertToolCall(toolCall.jobId, toolCall);
+        await this.recordAutopilotToolProgress(run.id, task.id, toolCall);
         await this.persistAndBroadcast();
         this.emitTyped({ type: "tool_progress", toolCall });
       },
@@ -2323,7 +2697,215 @@ export class SupbotRuntime extends EventEmitter {
       }
     });
     const result = await query.submitTurn();
-    return { text: result.text, generatedFiles: result.generatedFiles };
+    return { text: result.text, generatedFiles: result.generatedFiles, trace: result.trace };
+  }
+
+  private autopilotWorkspaceProject(project: Project, run: AutopilotRun): Project {
+    const worktree = run.worktreeId ? this.worktreeManager.get(run.worktreeId) : undefined;
+    if (!worktree) {
+      return project;
+    }
+    return {
+      ...project,
+      rootPath: worktree.path,
+      metadataPath: join(worktree.path, ".supbot", "project.json")
+    };
+  }
+
+  private async evaluateAutopilotTask(
+    project: Project,
+    run: AutopilotRun,
+    task: AutopilotTask,
+    newArtifacts: DataArtifact[],
+    output: string,
+    signal: AbortSignal
+  ) {
+    const checks: AutopilotValidationCheck[] = [];
+    const artifacts = [...newArtifacts, ...this.state.dataArtifacts.filter((artifact) => artifact.runId === run.id)];
+    for (const validator of task.validators || []) {
+      if (validator.kind === "model_review") {
+        checks.push({
+          validatorId: validator.id,
+          label: validator.label,
+          passed: true,
+          deterministic: false,
+          evidence: "Deferred to the final goal-alignment review."
+        });
+        continue;
+      }
+      if (validator.kind === "artifact_exists") {
+        const normalized = (validator.path || "").replace(/\\/g, "/").replace(/^\.\//, "");
+        const artifact = artifacts.find((item) => item.path.replace(/\\/g, "/").includes(`/${normalized}/`) || item.path.replace(/\\/g, "/").endsWith(`/${normalized}`));
+        checks.push({
+          validatorId: validator.id,
+          label: validator.label,
+          passed: Boolean(artifact),
+          deterministic: true,
+          evidence: artifact?.path,
+          error: artifact ? undefined : `No recorded artifact matched ${validator.path}.`
+        });
+        continue;
+      }
+      if (validator.kind === "json_parse" || validator.kind === "csv_parse") {
+        const target = artifacts.find((item) => !validator.path || item.path.replace(/\\/g, "/").endsWith(validator.path.replace(/\\/g, "/")));
+        let passed = false;
+        let error: string | undefined;
+        if (!target) {
+          error = `Artifact not found: ${validator.path || validator.label}`;
+        } else {
+          try {
+            const content = await readFile(target.path, "utf8");
+            if (validator.kind === "json_parse") {
+              JSON.parse(content);
+            } else {
+              const rows = content.trim().split(/\r?\n/);
+              if (rows.length < 2 || !rows[0].includes(",")) {
+                throw new Error("CSV must contain a header and at least one data row.");
+              }
+            }
+            passed = true;
+          } catch (parseError) {
+            error = (parseError as Error).message;
+          }
+        }
+        checks.push({ validatorId: validator.id, label: validator.label, passed, deterministic: true, evidence: target?.path, error });
+        continue;
+      }
+      if (validator.kind === "command") {
+        const command = validator.command === "auto" ? await this.detectVerificationCommand(project.rootPath) : validator.command;
+        if (!command) {
+          checks.push({ validatorId: validator.id, label: validator.label, passed: false, deterministic: true, error: "No repository verification command could be detected." });
+          continue;
+        }
+        const result = await runShellCommand(command, signal, 120_000, project.rootPath);
+        checks.push({
+          validatorId: validator.id,
+          label: validator.label,
+          passed: result.exitCode === 0,
+          deterministic: true,
+          evidence: `Command: ${command}\nExit code: ${result.exitCode}\n${result.stdout.slice(-2_000)}`,
+          error: result.exitCode === 0 ? undefined : result.stderr.slice(-2_000) || `Command exited with ${result.exitCode}.`
+        });
+      }
+    }
+    if (!checks.length) {
+      checks.push({
+        validatorId: "task-result",
+        label: "Task returned a non-empty result",
+        passed: Boolean(output.trim()),
+        deterministic: true,
+        evidence: output.slice(0, 1_000),
+        error: output.trim() ? undefined : "Task returned no result."
+      });
+    }
+    const failed = checks.filter((check) => !check.passed);
+    const fingerprint = createHash("sha256").update(JSON.stringify(checks.map((check) => ({ id: check.validatorId, passed: check.passed, evidence: check.evidence, error: check.error })))).digest("hex");
+    return {
+      passed: failed.length === 0,
+      checks,
+      violations: failed.map((check) => check.error || `${check.label} failed.`),
+      evidence: uniqueStrings(checks.flatMap((check) => check.evidence ? [check.evidence] : [])),
+      fingerprint,
+      evaluatedAt: nowIso()
+    };
+  }
+
+  private async detectVerificationCommand(rootPath: string): Promise<string | undefined> {
+    try {
+      const pkg = JSON.parse(await readFile(join(rootPath, "package.json"), "utf8")) as { scripts?: Record<string, string> };
+      if (pkg.scripts?.verify) return "npm run verify";
+      if (pkg.scripts?.test) return "npm test";
+      if (pkg.scripts?.build) return "npm run build";
+    } catch {
+      // Try other project types below.
+    }
+    for (const [file, command] of [["pyproject.toml", "pytest -q"], ["Cargo.toml", "cargo test"], ["go.mod", "go test ./..."]] as const) {
+      try {
+        await stat(join(rootPath, file));
+        return command;
+      } catch {
+        // Continue probing.
+      }
+    }
+    return undefined;
+  }
+
+  private async recordAutopilotToolProgress(runId: string, taskId: string, toolCall: ToolCallRecord): Promise<void> {
+    const run = this.requireAutopilotRun(runId);
+    const task = this.requireAutopilotTask(taskId);
+    const fingerprint = createHash("sha256").update(`${toolCall.toolName}\n${stableJson(toolCall.input)}`).digest("hex");
+    const existing = this.state.autopilotActions.find((action) => action.id === toolCall.id);
+    const terminal = toolCall.status === "completed" || toolCall.status === "failed" || toolCall.status === "denied";
+    const status: AutopilotActionRecord["status"] = toolCall.status === "completed" ? "completed" : toolCall.status === "failed" ? "failed" : toolCall.status === "denied" ? "denied" : "started";
+    const retrySafety: AutopilotActionRecord["retrySafety"] = toolCall.toolName === "ReadFile" || toolCall.toolName === "WriteFile" || toolCall.toolName === "Agent"
+      ? "safe"
+      : toolCall.toolName === "Shell" ? "confirm" : "never";
+    const action: AutopilotActionRecord = {
+      id: toolCall.id,
+      runId,
+      taskId,
+      fingerprint,
+      toolName: toolCall.toolName,
+      status,
+      retrySafety,
+      durationMs: Math.max(0, new Date(toolCall.updatedAt).getTime() - new Date(toolCall.createdAt).getTime()),
+      inputSummary: JSON.stringify(toolCall.input).slice(0, 1_000),
+      outputSummary: toolCall.output?.slice(0, 1_000),
+      error: toolCall.error,
+      createdAt: existing?.createdAt || toolCall.createdAt,
+      updatedAt: toolCall.updatedAt
+    };
+    this.state.autopilotActions = [action, ...this.state.autopilotActions.filter((item) => item.id !== action.id)];
+    if (!existing) {
+      this.incrementAutopilotBudget(runId, { toolCalls: 1 });
+    }
+    if (terminal) {
+      this.patchAutopilotTask(taskId, { actionFingerprints: uniqueStrings([...(task.actionFingerprints || []), fingerprint]), updatedAt: nowIso() });
+      await this.autopilotRunStore.appendAction(run, action);
+    }
+    if (toolCall.status === "pending_permission") {
+      const permissionId = `perm_${toolCall.id}`;
+      this.transitionAutopilotRun(runId, "waiting_approval", {
+        pendingDecision: {
+          id: permissionId,
+          kind: "tool",
+          title: `Approve ${toolCall.toolName}`,
+          summary: `Autopilot requested ${toolCall.toolName} while executing ${task.title}.`,
+          risk: toolCall.toolName.startsWith("mcp.") ? "high" : "medium",
+          impact: [JSON.stringify(toolCall.input).slice(0, 500)],
+          rollbackPlan: retrySafety === "safe" ? "The action can be retried from the latest checkpoint." : "The action will not be retried automatically after an uncertain result.",
+          taskId,
+          toolName: toolCall.toolName,
+          input: toolCall.input,
+          createdAt: nowIso()
+        },
+        updatedAt: nowIso()
+      });
+    }
+  }
+
+  private incrementAutopilotBudget(runId: string, usage: Partial<NonNullable<AutopilotRun["budget"]>["usage"]>): void {
+    const run = this.requireAutopilotRun(runId);
+    if (!run.budget) {
+      return;
+    }
+    const current = run.budget.usage;
+    this.patchAutopilotRun(runId, {
+      budget: {
+        ...run.budget,
+        usage: {
+          ...current,
+          iterations: current.iterations + (usage.iterations || 0),
+          modelTurns: current.modelTurns + (usage.modelTurns || 0),
+          toolCalls: current.toolCalls + (usage.toolCalls || 0),
+          inputTokens: sumOptionalNumber(current.inputTokens, usage.inputTokens),
+          outputTokens: sumOptionalNumber(current.outputTokens, usage.outputTokens),
+          totalTokens: sumOptionalNumber(current.totalTokens, usage.totalTokens)
+        }
+      },
+      loopIteration: (run.loopIteration || 0) + (usage.iterations || 0),
+      updatedAt: nowIso()
+    });
   }
 
   private appendMessage(conversationId: string, message: ChatMessage): void {
@@ -2400,12 +2982,34 @@ export class SupbotRuntime extends EventEmitter {
     return run;
   }
 
+  private calculateAutopilotRunMetrics(id: string): AutopilotRunMetrics {
+    const run = this.requireAutopilotRun(id);
+    return calculateAutopilotMetrics(
+      run,
+      this.state.autopilotTasks.filter((task) => task.runId === id),
+      this.state.autopilotActions.filter((action) => action.runId === id),
+      this.state.autopilotEvents.filter((event) => event.runId === id)
+    );
+  }
+
+  private calculateAutopilotQuality(): AutopilotQualitySummary {
+    const metrics = this.state.autopilotRuns.map((run) => this.calculateAutopilotRunMetrics(run.id));
+    return summarizeAutopilotQuality(metrics, this.state.autopilotTasks);
+  }
+
   private requireAutopilotTask(id: string): AutopilotTask {
     const task = this.state.autopilotTasks.find((item) => item.id === id);
     if (!task) {
       throw new Error(`Autopilot task not found: ${id}`);
     }
     return task;
+  }
+
+  private resetRetryableAutopilotTasks(runId: string): void {
+    const now = nowIso();
+    this.state.autopilotTasks = this.state.autopilotTasks.map((task) => task.runId === runId && (task.status === "blocked" || task.status === "failed")
+      ? { ...task, status: "queued", attempts: 0, error: undefined, failureCategory: undefined, finishedAt: undefined, updatedAt: now }
+      : task);
   }
 
   private patchAutopilotRun(id: string, patch: Partial<AutopilotRun>): AutopilotRun {
@@ -2418,6 +3022,14 @@ export class SupbotRuntime extends EventEmitter {
       return next;
     });
     return next || this.requireAutopilotRun(id);
+  }
+
+  private transitionAutopilotRun(id: string, status: AutopilotRun["status"], patch: Partial<AutopilotRun> = {}): AutopilotRun {
+    const current = this.requireAutopilotRun(id);
+    if (!canTransitionAutopilot(current.status, status)) {
+      throw new Error(`Invalid Autopilot transition: ${current.status} -> ${status}`);
+    }
+    return this.patchAutopilotRun(id, { ...patch, status });
   }
 
   private patchAutopilotTask(id: string, patch: Partial<AutopilotTask>): AutopilotTask {
@@ -2443,6 +3055,7 @@ export class SupbotRuntime extends EventEmitter {
       data
     };
     this.state.autopilotEvents = [event, ...this.state.autopilotEvents].slice(0, 500);
+    await this.autopilotRunStore.appendEvent(this.requireAutopilotRun(run.id), event);
     this.emitTyped({ type: "autopilot_event", event });
     return event;
   }
@@ -2457,6 +3070,8 @@ export class SupbotRuntime extends EventEmitter {
       summary,
       taskIds: [...run.taskIds],
       artifactIds: [...run.artifactIds],
+      planVersion: run.plan?.version,
+      budgetUsage: run.budget?.usage ? { ...run.budget.usage } : undefined,
       createdAt: nowIso()
     };
     this.state.autopilotCheckpoints = [checkpoint, ...this.state.autopilotCheckpoints];
@@ -2464,6 +3079,12 @@ export class SupbotRuntime extends EventEmitter {
       ? { ...item, checkpointIds: uniqueStrings([checkpoint.id, ...item.checkpointIds]), updatedAt: nowIso() }
       : item);
     await this.writeAutopilotCheckpointFile(run, checkpoint);
+    const activeRun = this.requireAutopilotRun(run.id);
+    await this.autopilotRunStore.writeSnapshot(
+      activeRun,
+      this.state.autopilotTasks.filter((task) => task.runId === run.id),
+      this.state.dataArtifacts.filter((artifact) => artifact.runId === run.id)
+    );
     return checkpoint;
   }
 
@@ -2516,6 +3137,7 @@ export class SupbotRuntime extends EventEmitter {
     const reportPath = join(project.rootPath, "reports", `autopilot-${run.id}-summary.md`);
     const tasks = this.state.autopilotTasks.filter((task) => task.runId === run.id);
     const artifacts = this.state.dataArtifacts.filter((artifact) => artifact.runId === run.id);
+    const approvalHistory = formatAutopilotApprovalHistory(this.state.autopilotEvents.filter((event) => event.runId === run.id));
     const content = [
       `# ${run.title}`,
       "",
@@ -2527,6 +3149,9 @@ export class SupbotRuntime extends EventEmitter {
       "",
       "## Artifacts",
       artifacts.length ? artifacts.map((artifact) => `- ${artifact.kind}: ${artifact.path}`).join("\n") : "- No artifacts recorded.",
+      "",
+      "## Approval History",
+      approvalHistory,
       "",
       "## Stage Outputs",
       tasks.map((task) => [
@@ -2626,22 +3251,13 @@ export class SupbotRuntime extends EventEmitter {
   }
 
   private autopilotTaskPrompt(run: AutopilotRun, task: AutopilotTask): string {
-    const artifacts = this.state.dataArtifacts
-      .filter((artifact) => artifact.runId === run.id)
-      .map((artifact) => `- ${artifact.kind} ${artifact.stage}: ${artifact.path}`)
-      .join("\n");
-    const completed = this.state.autopilotTasks
-      .filter((item) => item.runId === run.id && item.status === "completed")
-      .map((item) => `- ${item.stage}: ${item.output?.slice(0, 800) || "completed"}`)
-      .join("\n");
+    const tasks = this.state.autopilotTasks.filter((item) => item.runId === run.id);
+    const artifactPaths = this.state.dataArtifacts.filter((artifact) => artifact.runId === run.id).map((artifact) => artifact.path);
     return [
       task.prompt,
       "",
-      "Existing run artifacts:",
-      artifacts || "- None yet.",
-      "",
-      "Completed stage notes:",
-      completed || "- None yet."
+      compactAutopilotContext(run, task, tasks, artifactPaths),
+      task.error ? `\nPrevious attempt error:\n${task.error}` : ""
     ].join("\n");
   }
 
@@ -2682,16 +3298,36 @@ export class SupbotRuntime extends EventEmitter {
   private async recoverAutopilotRunsOnStartup(): Promise<void> {
     let changed = false;
     for (const run of this.state.autopilotRuns) {
-      if (run.status !== "queued" && run.status !== "planning" && run.status !== "running" && run.status !== "reviewing") {
+      if (!["queued", "analyzing", "planning", "running", "verifying", "replanning", "reviewing", "waiting_approval"].includes(run.status)) {
         continue;
       }
-      const next = this.patchAutopilotRun(run.id, {
+      if (run.status === "waiting_approval" && run.pendingDecision) {
+        continue;
+      }
+      const uncertain = this.state.autopilotActions.find((action) => action.runId === run.id && action.status === "started" && action.retrySafety !== "safe");
+      const next = uncertain ? this.patchAutopilotRun(run.id, {
+        status: "waiting_approval",
+        pendingDecision: {
+          id: randomId("apdecision"),
+          kind: "recovery",
+          title: "Resolve an uncertain external action",
+          summary: `${uncertain.toolName} was in progress when Supbot stopped. Its outcome cannot be safely inferred.`,
+          risk: "high",
+          impact: [uncertain.inputSummary],
+          rollbackPlan: "Inspect the external system before approving a retry from the latest checkpoint.",
+          taskId: uncertain.taskId,
+          toolName: uncertain.toolName,
+          createdAt: nowIso()
+        },
+        error: "Recovered with an uncertain external side effect.",
+        updatedAt: nowIso()
+      }) : this.patchAutopilotRun(run.id, {
         status: "paused",
         error: "Recovered after app restart. Resume the run to continue.",
         updatedAt: nowIso()
       });
-      await this.addAutopilotEvent(next, "warning", "Autopilot run recovered and paused after app restart");
-      await this.addAutopilotCheckpoint(next, "Recovered and paused after app restart");
+      await this.addAutopilotEvent(next, "warning", uncertain ? "Autopilot recovery requires approval" : "Autopilot run recovered and paused after app restart");
+      await this.addAutopilotCheckpoint(next, uncertain ? "Recovered with uncertain external action" : "Recovered and paused after app restart");
       changed = true;
     }
     if (changed) {
@@ -2703,16 +3339,21 @@ export class SupbotRuntime extends EventEmitter {
     const job = this.findRootJob(jobId);
     const worktree = job?.worktreeId ? this.worktreeManager.get(job.worktreeId) : undefined;
     const project = options.project;
-    const allowedWriteRoots = project ? this.projectManager.absoluteAllowedWriteRoots(project.rootPath, options.policy) : undefined;
-    const workspacePath = project?.rootPath || worktree?.path || this.rootDir;
+    const workspacePath = options.workspacePath || project?.rootPath || worktree?.path || this.rootDir;
+    const allowedWriteRoots = options.allowedWriteRoots || (project ? this.projectManager.absoluteAllowedWriteRoots(workspacePath, options.policy) : undefined);
+    const runId = jobId.split(":", 1)[0];
+    const completedActionFingerprints = this.state.autopilotActions
+      .filter((action) => action.runId === runId && action.status === "completed")
+      .map((action) => action.fingerprint);
     const host: LocalToolHost = {
       dataDir: this.storage.getDataDir(),
       workspacePath,
       cwd: workspacePath,
       worktreeId: worktree?.id,
       projectId: project?.id,
-      projectRoot: project?.rootPath,
+      projectRoot: project ? workspacePath : undefined,
       allowedWriteRoots,
+      backupRoot: options.directWriteBackupRoot,
       randomId,
       nowIso
     };
@@ -2720,8 +3361,16 @@ export class SupbotRuntime extends EventEmitter {
       signal,
       workspaceMode: job?.workspaceMode || "main",
       projectId: project?.id,
-      projectRoot: project?.rootPath,
+      projectRoot: project ? workspacePath : undefined,
       allowedWriteRoots,
+      autopilotPolicy: options.task ? {
+        allowedTools: options.task.allowedTools?.length ? options.task.allowedTools : ["ReadFile"],
+        allowNetwork: options.policy?.allowNetwork !== false,
+        allowMcp: options.policy?.allowMcp !== false,
+        autoApproveSandboxWrites: options.task.risk !== "high",
+        autoApproveVerificationCommands: options.task.kind === "verify" || options.task.stage === "verify" || options.task.stage === "review"
+      } : undefined,
+      completedActionFingerprints: options.task ? completedActionFingerprints : undefined,
       host,
       ensureIsolatedWorkspace: async (toolName: string) => this.ensureJobWorktree(jobId, toolName),
       subagents: this.state.subagents,
@@ -2797,11 +3446,12 @@ export class SupbotRuntime extends EventEmitter {
       ...this.state.pendingToolPermissions.filter((item) => item.id !== permission.id),
       permission
     ];
-    await this.persistAndBroadcast();
-    this.emitTyped({ type: "tool_permission", permission });
-    return new Promise((resolve) => {
+    const decisionPromise = new Promise<"approved" | "denied">((resolve) => {
       this.permissionWaiters.set(permission.id, { resolve });
     });
+    await this.persistAndBroadcast();
+    this.emitTyped({ type: "tool_permission", permission });
+    return decisionPromise;
   }
 
   private resolvePermission(permissionId: string, decision: "approved" | "denied"): PendingToolPermission | undefined {
@@ -3822,6 +4472,54 @@ function extractEvidencePaths(text: string): string[] {
   return uniqueStrings(matches.map((item) => item.replace(/[.,;:]+$/, "")));
 }
 
+function formatAutopilotApprovalHistory(events: AutopilotEvent[]): string {
+  const approvals = events
+    .map((event) => {
+      const outcome = autopilotApprovalOutcome(event.message);
+      if (!outcome) {
+        return undefined;
+      }
+      const data = recordValue(event.data);
+      const decision = recordValue(data?.decision);
+      const title = stringValue(decision?.title) || "Approval decision";
+      const kind = stringValue(decision?.kind) || "unknown";
+      const risk = stringValue(decision?.risk) || "unknown";
+      const impact = stringArrayValue(decision?.impact);
+      const comment = stringValue(data?.comment);
+      return [
+        `- ${event.createdAt} — ${outcome === "approved" ? "Approved" : "Denied"} — ${markdownInline(title)}`,
+        `  - Type: ${markdownInline(kind)}`,
+        `  - Risk: ${markdownInline(risk)}`,
+        `  - Impact: ${impact.length ? impact.map(markdownInline).join(", ") : "No explicit impact scope."}`,
+        `  - Comment: ${comment ? markdownInline(comment) : "No approval comment."}`
+      ].join("\n");
+    })
+    .filter((item): item is string => Boolean(item));
+  return approvals.length ? approvals.join("\n") : "- No approval decisions recorded.";
+}
+
+function autopilotApprovalOutcome(message: string): "approved" | "denied" | undefined {
+  if (message === "Autopilot approval granted" || message === "Autopilot tool approval approved") {
+    return "approved";
+  }
+  if (message === "Autopilot approval denied" || message === "Autopilot tool approval denied") {
+    return "denied";
+  }
+  return undefined;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function markdownInline(value: string): string {
+  return value.replace(/\s+/g, " ").replace(/[|`]/g, "\\$&").trim();
+}
+
 function goalReviewPassed(text: string): boolean {
   const firstMeaningfulLine = text.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "";
   if (/^PASS\b/i.test(firstMeaningfulLine)) {
@@ -3865,6 +4563,52 @@ function objectData(value: unknown): Record<string, unknown> {
     return { value };
   }
   return value as Record<string, unknown>;
+}
+
+function extractReviewViolations(output: string): string[] {
+  return output.split(/\r?\n/).slice(1).map((line) => line.replace(/^[-*]\s*/, "").trim()).filter(Boolean).slice(0, 12);
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function sumOptionalNumber(left: number | undefined, right: number | undefined): number | undefined {
+  return left === undefined && right === undefined ? undefined : (left || 0) + (right || 0);
+}
+
+function resetAutopilotBudgetWindow(budget: AutopilotRun["budget"]): AutopilotRun["budget"] {
+  if (!budget) return undefined;
+  const startedAt = nowIso();
+  return {
+    ...budget,
+    usage: {
+      ...budget.usage,
+      iterations: 0,
+      modelTurns: 0,
+      toolCalls: 0,
+      startedAt,
+      deadlineAt: new Date(new Date(startedAt).getTime() + budget.limits.maxRuntimeMinutes * 60_000).toISOString()
+    }
+  };
+}
+
+function waitWithAbort(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolvePromise, reject) => {
+    const timeout = setTimeout(finish, ms);
+    const onAbort = () => finish(new Error("Autopilot retry canceled."));
+    function finish(error?: Error) {
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", onAbort);
+      if (error) reject(error);
+      else resolvePromise();
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function delay(ms: number): Promise<void> {

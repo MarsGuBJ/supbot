@@ -1,10 +1,11 @@
 import type { GeneratedFile, PendingToolPermission, PermissionMode, PermissionRule, ToolCallRecord } from "@supbot/shared";
 import { nowIso } from "@supbot/shared";
+import { createHash } from "node:crypto";
 import type { AdapterToolCall } from "./modelAdapter";
 import { PermissionPolicy } from "./permissionPolicy";
 import { pathIsInside, resolveProjectWriteTarget } from "./projectManager";
 import { validateJsonSchemaValue } from "./jsonSchema";
-import type { ToolDefinition, ToolExecutionContext, ToolRegistry } from "./toolRegistry";
+import { toolAllowed, type ToolDefinition, type ToolExecutionContext, type ToolRegistry } from "./toolRegistry";
 
 export interface ToolExecutorInput {
   jobId: string;
@@ -34,6 +35,7 @@ export class ToolExecutor {
     const tool = input.registry.get(requestedToolName);
     const toolName = tool?.name || requestedToolName;
     const parsedInput = parseToolArguments(input.toolCall.function.arguments);
+    const actionFingerprint = createHash("sha256").update(`${toolName}\n${stableJson(parsedInput)}`).digest("hex");
     const now = nowIso();
     const generatedFiles: GeneratedFile[] = [];
     let record: ToolCallRecord = {
@@ -55,9 +57,18 @@ export class ToolExecutor {
       await emit({ status: "failed", error: `Unknown tool: ${requestedToolName}` });
       return { record, toolResultText: `Error: ${record.error}`, generatedFiles };
     }
+    if (input.context.completedActionFingerprints?.includes(actionFingerprint)) {
+      await emit({ status: "completed", output: `Skipped duplicate completed action ${toolName}.` });
+      return { record, toolResultText: record.output || "Duplicate action skipped.", generatedFiles };
+    }
     if (tool.validationError) {
       await emit({ status: "failed", error: tool.validationError });
       return { record, toolResultText: `Error: ${tool.validationError}`, generatedFiles };
+    }
+    const autopilotError = validateAutopilotPolicy(tool, parsedInput, input.context);
+    if (autopilotError) {
+      await emit({ status: "denied", error: autopilotError });
+      return { record, toolResultText: `Error: ${autopilotError}`, generatedFiles };
     }
     const validationError = validateToolInput(parsedInput, tool.parameters);
     if (validationError) {
@@ -88,7 +99,7 @@ export class ToolExecutor {
       }
     }
 
-    const decision = this.policy.decide({
+    const decision = autoApproveAutopilot(tool, parsedInput, input.context) ? { behavior: "allow" as const } : this.policy.decide({
       mode: input.permissionMode,
       rules: input.permissionRules,
       jobId: input.jobId,
@@ -140,6 +151,58 @@ export class ToolExecutor {
       return { record, toolResultText: `Error: ${message}`, generatedFiles };
     }
   }
+}
+
+function validateAutopilotPolicy(tool: ToolDefinition, input: unknown, context: ToolExecutionContext): string | undefined {
+  const policy = context.autopilotPolicy;
+  if (!policy) {
+    return undefined;
+  }
+  if (!toolAllowed(tool.name, policy.allowedTools)) {
+    return `Autopilot task policy blocked ${tool.name}.`;
+  }
+  if (tool.name.startsWith("mcp.") && !policy.allowMcp) {
+    return "Autopilot policy disabled MCP tools.";
+  }
+  if (!policy.allowNetwork && toolUsesNetwork(tool, input)) {
+    return `Autopilot policy disabled network access for ${tool.name}.`;
+  }
+  return undefined;
+}
+
+function autoApproveAutopilot(tool: ToolDefinition, input: unknown, context: ToolExecutionContext): boolean {
+  const policy = context.autopilotPolicy;
+  if (!policy) {
+    return false;
+  }
+  if (tool.risk === "read" || tool.name === "Agent") {
+    return true;
+  }
+  if (tool.name === "WriteFile" && policy.autoApproveSandboxWrites) {
+    return true;
+  }
+  if (tool.name === "Shell" && policy.autoApproveVerificationCommands) {
+    return isVerificationCommand(String(objectInput(input).command || ""));
+  }
+  return false;
+}
+
+function toolUsesNetwork(tool: ToolDefinition, input: unknown): boolean {
+  if (tool.name.startsWith("mcp.")) {
+    return true;
+  }
+  if (tool.name !== "Shell") {
+    return false;
+  }
+  const command = String(objectInput(input).command || "");
+  return /\b(curl|wget|invoke-webrequest|invoke-restmethod|git\s+(clone|fetch|pull|push)|npm\s+(install|view|publish)|pnpm\s+(add|install)|yarn\s+add|pip\s+install)\b/i.test(command);
+}
+
+function isVerificationCommand(command: string): boolean {
+  if (!command.trim() || /[>|;&]|remove-item|rm\s|del\s|set-content|out-file|invoke-webrequest|curl|wget/i.test(command)) {
+    return false;
+  }
+  return /^(?:npm|pnpm|yarn)\s+(?:run\s+)?(?:test|build|lint|typecheck|check|verify)\b|^(?:pytest|vitest|jest|cargo\s+(?:test|check)|go\s+test|dotnet\s+test|git\s+(?:status|diff)|tsc\b)/i.test(command.trim());
 }
 
 function parseToolArguments(raw: string): unknown {
@@ -248,6 +311,16 @@ function isPathLike(value: string): boolean {
 
 function objectInput(input: unknown): Record<string, unknown> {
   return input && typeof input === "object" && !Array.isArray(input) ? input as Record<string, unknown> : {};
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableJson).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function projectRelative(projectRoot: string, path: string): string {
