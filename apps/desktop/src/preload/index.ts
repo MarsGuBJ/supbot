@@ -46,6 +46,7 @@ const api = {
   createConversation: (title?: string) => ipcRenderer.invoke("conversation:create", title),
   deleteConversation: (id: string) => ipcRenderer.invoke("conversation:delete", id),
   sendPrompt: (input: SendPromptInput) => ipcRenderer.invoke("prompt:send", input),
+  readClipboardText: () => ipcRenderer.invoke("clipboard:readText"),
   cancelJob: (id: string) => ipcRenderer.invoke("job:cancel", id),
   approveToolPermission: (id: string) => ipcRenderer.invoke("tool:approve", id),
   denyToolPermission: (id: string) => ipcRenderer.invoke("tool:deny", id),

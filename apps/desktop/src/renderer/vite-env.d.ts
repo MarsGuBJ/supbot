@@ -98,6 +98,7 @@ declare global {
       createConversation(title?: string): Promise<Conversation>;
       deleteConversation(id: string): Promise<void>;
       sendPrompt(input: SendPromptInput): Promise<SendPromptResult>;
+      readClipboardText(): Promise<string>;
       cancelJob(id: string): Promise<void>;
       approveToolPermission(id: string): Promise<void>;
       denyToolPermission(id: string): Promise<void>;

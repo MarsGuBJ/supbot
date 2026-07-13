@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell, type WebContents } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell, type WebContents } from "electron";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { hostname, userInfo } from "node:os";
 import { isAbsolute, join, normalize, relative, resolve } from "node:path";
@@ -598,6 +598,7 @@ function registerIpc(): void {
   ipcMain.handle("conversation:create", (_event, title?: string) => getRuntime().createConversation(optionalString(title, "title")));
   ipcMain.handle("conversation:delete", (_event, id: string) => getRuntime().deleteConversation(requiredString(id, "conversation id")));
   ipcMain.handle("prompt:send", (_event, input: SendPromptInput) => getRuntime().sendPrompt(validateSendPromptInput(input)));
+  ipcMain.handle("clipboard:readText", () => clipboard.readText());
   ipcMain.handle("job:cancel", (_event, id: string) => getRuntime().cancelJob(requiredString(id, "job id")));
   ipcMain.handle("tool:approve", (_event, id: string) => getRuntime().approveToolPermission(requiredString(id, "permission id")));
   ipcMain.handle("tool:deny", (_event, id: string) => getRuntime().denyToolPermission(requiredString(id, "permission id")));

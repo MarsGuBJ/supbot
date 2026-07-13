@@ -65,6 +65,7 @@ import {
   message
 } from "antd";
 import type { FormInstance } from "antd/es/form";
+import type { TextAreaRef } from "antd/es/input/TextArea";
 import type { UploadFile } from "antd/es/upload/interface";
 import zhCN from "antd/locale/zh_CN";
 import enUS from "antd/locale/en_US";
@@ -142,6 +143,7 @@ type WorkspaceView = "chat" | "server" | "config" | "market";
 type DetailPanel = "memory" | "schedule" | "autopilot" | null;
 type Translator = (key: string, vars?: Record<string, string | number>) => string;
 type SelectionContextMenu = { x: number; y: number; text: string };
+type PromptContextMenu = { x: number; y: number; selectionStart: number; selectionEnd: number; selectedText: string };
 const defaultToolMarketApiUrl = "https://i-shu.com";
 const defaultBotstationBaseUrl = "http://localhost:8081";
 const defaultBotstationIssuerUrl = "http://localhost:8092";
@@ -150,6 +152,27 @@ const defaultBotstationScope = "openid profile email";
 const defaultBotstationRedirectUri = "http://localhost:8800/oauth2/callback";
 const defaultBotstationUser = "dev-user";
 const hiddenSlashCommandCapabilityIds = new Set(["tool.file", "tool.shell"]);
+const hiddenChatGeneratedFileExtensions = new Set([
+  ".bat",
+  ".cmd",
+  ".cjs",
+  ".fish",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".pl",
+  ".ps1",
+  ".psd1",
+  ".psm1",
+  ".py",
+  ".rb",
+  ".sh",
+  ".ts",
+  ".tsx",
+  ".vbs",
+  ".wsf",
+  ".zsh"
+]);
 
 const theme = {
   token: {
@@ -3150,6 +3173,17 @@ function numberField(record: Record<string, unknown> | undefined, key: string): 
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+function generatedFileExtension(file: { name: string; path: string }): string {
+  const source = file.name || file.path;
+  const filename = source.split(/[\\/]/).pop() || source;
+  const dotIndex = filename.lastIndexOf(".");
+  return dotIndex >= 0 ? filename.slice(dotIndex).toLowerCase() : "";
+}
+
+function shouldShowGeneratedFileInChat(file: { name: string; path: string }): boolean {
+  return !hiddenChatGeneratedFileExtensions.has(generatedFileExtension(file));
+}
+
 function nodeInside(container: HTMLElement, node: Node | null): boolean {
   return Boolean(node && (node === container || container.contains(node)));
 }
@@ -3202,6 +3236,16 @@ async function writeClipboardText(text: string): Promise<void> {
   copyTextFallback(text);
 }
 
+async function readClipboardText(): Promise<string> {
+  if (window.supbot?.readClipboardText) {
+    return window.supbot.readClipboardText();
+  }
+  if (!navigator.clipboard?.readText) {
+    throw new Error("Paste failed.");
+  }
+  return navigator.clipboard.readText();
+}
+
 function ChatPanel({
   conversation,
   prompt,
@@ -3252,8 +3296,12 @@ function ChatPanel({
   slashCommands: ReturnType<typeof buildSlashCommands>;
 }) {
   const selectionMenuRef = useRef<HTMLDivElement | null>(null);
+  const promptMenuRef = useRef<HTMLDivElement | null>(null);
+  const promptInputRef = useRef<TextAreaRef | null>(null);
   const [selectionMenu, setSelectionMenu] = useState<SelectionContextMenu | null>(null);
   const [selectionAction, setSelectionAction] = useState<"copy" | "memory" | null>(null);
+  const [promptMenu, setPromptMenu] = useState<PromptContextMenu | null>(null);
+  const [promptAction, setPromptAction] = useState<"copy" | "paste" | null>(null);
   const filteredCommands = useMemo(() => {
     if (!prompt.startsWith("/")) {
       return [];
@@ -3275,6 +3323,7 @@ function ChatPanel({
   }, [conversation?.id, pendingToolPermissions, runningJob]);
 
   const closeSelectionMenu = useCallback(() => setSelectionMenu(null), []);
+  const closePromptMenu = useCallback(() => setPromptMenu(null), []);
 
   const openSelectionMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     const text = selectedTextWithin(event.currentTarget);
@@ -3291,6 +3340,25 @@ function ChatPanel({
       text
     });
   }, []);
+
+  const openPromptMenu = useCallback((event: React.MouseEvent<HTMLTextAreaElement>) => {
+    event.preventDefault();
+    closeSelectionMenu();
+    const target = event.currentTarget;
+    const selectionStart = target.selectionStart ?? prompt.length;
+    const selectionEnd = target.selectionEnd ?? selectionStart;
+    const start = Math.min(selectionStart, selectionEnd);
+    const end = Math.max(selectionStart, selectionEnd);
+    const menuWidth = 176;
+    const menuHeight = 92;
+    setPromptMenu({
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
+      selectionStart: start,
+      selectionEnd: end,
+      selectedText: prompt.slice(start, end)
+    });
+  }, [closeSelectionMenu, prompt]);
 
   const handleMessageScroll = useCallback(() => {
     closeSelectionMenu();
@@ -3313,6 +3381,37 @@ function ChatPanel({
       setSelectionAction(null);
     }
   }, [addSelectedTextToMemory, closeSelectionMenu, copySelectedText, selectionMenu]);
+
+  const runPromptAction = useCallback(async (action: "copy" | "paste") => {
+    if (!promptMenu) {
+      return;
+    }
+    setPromptAction(action);
+    try {
+      if (action === "copy") {
+        if (promptMenu.selectedText) {
+          await copySelectedText(promptMenu.selectedText);
+        }
+        closePromptMenu();
+        return;
+      }
+      const clipboardText = await readClipboardText();
+      const nextPrompt = `${prompt.slice(0, promptMenu.selectionStart)}${clipboardText}${prompt.slice(promptMenu.selectionEnd)}`;
+      const caret = promptMenu.selectionStart + clipboardText.length;
+      setPrompt(nextPrompt);
+      closePromptMenu();
+      window.requestAnimationFrame(() => {
+        const textarea = promptInputRef.current?.resizableTextArea?.textArea;
+        textarea?.focus();
+        textarea?.setSelectionRange(caret, caret);
+      });
+      message.success(t("已粘贴剪贴板内容。"));
+    } catch (error) {
+      message.error((error as Error).message);
+    } finally {
+      setPromptAction(null);
+    }
+  }, [closePromptMenu, copySelectedText, prompt, promptMenu, setPrompt, t]);
 
   useEffect(() => {
     if (!selectionMenu) {
@@ -3344,6 +3443,29 @@ function ChatPanel({
       document.removeEventListener("selectionchange", onSelectionChange);
     };
   }, [closeSelectionMenu, scrollRef, selectionMenu]);
+
+  useEffect(() => {
+    if (!promptMenu) {
+      return;
+    }
+    const onPointerDown = (event: PointerEvent) => {
+      if (promptMenuRef.current?.contains(event.target as Node)) {
+        return;
+      }
+      closePromptMenu();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closePromptMenu();
+      }
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [closePromptMenu, promptMenu]);
 
   useEffect(() => {
     const stream = scrollRef.current;
@@ -3422,6 +3544,36 @@ function ChatPanel({
           </button>
         </div>
       ) : null}
+      {promptMenu ? (
+        <div
+          ref={promptMenuRef}
+          className="selection-context-menu"
+          style={{ left: promptMenu.x, top: promptMenu.y }}
+          role="menu"
+          aria-label={t("提示词输入框操作")}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!promptMenu.selectedText || Boolean(promptAction)}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => void runPromptAction("copy")}
+          >
+            <CopyOutlined />
+            <span>{t("复制")}</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={Boolean(promptAction)}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => void runPromptAction("paste")}
+          >
+            <FileTextOutlined />
+            <span>{t("粘贴")}</span>
+          </button>
+        </div>
+      ) : null}
       <div className="composer">
         <ComposerPermissionPrompt
           permissions={composerPermissions}
@@ -3448,8 +3600,10 @@ function ChatPanel({
           </Tooltip>
           <div className="composer-input-shell">
             <Input.TextArea
+              ref={promptInputRef}
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
+              onContextMenu={openPromptMenu}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
@@ -3560,6 +3714,7 @@ function ComposerPermissionPrompt({
 }
 
 function MessageBubble({ message: item, t }: { message: ChatMessage; t: (key: string, vars?: Record<string, string | number>) => string }) {
+  const visibleGeneratedFiles = item.generatedFiles?.filter(shouldShowGeneratedFileInChat) || [];
   return (
     <div className={`message-row ${item.role}`}>
       <div className="message-bubble">
@@ -3574,9 +3729,9 @@ function MessageBubble({ message: item, t }: { message: ChatMessage; t: (key: st
             {item.attachments.map((attachment) => <Tag key={attachment.id}><PaperClipOutlined /> {attachment.name}</Tag>)}
           </div>
         ) : null}
-        {item.generatedFiles?.length ? (
+        {visibleGeneratedFiles.length ? (
           <div className="generated-files">
-            {item.generatedFiles.map((file) => (
+            {visibleGeneratedFiles.map((file) => (
               <button className="generated-file" type="button" key={file.id} onClick={() => void window.supbot.openFile(file.path)}>
                 <PaperClipOutlined />
                 <span>{file.name}</span>
