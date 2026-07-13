@@ -4,13 +4,14 @@ import { hostname, userInfo } from "node:os";
 import { isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { JsonFileStorage, SupbotRuntime, ensureRuntimeDirs, identityContextFromAccessToken, oidcTokenSetFromTokenResponse, type RuntimeState, type StorageAdapter } from "@supbot/runtime";
 import type { AutopilotStartDataRunInput, CapabilityUpdateInput, DataSourceSpec, IdentityContext, McpConfigTransfer, McpServerInput, McpServerUpdate, MemoryAddInput, MemoryImportInput, MemoryRecallFeedbackInput, MemoryReplayRecallInput, MemorySearchQuery, MemoryUpdateInput, ModelConfigUpdate, PermissionMode, PermissionRule, PersonalityConfig, ProjectCreateInput, ProjectUpdateInput, RemoteBridgeConfig, ScheduledJobInput, SendPromptInput, ServstationA2AConfigUpdate, ServstationA2AOidcLoginInput, ServstationA2AOidcLoginResult, ServstationAutopilotStartInput, ServstationAutopilotStatusUpdate, ServstationClientSnapshotQuery, ServstationFlowEngineApprovalDecisionInput, ServstationFlowEngineLaunchInput, ServstationMailAccountDraft, ServstationMessageAttachmentUpload, ServstationMessageFolder, ServstationMessageAccountRef, ServstationScheduledJobInput, ServstationSendAgentMessageInput, ServstationSendDirectMessageInput, ServstationSendPromptInput, SubagentConfig, ToolMarketConfigUpdate, ToolMarketQuery } from "@supbot/shared";
+import type { AutopilotApprovalDecisionInput, AutopilotStartInput } from "@supbot/shared";
 
 let mainWindow: BrowserWindow | null = null;
 let runtime: SupbotRuntime | null = null;
 const servstationMessageEventSubscriptions = new Map<string, AbortController>();
 const isDev = !app.isPackaged;
 const allowedDevServerOrigin = "http://127.0.0.1:5173";
-const appIconPath = join(__dirname, "../../build/icon.ico");
+const appIconPath = join(__dirname, "../../build/supbot-icon.ico");
 const productionCsp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'none'";
 let productionCspInstalled = false;
 
@@ -501,11 +502,18 @@ function registerIpc(): void {
     return project;
   });
   ipcMain.handle("project:update", (_event, id: string, input: ProjectUpdateInput) => getRuntime().updateProject(requiredString(id, "project id"), validateProjectUpdateInput(input)));
-  ipcMain.handle("autopilot:startDataRun", (_event, input: AutopilotStartDataRunInput) => getRuntime().startDataRun(validateAutopilotStartInput(input)));
+  ipcMain.handle("autopilot:startDataRun", (_event, input: AutopilotStartDataRunInput) => getRuntime().startDataRun(validateAutopilotDataStartInput(input)));
+  ipcMain.handle("autopilot:start", (_event, input: AutopilotStartInput) => getRuntime().startAutopilotRun(validateAutopilotStartInput(input)));
   ipcMain.handle("autopilot:pause", (_event, id: string) => getRuntime().pauseAutopilotRun(requiredString(id, "autopilot run id")));
   ipcMain.handle("autopilot:resume", (_event, id: string) => getRuntime().resumeAutopilotRun(requiredString(id, "autopilot run id")));
   ipcMain.handle("autopilot:cancel", (_event, id: string) => getRuntime().cancelAutopilotRun(requiredString(id, "autopilot run id")));
   ipcMain.handle("autopilot:getRunReport", (_event, id: string) => getRuntime().getAutopilotRunReport(requiredString(id, "autopilot run id")));
+  ipcMain.handle("autopilot:getRunMetrics", (_event, id: string) => getRuntime().getAutopilotRunMetrics(requiredString(id, "autopilot run id")));
+  ipcMain.handle("autopilot:getQualitySummary", () => getRuntime().getAutopilotQualitySummary());
+  ipcMain.handle("autopilot:decideApproval", (_event, input: AutopilotApprovalDecisionInput) => getRuntime().decideAutopilotApproval(validateAutopilotApprovalDecision(input)));
+  ipcMain.handle("autopilot:retryFromCheckpoint", (_event, id: string) => getRuntime().retryAutopilotFromCheckpoint(requiredString(id, "autopilot run id")));
+  ipcMain.handle("autopilot:applyWorktree", (_event, id: string) => getRuntime().applyAutopilotWorktree(requiredString(id, "autopilot run id")));
+  ipcMain.handle("autopilot:discardWorktree", (_event, id: string) => getRuntime().discardAutopilotWorktree(requiredString(id, "autopilot run id")));
   ipcMain.handle("worktree:list", () => getRuntime().listWorktrees());
   ipcMain.handle("worktree:getDiff", (_event, id: string) => getRuntime().getWorktreeDiff(requiredString(id, "worktree id")));
   ipcMain.handle("worktree:apply", (_event, id: string) => getRuntime().applyWorktree(requiredString(id, "worktree id")));
@@ -687,7 +695,7 @@ function validateProjectUpdateInput(input: ProjectUpdateInput): ProjectUpdateInp
   };
 }
 
-function validateAutopilotStartInput(input: AutopilotStartDataRunInput): AutopilotStartDataRunInput {
+function validateAutopilotDataStartInput(input: AutopilotStartDataRunInput): AutopilotStartDataRunInput {
   const value = object(input, "autopilot data run");
   const policy = value.writePolicy && typeof value.writePolicy === "object" && !Array.isArray(value.writePolicy)
     ? value.writePolicy as Record<string, unknown>
@@ -704,6 +712,37 @@ function validateAutopilotStartInput(input: AutopilotStartDataRunInput): Autopil
       maxTasks: optionalNumber(policy.maxTasks, "max tasks"),
       maxRetries: optionalNumber(policy.maxRetries, "max retries")
     })
+  };
+}
+
+function validateAutopilotStartInput(input: AutopilotStartInput): AutopilotStartInput {
+  const value = object(input, "autopilot run");
+  const dataInput = validateAutopilotDataStartInput(input);
+  const budget = value.budget && typeof value.budget === "object" && !Array.isArray(value.budget)
+    ? value.budget as Record<string, unknown>
+    : {};
+  return {
+    ...dataInput,
+    profile: optionalEnum(value.profile, ["auto", "coding", "research", "data", "document", "generic"], "autopilot profile") || "auto",
+    deliverables: optionalStringArray(value.deliverables, "autopilot deliverables") || [],
+    acceptanceCriteria: optionalStringArray(value.acceptanceCriteria, "autopilot acceptance criteria") || [],
+    budget: compactUndefined({
+      maxRuntimeMinutes: optionalNumber(budget.maxRuntimeMinutes, "maximum runtime minutes"),
+      maxIterations: optionalNumber(budget.maxIterations, "maximum iterations"),
+      maxTasks: optionalNumber(budget.maxTasks, "maximum tasks"),
+      maxModelTurns: optionalNumber(budget.maxModelTurns, "maximum model turns"),
+      maxToolCalls: optionalNumber(budget.maxToolCalls, "maximum tool calls")
+    })
+  };
+}
+
+function validateAutopilotApprovalDecision(input: AutopilotApprovalDecisionInput): AutopilotApprovalDecisionInput {
+  const value = object(input, "autopilot approval decision");
+  return {
+    runId: requiredString(value.runId, "autopilot run id"),
+    decisionId: requiredString(value.decisionId, "autopilot decision id"),
+    decision: optionalEnum(value.decision, ["approved", "denied"], "autopilot approval decision") || "denied",
+    comment: optionalString(value.comment, "autopilot approval comment")
   };
 }
 

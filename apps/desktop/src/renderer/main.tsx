@@ -3,10 +3,12 @@ import { createRoot } from "react-dom/client";
 import {
   AppstoreAddOutlined,
   AppstoreOutlined,
+  BranchesOutlined,
   CalendarOutlined,
   CheckCircleOutlined,
   ClockCircleOutlined,
   CloseCircleOutlined,
+  CloseOutlined,
   CompressOutlined,
   CopyOutlined,
   DeleteOutlined,
@@ -20,6 +22,7 @@ import {
   MenuUnfoldOutlined,
   ApiOutlined,
   OrderedListOutlined,
+  PauseCircleOutlined,
   PaperClipOutlined,
   PlayCircleOutlined,
   PlusOutlined,
@@ -27,6 +30,7 @@ import {
   RobotOutlined,
   RollbackOutlined,
   SaveOutlined,
+  SafetyCertificateOutlined,
   SendOutlined,
   SettingOutlined,
   StarFilled,
@@ -41,6 +45,7 @@ import {
   Badge,
   Button,
   Checkbox,
+  Collapse,
   ConfigProvider,
   Descriptions,
   Divider,
@@ -51,6 +56,7 @@ import {
   List,
   Modal,
   Popconfirm,
+  Progress,
   Segmented,
   Select,
   Slider,
@@ -68,8 +74,11 @@ import type { FormInstance } from "antd/es/form";
 import type { UploadFile } from "antd/es/upload/interface";
 import zhCN from "antd/locale/zh_CN";
 import enUS from "antd/locale/en_US";
+import supbotIconUrl from "../../build/supbot-icon.png";
 import type {
   AgentJob,
+  AutopilotEvent,
+  AutopilotPendingDecision,
   AutopilotRun,
   Attachment,
   CapabilityUpdateInput,
@@ -158,6 +167,14 @@ const theme = {
     Card: { borderRadius: 8 }
   }
 };
+
+function BrandMark({ small = false }: { small?: boolean }) {
+  return (
+    <div className={"brand-mark" + (small ? " small" : "")}>
+      <img src={supbotIconUrl} alt="" draggable={false} />
+    </div>
+  );
+}
 
 function App() {
   const [language, setLanguageState] = useState<Language>(() => loadLanguage());
@@ -451,7 +468,7 @@ function App() {
     return (
       <ConfigProvider theme={theme}>
         <div className="boot-screen">
-          <div className="brand-mark"><RobotOutlined /></div>
+          <BrandMark />
           <Typography.Title level={3}>{t("Starting Supbot")}</Typography.Title>
         </div>
       </ConfigProvider>
@@ -613,7 +630,7 @@ function Topbar({
   return (
     <header className="topbar">
       <div className="identity">
-        <div className="brand-mark small"><RobotOutlined /></div>
+        <BrandMark small />
         <div>
           <div className="eyebrow">{translate(language, "LOCAL AGENT CONSOLE")}</div>
           <div className="agent-title">{snapshot.agentName}</div>
@@ -1612,6 +1629,13 @@ function ServerAgentFlowWorkspace({
                 >
                   <span className="server-agent-mail-list-line">
                     <strong>{task.title}</strong>
+                    <span className="autopilot-task-meta">@{task.staffAgent} / {task.kind || task.stage} / {task.risk || "low"} / {task.attempts}/{task.maxAttempts} {t("attempts")}</span>
+                    {(task.dependsOn?.length || task.lastEvaluation) ? (
+                      <span className="autopilot-task-detail">
+                        {task.dependsOn?.length ? `${task.dependsOn.length} ${t("dependencies")}` : t("No dependencies")}
+                        {task.lastEvaluation ? ` / ${task.lastEvaluation.passed ? t("Verified") : t("Verification failed")}` : ""}
+                      </span>
+                    ) : null}
                     {flowEngineStatusTag(task.status, t)}
                   </span>
                   <span className="server-agent-mail-preview mono">{task.workflowId}</span>
@@ -3170,7 +3194,7 @@ function ChatPanel({
         <div className="message-stack" ref={messageStackRef}>
           {!conversation || conversation.messages.length === 0 ? (
             <div className="chat-empty">
-              <div className="brand-mark"><RobotOutlined /></div>
+              <BrandMark />
               <Typography.Title level={3}>{t("Supbot is ready")}</Typography.Title>
               <p className="muted">{t("Ask a question, attach local files, use /commands, or mention @research and @builder.")}</p>
             </div>
@@ -4764,12 +4788,17 @@ function AutopilotPanel({ snapshot, refresh, t }: { snapshot: RuntimeSnapshot; r
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [pickingProjectFolder, setPickingProjectFolder] = useState(false);
   const [startingRun, setStartingRun] = useState(false);
-  const [selectedRunId, setSelectedRunId] = useState(snapshot.autopilotRuns[0]?.id || "");
-  const selectedRun = snapshot.autopilotRuns.find((run) => run.id === selectedRunId) || snapshot.autopilotRuns[0];
-  const selectedProject = selectedRun ? snapshot.projects.find((project) => project.id === selectedRun.projectId) : snapshot.projects[0];
-  const runTasks = selectedRun ? snapshot.autopilotTasks.filter((task) => task.runId === selectedRun.id) : [];
-  const runArtifacts = selectedRun ? snapshot.dataArtifacts.filter((artifact) => artifact.runId === selectedRun.id) : [];
-  const runEvents = selectedRun ? snapshot.autopilotEvents.filter((event) => event.runId === selectedRun.id).slice(0, 8) : [];
+  const [selectedRunId, setSelectedRunId] = useState(() => snapshot.autopilotRuns[0]?.id || "");
+  const [autopilotApprovalComment, setAutopilotApprovalComment] = useState("");
+  const selectedRun = useMemo(() => snapshot.autopilotRuns.find((run) => run.id === selectedRunId) || snapshot.autopilotRuns[0], [selectedRunId, snapshot.autopilotRuns]);
+  const selectedProject = useMemo(() => selectedRun ? snapshot.projects.find((project) => project.id === selectedRun.projectId) : snapshot.projects[0], [selectedRun, snapshot.projects]);
+  const runTasks = useMemo(() => selectedRun ? snapshot.autopilotTasks.filter((task) => task.runId === selectedRun.id) : [], [selectedRun, snapshot.autopilotTasks]);
+  const runArtifacts = useMemo(() => selectedRun ? snapshot.dataArtifacts.filter((artifact) => artifact.runId === selectedRun.id) : [], [selectedRun, snapshot.dataArtifacts]);
+  const runAllEvents = useMemo(() => selectedRun ? snapshot.autopilotEvents.filter((event) => event.runId === selectedRun.id) : [], [selectedRun, snapshot.autopilotEvents]);
+  const runEvents = useMemo(() => runAllEvents.slice(0, 12), [runAllEvents]);
+  const runActions = useMemo(() => selectedRun ? snapshot.autopilotActions.filter((action) => action.runId === selectedRun.id) : [], [selectedRun, snapshot.autopilotActions]);
+  const selectedMetrics = useMemo(() => selectedRun ? snapshot.autopilotMetrics.find((metrics) => metrics.runId === selectedRun.id) : undefined, [selectedRun, snapshot.autopilotMetrics]);
+  const runWorktree = useMemo(() => selectedRun?.worktreeId ? snapshot.worktrees.find((worktree) => worktree.id === selectedRun.worktreeId) : undefined, [selectedRun, snapshot.worktrees]);
 
   useEffect(() => {
     if (!selectedRunId && snapshot.autopilotRuns[0]?.id) {
@@ -4777,8 +4806,12 @@ function AutopilotPanel({ snapshot, refresh, t }: { snapshot: RuntimeSnapshot; r
     }
   }, [selectedRunId, snapshot.autopilotRuns]);
 
-  const projectOptions = snapshot.projects.map((project) => ({ label: project.name, value: project.id }));
-  const runOptions = snapshot.autopilotRuns.map((run) => ({ label: `${run.title} (${run.status})`, value: run.id }));
+  useEffect(() => {
+    setAutopilotApprovalComment("");
+  }, [selectedRun?.pendingDecision?.id]);
+
+  const projectOptions = useMemo(() => snapshot.projects.map((project) => ({ label: project.name, value: project.id })), [snapshot.projects]);
+  const runOptions = useMemo(() => snapshot.autopilotRuns.map((run) => ({ label: `${run.title} (${run.status})`, value: run.id })), [snapshot.autopilotRuns]);
 
   const createProject = async (values: { rootPath: string; name?: string }) => {
     setCreatingProject(true);
@@ -4810,14 +4843,40 @@ function AutopilotPanel({ snapshot, refresh, t }: { snapshot: RuntimeSnapshot; r
     }
   };
 
-  const startRun = async (values: { projectId: string; title?: string; goal: string }) => {
+  const startRun = async (values: {
+    projectId: string;
+    title?: string;
+    goal: string;
+    profile: AutopilotRun["profile"];
+    deliverables?: string;
+    acceptanceCriteria?: string;
+    maxRuntimeMinutes?: number;
+    maxIterations?: number;
+    maxModelTurns?: number;
+    maxToolCalls?: number;
+    allowNetwork?: boolean;
+    allowMcp?: boolean;
+  }) => {
     setStartingRun(true);
     try {
-      const run = await window.supbot.startAutopilotDataRun({
+      const run = await window.supbot.startAutopilotRun({
         projectId: values.projectId,
         title: values.title,
         goal: values.goal,
-        dataSources: []
+        profile: values.profile || "auto",
+        deliverables: splitAutopilotLines(values.deliverables),
+        acceptanceCriteria: splitAutopilotLines(values.acceptanceCriteria),
+        dataSources: [],
+        writePolicy: {
+          allowNetwork: values.allowNetwork,
+          allowMcp: values.allowMcp
+        },
+        budget: {
+          maxRuntimeMinutes: values.maxRuntimeMinutes,
+          maxIterations: values.maxIterations,
+          maxModelTurns: values.maxModelTurns,
+          maxToolCalls: values.maxToolCalls
+        }
       });
       setSelectedRunId(run.id);
       await refresh();
@@ -4829,7 +4888,7 @@ function AutopilotPanel({ snapshot, refresh, t }: { snapshot: RuntimeSnapshot; r
     }
   };
 
-  const controlRun = async (action: "pause" | "resume" | "cancel") => {
+  const controlRun = async (action: "pause" | "resume" | "cancel" | "retry") => {
     if (!selectedRun) {
       return;
     }
@@ -4838,10 +4897,48 @@ function AutopilotPanel({ snapshot, refresh, t }: { snapshot: RuntimeSnapshot; r
         await window.supbot.pauseAutopilotRun(selectedRun.id);
       } else if (action === "resume") {
         await window.supbot.resumeAutopilotRun(selectedRun.id);
-      } else {
+      } else if (action === "cancel") {
         await window.supbot.cancelAutopilotRun(selectedRun.id);
+      } else {
+        await window.supbot.retryAutopilotFromCheckpoint(selectedRun.id);
       }
       await refresh();
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    }
+  };
+
+  const decideRun = async (decision: "approved" | "denied") => {
+    if (!selectedRun?.pendingDecision) return;
+    try {
+      await window.supbot.decideAutopilotApproval({
+        runId: selectedRun.id,
+        decisionId: selectedRun.pendingDecision.id,
+        decision,
+        comment: autopilotApprovalComment.trim() || undefined
+      });
+      setAutopilotApprovalComment("");
+      await refresh();
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    }
+  };
+
+  const manageRunWorktree = async (action: "apply" | "discard") => {
+    if (!selectedRun?.worktreeId) return;
+    try {
+      if (action === "apply") await window.supbot.applyAutopilotWorktree(selectedRun.id);
+      else await window.supbot.discardAutopilotWorktree(selectedRun.id);
+      await refresh();
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    }
+  };
+
+  const openRunReport = async () => {
+    if (!selectedRun?.reportPath) return;
+    try {
+      await window.supbot.openFile(selectedRun.reportPath);
     } catch (error) {
       messageApi.error((error as Error).message);
     }
@@ -4875,17 +4972,51 @@ function AutopilotPanel({ snapshot, refresh, t }: { snapshot: RuntimeSnapshot; r
         </section>
 
         <section className="autopilot-panel">
-          <div className="section-title"><ThunderboltOutlined /> {t("New data run")}</div>
-          <Form form={runForm} layout="vertical" onFinish={(values) => void startRun(values)} initialValues={{ projectId: selectedProject?.id }}>
+          <div className="section-title"><ThunderboltOutlined /> {t("New Autopilot run")}</div>
+          <Form
+            form={runForm}
+            layout="vertical"
+            onFinish={(values) => void startRun(values)}
+            initialValues={{ projectId: selectedProject?.id, profile: "auto", maxRuntimeMinutes: 120, maxIterations: 12, maxModelTurns: 160, maxToolCalls: 240, allowNetwork: true, allowMcp: true }}
+          >
             <Form.Item name="projectId" label={t("Project")} rules={[{ required: true }]}>
               <Select options={projectOptions} placeholder={t("Choose project")} />
             </Form.Item>
             <Form.Item name="title" label={t("Title")}>
               <Input />
             </Form.Item>
-            <Form.Item name="goal" label={t("Goal")} rules={[{ required: true }]}>
-              <Input.TextArea rows={5} />
+            <Form.Item name="profile" label={t("Task profile")} rules={[{ required: true }]}>
+              <Segmented block options={[
+                { label: t("Auto"), value: "auto" },
+                { label: t("Code"), value: "coding" },
+                { label: t("Research"), value: "research" },
+                { label: t("Data"), value: "data" },
+                { label: t("Document"), value: "document" }
+              ]} />
             </Form.Item>
+            <Form.Item name="goal" label={t("Goal")} rules={[{ required: true }]}>
+              <Input.TextArea rows={4} />
+            </Form.Item>
+            <Form.Item name="deliverables" label={t("Deliverables")}>
+              <Input.TextArea rows={2} placeholder={t("One deliverable per line")} />
+            </Form.Item>
+            <Form.Item name="acceptanceCriteria" label={t("Acceptance criteria")}>
+              <Input.TextArea rows={2} placeholder={t("One acceptance check per line")} />
+            </Form.Item>
+            <Collapse ghost size="small" items={[{
+              key: "advanced",
+              label: t("Budget and access policy"),
+              children: (
+                <div className="autopilot-advanced-grid">
+                  <Form.Item name="maxRuntimeMinutes" label={t("Runtime minutes")}><InputNumber min={1} max={1440} /></Form.Item>
+                  <Form.Item name="maxIterations" label={t("Iterations")}><InputNumber min={1} max={100} /></Form.Item>
+                  <Form.Item name="maxModelTurns" label={t("Model turns")}><InputNumber min={1} max={2000} /></Form.Item>
+                  <Form.Item name="maxToolCalls" label={t("Tool calls")}><InputNumber min={1} max={5000} /></Form.Item>
+                  <Form.Item name="allowNetwork" label={t("Network")} valuePropName="checked"><Switch /></Form.Item>
+                  <Form.Item name="allowMcp" label={t("MCP tools")} valuePropName="checked"><Switch /></Form.Item>
+                </div>
+              )
+            }]} />
             <Button block type="primary" icon={<ThunderboltOutlined />} htmlType="submit" loading={startingRun} disabled={!snapshot.projects.length}>{t("Start run")}</Button>
           </Form>
         </section>
@@ -4908,17 +5039,40 @@ function AutopilotPanel({ snapshot, refresh, t }: { snapshot: RuntimeSnapshot; r
             <div className="autopilot-run-header">
               <div>
                 <strong>{selectedRun.title}</strong>
-                <div className="muted">{selectedProject?.name || selectedRun.projectId}</div>
+                <div className="muted">{selectedProject?.name || selectedRun.projectId} / {selectedRun.resolvedProfile || "data"} / plan v{selectedRun.plan?.version || 1}</div>
               </div>
               <Space>
                 <Tag color={autopilotStatusColor(selectedRun.status)}>{t(selectedRun.status)}</Tag>
-                <Button size="small" onClick={() => void controlRun("pause")} disabled={selectedRun.status !== "running" && selectedRun.status !== "reviewing"}>{t("Pause")}</Button>
-                <Button size="small" onClick={() => void controlRun("resume")} disabled={!["paused", "blocked", "failed"].includes(selectedRun.status)}>{t("Resume")}</Button>
+                <Tooltip title={t("Pause")}><Button aria-label={t("Pause")} size="small" icon={<PauseCircleOutlined />} onClick={() => void controlRun("pause")} disabled={!autopilotCanPause(selectedRun.status)} /></Tooltip>
+                <Tooltip title={t("Resume")}><Button aria-label={t("Resume")} size="small" icon={<PlayCircleOutlined />} onClick={() => void controlRun("resume")} disabled={!autopilotCanResume(selectedRun.status)} /></Tooltip>
+                <Tooltip title={t("Retry from checkpoint")}><Button aria-label={t("Retry from checkpoint")} size="small" icon={<ReloadOutlined />} onClick={() => void controlRun("retry")} disabled={!autopilotCanRetry(selectedRun.status)} /></Tooltip>
                 <Popconfirm title={t("Cancel run?")} onConfirm={() => void controlRun("cancel")}>
-                  <Button size="small" danger disabled={["completed", "canceled"].includes(selectedRun.status)}>{t("Cancel")}</Button>
+                  <Button aria-label={t("Cancel")} size="small" danger icon={<StopOutlined />} disabled={autopilotIsTerminal(selectedRun.status)} />
                 </Popconfirm>
               </Space>
             </div>
+            <div className="autopilot-run-facts">
+              <div><span>{t("Loop")}</span><strong>{selectedRun.loopIteration || 0}</strong></div>
+              <div><span>{t("Tasks")}</span><strong>{runTasks.filter((task) => task.status === "completed").length}/{runTasks.length}</strong></div>
+              <div><span>{t("Tool calls")}</span><strong>{selectedRun.budget?.usage.toolCalls || runActions.length}</strong></div>
+              <div><span>{t("Tokens")}</span><strong>{selectedRun.budget?.usage.totalTokens?.toLocaleString() || "--"}</strong></div>
+            </div>
+            {selectedRun.pendingDecision ? (
+              <AutopilotApprovalCard
+                decision={selectedRun.pendingDecision}
+                run={selectedRun}
+                worktree={runWorktree}
+                comment={autopilotApprovalComment}
+                onCommentChange={setAutopilotApprovalComment}
+                onDecision={decideRun}
+                t={t}
+              />
+            ) : null}
+            <AutopilotApprovalHistoryPanel events={runAllEvents} t={t} />
+            {selectedRun.reportPath ? <AutopilotReportBand run={selectedRun} onOpen={openRunReport} t={t} /> : null}
+            {selectedRun.budget ? <AutopilotBudgetPanel run={selectedRun} t={t} /> : null}
+            {selectedMetrics ? <AutopilotQualityPanel metrics={selectedMetrics} t={t} /> : null}
+            <AutopilotHistoryPanel summary={snapshot.autopilotQuality} t={t} />
             <div className="autopilot-stage-list">
               {runTasks.map((task) => (
                 <div className="autopilot-stage-row" key={task.id}>
@@ -4930,6 +5084,28 @@ function AutopilotPanel({ snapshot, refresh, t }: { snapshot: RuntimeSnapshot; r
                 </div>
               ))}
             </div>
+            {selectedRun.lastEvaluation ? (
+              <div className={`autopilot-evaluation ${selectedRun.lastEvaluation.passed ? "passed" : "failed"}`}>
+                <div className="section-title"><SafetyCertificateOutlined /> {t("Latest evaluation")}</div>
+                <strong>{selectedRun.lastEvaluation.passed ? t("Acceptance checks passed") : t("Acceptance checks failed")}</strong>
+                {selectedRun.lastEvaluation.violations.map((violation) => <span key={violation}>{violation}</span>)}
+              </div>
+            ) : null}
+            {runWorktree ? (
+              <div className="autopilot-worktree-band">
+                <div>
+                  <span className="section-title"><BranchesOutlined /> {t("Isolated worktree")}</span>
+                  <code>{runWorktree.path}</code>
+                  <span className="muted">{runWorktree.diffSummary?.summary || runWorktree.status}</span>
+                </div>
+                <Space>
+                  <Button type="primary" icon={<CheckCircleOutlined />} disabled={runWorktree.status !== "completed"} onClick={() => void manageRunWorktree("apply")}>{t("Apply")}</Button>
+                  <Popconfirm title={t("Discard worktree?")} onConfirm={() => void manageRunWorktree("discard")}>
+                    <Button danger icon={<RollbackOutlined />} disabled={["applied", "discarded"].includes(runWorktree.status)}>{t("Discard")}</Button>
+                  </Popconfirm>
+                </Space>
+              </div>
+            ) : null}
             <div className="autopilot-run-columns">
               <div>
                 <div className="section-title">{t("Artifacts")}</div>
@@ -4990,17 +5166,349 @@ function AutopilotPanel({ snapshot, refresh, t }: { snapshot: RuntimeSnapshot; r
   );
 }
 
+function AutopilotApprovalCard({
+  decision,
+  run,
+  worktree,
+  comment,
+  onCommentChange,
+  onDecision,
+  t
+}: {
+  decision: AutopilotPendingDecision;
+  run: AutopilotRun;
+  worktree?: RuntimeSnapshot["worktrees"][number];
+  comment: string;
+  onCommentChange: (value: string) => void;
+  onDecision: (decision: "approved" | "denied") => void | Promise<void>;
+  t: (key: string, vars?: Record<string, string | number>) => string;
+}) {
+  const inputPreview = formatAutopilotDecisionInput(decision.input);
+  const changedFiles = worktree?.diffSummary?.changedFiles || [];
+  const riskColor = autopilotRiskColor(decision.risk);
+  return (
+    <Alert
+      className="autopilot-decision"
+      type="warning"
+      showIcon
+      icon={<SafetyCertificateOutlined />}
+      message={(
+        <div className="autopilot-decision-title">
+          <span>{decision.title}</span>
+          <Tag color={riskColor}>{t(decision.risk)} {t("risk")}</Tag>
+        </div>
+      )}
+      description={(
+        <div className="autopilot-decision-body">
+          <p>{decision.summary}</p>
+          <div className="autopilot-decision-grid">
+            <div className="autopilot-decision-fact">
+              <span>{t("Decision type")}</span>
+              <strong>{t(decision.kind)}</strong>
+            </div>
+            <div className="autopilot-decision-fact">
+              <span>{t("Run state")}</span>
+              <strong>{t(run.status)}</strong>
+            </div>
+            <div className="autopilot-decision-fact">
+              <span>{t("Tool")}</span>
+              <strong>{decision.toolName || "--"}</strong>
+            </div>
+            <div className="autopilot-decision-fact">
+              <span>{t("Task")}</span>
+              <strong>{decision.taskId || run.currentStage || "--"}</strong>
+            </div>
+          </div>
+
+          <div className="autopilot-decision-section">
+            <div className="section-title">{t("Impact scope")}</div>
+            <div className="autopilot-impact-list">
+              {decision.impact.length ? decision.impact.map((item) => <code key={item}>{item}</code>) : <span className="muted">{t("No explicit impact scope")}</span>}
+            </div>
+          </div>
+
+          {inputPreview ? (
+            <div className="autopilot-decision-section">
+              <div className="section-title">{t("Requested input")}</div>
+              <pre className="autopilot-decision-input">{inputPreview}</pre>
+            </div>
+          ) : null}
+
+          {worktree?.diffSummary ? (
+            <div className="autopilot-decision-section">
+              <div className="section-title">{t("Worktree diff")}</div>
+              <div className="autopilot-decision-diff">
+                <span>{worktree.diffSummary.summary}</span>
+                {changedFiles.length ? <small>{changedFiles.slice(0, 6).join(", ")}{changedFiles.length > 6 ? ` +${changedFiles.length - 6}` : ""}</small> : null}
+              </div>
+            </div>
+          ) : null}
+
+          {decision.rollbackPlan ? (
+            <div className="autopilot-decision-section">
+              <div className="section-title">{t("Recovery plan")}</div>
+              <p className="muted">{decision.rollbackPlan}</p>
+            </div>
+          ) : null}
+
+          <Input.TextArea
+            className="autopilot-decision-comment"
+            rows={2}
+            value={comment}
+            onChange={(event) => onCommentChange(event.target.value)}
+            placeholder={t("Approval comment")}
+          />
+          <Space wrap>
+            <Button type="primary" icon={<CheckCircleOutlined />} onClick={() => void onDecision("approved")}>{t("Approve")}</Button>
+            <Button danger icon={<CloseOutlined />} onClick={() => void onDecision("denied")}>{t("Deny")}</Button>
+          </Space>
+        </div>
+      )}
+    />
+  );
+}
+
+function AutopilotReportBand({ run, onOpen, t }: {
+  run: AutopilotRun;
+  onOpen: () => void | Promise<void>;
+  t: (key: string, vars?: Record<string, string | number>) => string;
+}) {
+  if (!run.reportPath) {
+    return null;
+  }
+  return (
+    <div className="autopilot-report-band">
+      <div className="autopilot-report-icon"><FileTextOutlined /></div>
+      <div className="autopilot-report-copy">
+        <span className="eyebrow">{t("Summary report")}</span>
+        <strong>{t("Run summary is ready")}</strong>
+        <code>{run.reportPath}</code>
+      </div>
+      <Button className="autopilot-open-report" type="primary" icon={<FileTextOutlined />} onClick={() => void onOpen()}>{t("Open report")}</Button>
+    </div>
+  );
+}
+
+type AutopilotApprovalAuditItem = {
+  id: string;
+  outcome: "approved" | "denied";
+  createdAt: string;
+  title?: string;
+  kind?: string;
+  risk?: AutopilotPendingDecision["risk"];
+  impact: string[];
+  comment?: string;
+};
+
+function AutopilotApprovalHistoryPanel({ events, t }: {
+  events: AutopilotEvent[];
+  t: (key: string, vars?: Record<string, string | number>) => string;
+}) {
+  const approvalEvents = useMemo(() => buildAutopilotApprovalAudit(events), [events]);
+  return (
+    <div className="autopilot-approval-history">
+      <div className="autopilot-history-heading">
+        <span>{t("Approval history")}</span>
+        <small>{approvalEvents.length ? `${approvalEvents.length} ${t("decisions")}` : t("No approval decisions yet")}</small>
+      </div>
+      {approvalEvents.length ? (
+        <div className="autopilot-approval-list">
+          {approvalEvents.slice(0, 6).map((event) => (
+            <div className={`autopilot-approval-row ${event.outcome}`} key={event.id}>
+              <div className="autopilot-approval-main">
+                <Tag color={event.outcome === "approved" ? "green" : "red"}>{t(event.outcome === "approved" ? "Approved" : "Denied")}</Tag>
+                <strong>{event.title || t("Approval decision")}</strong>
+                <small>{formatDateTime(event.createdAt)}</small>
+              </div>
+              <div className="autopilot-approval-meta">
+                {event.risk ? <Tag color={autopilotRiskColor(event.risk)}>{t(event.risk)} {t("risk")}</Tag> : null}
+                {event.kind ? <Tag>{t(event.kind)}</Tag> : null}
+                {event.impact.length ? (
+                  <span className="autopilot-approval-impact">
+                    {event.impact.slice(0, 3).join(", ")}
+                    {event.impact.length > 3 ? ` +${event.impact.length - 3}` : ""}
+                  </span>
+                ) : <span className="muted">{t("No explicit impact scope")}</span>}
+              </div>
+              {event.comment ? <blockquote className="autopilot-approval-comment-text">{event.comment}</blockquote> : <span className="muted">{t("No approval comment")}</span>}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <span className="muted">{t("No approval decisions yet")}</span>
+      )}
+    </div>
+  );
+}
+
+function buildAutopilotApprovalAudit(events: AutopilotEvent[]): AutopilotApprovalAuditItem[] {
+  const approvalEvents: AutopilotApprovalAuditItem[] = [];
+  for (const event of events) {
+    const outcome = autopilotApprovalOutcome(event.message);
+    if (!outcome) {
+      continue;
+    }
+    const data = asRecord(event.data);
+    const decision = asRecord(data?.decision);
+    const comment = typeof data?.comment === "string" && data.comment.trim() ? data.comment.trim() : undefined;
+    approvalEvents.push({
+      id: event.id,
+      outcome,
+      createdAt: event.createdAt,
+      title: typeof decision?.title === "string" ? decision.title : undefined,
+      kind: typeof decision?.kind === "string" ? decision.kind : undefined,
+      risk: asAutopilotRisk(decision?.risk),
+      impact: asStringArray(decision?.impact),
+      comment
+    });
+  }
+  return approvalEvents;
+}
+
+function autopilotApprovalOutcome(message: string): AutopilotApprovalAuditItem["outcome"] | undefined {
+  if (message === "Autopilot approval granted" || message === "Autopilot tool approval approved") {
+    return "approved";
+  }
+  if (message === "Autopilot approval denied" || message === "Autopilot tool approval denied") {
+    return "denied";
+  }
+  return undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function asAutopilotRisk(value: unknown): AutopilotPendingDecision["risk"] | undefined {
+  return value === "low" || value === "medium" || value === "high" ? value : undefined;
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
+}
+
+function formatAutopilotDecisionInput(input: unknown): string {
+  if (input === undefined || input === null) {
+    return "";
+  }
+  if (typeof input === "string") {
+    return input.slice(0, 1_200);
+  }
+  try {
+    return JSON.stringify(input, null, 2).slice(0, 1_200);
+  } catch {
+    return String(input).slice(0, 1_200);
+  }
+}
+
+function autopilotRiskColor(risk: AutopilotPendingDecision["risk"]): string {
+  if (risk === "high") {
+    return "red";
+  }
+  if (risk === "medium") {
+    return "gold";
+  }
+  return "green";
+}
+
 function autopilotStatusColor(status: AutopilotRun["status"]): string {
   if (status === "completed") {
     return "green";
   }
-  if (status === "failed" || status === "blocked" || status === "canceled") {
+  if (status === "failed" || status === "blocked" || status === "canceled" || status === "budget_exhausted") {
     return "red";
   }
-  if (status === "paused") {
+  if (status === "paused" || status === "waiting_approval" || status === "partially_completed") {
     return "gold";
   }
   return "cyan";
+}
+
+function AutopilotBudgetPanel({ run, t }: { run: AutopilotRun; t: (key: string, vars?: Record<string, string | number>) => string }) {
+  const budget = run.budget!;
+  const entries = [
+    { label: t("Runtime"), used: elapsedAutopilotMinutes(budget.usage.startedAt), limit: budget.limits.maxRuntimeMinutes },
+    { label: t("Iterations"), used: budget.usage.iterations, limit: budget.limits.maxIterations },
+    { label: t("Model turns"), used: budget.usage.modelTurns, limit: budget.limits.maxModelTurns },
+    { label: t("Tool calls"), used: budget.usage.toolCalls, limit: budget.limits.maxToolCalls }
+  ];
+  return (
+    <div className="autopilot-budget-grid">
+      {entries.map((entry) => (
+        <div className="autopilot-budget-item" key={entry.label}>
+          <div><span>{entry.label}</span><strong>{entry.used}/{entry.limit}</strong></div>
+          <Progress percent={Math.min(100, Math.round(entry.used / Math.max(1, entry.limit) * 100))} showInfo={false} size="small" status={entry.used >= entry.limit ? "exception" : "normal"} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AutopilotQualityPanel({ metrics, t }: { metrics: import("@supbot/shared").AutopilotRunMetrics; t: (key: string, vars?: Record<string, string | number>) => string }) {
+  const values = [
+    { label: t("Completion"), value: `${Math.round(metrics.taskCompletionRate * 100)}%` },
+    { label: t("First pass"), value: metrics.firstPass ? t("Yes") : t("No") },
+    { label: t("Tool failure rate"), value: `${Math.round(metrics.toolFailureRate * 100)}%` },
+    { label: t("Verification pass rate"), value: `${Math.round(metrics.verificationPassRate * 100)}%` },
+    { label: t("Plan revisions"), value: metrics.planRevisions },
+    { label: t("Duration"), value: formatDuration(metrics.durationMs) }
+  ];
+  return (
+    <div className="autopilot-quality-grid">
+      {values.map((item) => <div className="autopilot-quality-item" key={item.label}><span>{item.label}</span><strong>{item.value}</strong></div>)}
+    </div>
+  );
+}
+
+function AutopilotHistoryPanel({ summary, t }: { summary: import("@supbot/shared").AutopilotQualitySummary; t: (key: string, vars?: Record<string, string | number>) => string }) {
+  const failures = Object.entries(summary.failureCategories).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const values = [
+    { label: t("Runs"), value: summary.runCount },
+    { label: t("Success rate"), value: `${Math.round(summary.successRate * 100)}%` },
+    { label: t("Avg verification"), value: `${Math.round(summary.averageVerificationPassRate * 100)}%` },
+    { label: t("Regressions"), value: summary.regressions.length }
+  ];
+  return (
+    <div className="autopilot-history-panel">
+      <div className="autopilot-history-heading"><span>{t("Run history")}</span>{summary.baselineRunId ? <small>{t("Compared with previous run")}</small> : null}</div>
+      <div className="autopilot-quality-grid">
+        {values.map((item) => <div className="autopilot-quality-item" key={item.label}><span>{item.label}</span><strong>{item.value}</strong></div>)}
+      </div>
+      {summary.regressions.length ? <div className="autopilot-regressions">{summary.regressions.slice(0, 3).map((item) => <div key={`${item.source}-${item.metric}`}><span className="autopilot-regression-dot" />{item.message}</div>)}</div> : null}
+      {failures.length ? <div className="autopilot-failure-summary">{failures.map(([category, count]) => <span key={category}>{category}: <strong>{count}</strong></span>)}</div> : null}
+    </div>
+  );
+}
+
+function splitAutopilotLines(value?: string): string[] {
+  return value ? value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean) : [];
+}
+
+function elapsedAutopilotMinutes(startedAt?: string): number {
+  if (!startedAt) return 0;
+  return Math.max(0, Math.round((Date.now() - new Date(startedAt).getTime()) / 60_000));
+}
+
+function formatDuration(durationMs: number): string {
+  const seconds = Math.max(0, Math.round(durationMs / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+function autopilotIsTerminal(status: AutopilotRun["status"]): boolean {
+  return ["completed", "partially_completed", "budget_exhausted", "failed", "canceled"].includes(status);
+}
+
+function autopilotCanPause(status: AutopilotRun["status"]): boolean {
+  return ["analyzing", "planning", "running", "verifying", "replanning", "reviewing", "waiting_approval"].includes(status);
+}
+
+function autopilotCanResume(status: AutopilotRun["status"]): boolean {
+  return ["paused", "blocked", "failed", "budget_exhausted", "partially_completed"].includes(status);
+}
+
+function autopilotCanRetry(status: AutopilotRun["status"]): boolean {
+  return ["blocked", "failed", "budget_exhausted", "partially_completed"].includes(status);
 }
 
 function taskStatusColor(status: string): string {

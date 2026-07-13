@@ -1,9 +1,13 @@
 /// <reference types="vite/client" />
 
 import type {
+  AutopilotApprovalDecisionInput,
+  AutopilotQualitySummary,
+  AutopilotRunMetrics,
   AutopilotRun,
   AutopilotRunReport,
   AutopilotStartDataRunInput,
+  AutopilotStartInput,
   Attachment,
   CapabilityUpdateInput,
   Conversation,
@@ -112,10 +116,17 @@ declare global {
       openProject(id: string): Promise<Project>;
       updateProject(id: string, input: ProjectUpdateInput): Promise<Project>;
       startAutopilotDataRun(input: AutopilotStartDataRunInput): Promise<AutopilotRun>;
+      startAutopilotRun(input: AutopilotStartInput): Promise<AutopilotRun>;
       pauseAutopilotRun(id: string): Promise<AutopilotRun>;
       resumeAutopilotRun(id: string): Promise<AutopilotRun>;
       cancelAutopilotRun(id: string): Promise<AutopilotRun>;
       getAutopilotRunReport(id: string): Promise<AutopilotRunReport>;
+      getAutopilotRunMetrics(id: string): Promise<AutopilotRunMetrics>;
+      getAutopilotQualitySummary(): Promise<AutopilotQualitySummary>;
+      decideAutopilotApproval(input: AutopilotApprovalDecisionInput): Promise<AutopilotRun>;
+      retryAutopilotFromCheckpoint(id: string): Promise<AutopilotRun>;
+      applyAutopilotWorktree(id: string): Promise<AutopilotRun>;
+      discardAutopilotWorktree(id: string): Promise<AutopilotRun>;
       listWorktrees(): Promise<TaskWorktree[]>;
       getWorktreeDiff(id: string): Promise<import("@supbot/shared").WorktreeDiffSummary>;
       applyWorktree(id: string): Promise<TaskWorktree>;
