@@ -8,6 +8,7 @@ import type {
   CapabilityUpdateInput,
   Conversation,
   GeneratedFile,
+  HBClientUpdateState,
   IdentityContext,
   MemoryAddInput,
   MemoryFact,
@@ -95,6 +96,11 @@ declare global {
   interface Window {
     supbot: {
       snapshot(): Promise<RuntimeSnapshot>;
+      getHBClientUpdateState(): Promise<HBClientUpdateState>;
+      checkHBClientUpdate(): Promise<HBClientUpdateState>;
+      downloadHBClientUpdate(): Promise<HBClientUpdateState>;
+      installHBClientUpdate(): Promise<HBClientUpdateState>;
+      onHBClientUpdate(listener: (state: HBClientUpdateState) => void): () => void;
       createConversation(title?: string): Promise<Conversation>;
       deleteConversation(id: string): Promise<void>;
       sendPrompt(input: SendPromptInput): Promise<SendPromptResult>;

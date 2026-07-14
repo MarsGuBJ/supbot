@@ -98,6 +98,37 @@ button {
   gap: 12px;
 }
 
+.identity {
+  min-width: 0;
+}
+
+.identity > div:last-child {
+  min-width: 0;
+}
+
+.identity .muted {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar-actions {
+  gap: 8px;
+}
+
+.hbclient-update-button {
+  min-width: 72px;
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hbclient-update-icon {
+  width: 32px;
+  min-width: 32px;
+}
+
 .topbar-actions,
 .panel-heading,
 .activity-head,

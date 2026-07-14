@@ -77,6 +77,7 @@ import type {
   ChatMessage,
   CompactBoundary,
   Conversation,
+  HBClientUpdateState,
   IdentityContext,
   MemoryAddInput,
   MemoryCandidate,
@@ -217,10 +218,13 @@ function App() {
   const [transcriptLoading, setTranscriptLoading] = useState(false);
   const [focusConfigTab, setFocusConfigTab] = useState("model");
   const [userDataPath, setUserDataPath] = useState("");
+  const [updateState, setUpdateState] = useState<HBClientUpdateState>({ status: "idle", currentVersion: "" });
   const [messageApi, contextHolder] = message.useMessage();
+  const [modalApi, modalContextHolder] = Modal.useModal();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const messageStackRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
+  const promptedUpdateVersionsRef = useRef(new Set<string>());
   const t = useCallback((key: string, vars?: Record<string, string | number>) => translate(language, key, vars), [language]);
   const slashCommandList = useMemo(() => buildSlashCommands(t), [t]);
 
@@ -256,6 +260,34 @@ function App() {
     setSnapshot(next);
     setActiveConversationId((current) => current || next.conversations[0]?.id || "");
   }, []);
+
+  const checkHBClientUpdate = useCallback(async () => {
+    try {
+      const next = await window.supbot.checkHBClientUpdate();
+      setUpdateState(next);
+      if (next.status === "not_available" || next.status === "idle") {
+        messageApi.info(language === "zh" ? "当前已是最新版本" : "HBClient is up to date");
+      }
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    }
+  }, [language, messageApi]);
+
+  const downloadHBClientUpdate = useCallback(async () => {
+    try {
+      setUpdateState(await window.supbot.downloadHBClientUpdate());
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    }
+  }, [messageApi]);
+
+  const installHBClientUpdate = useCallback(async () => {
+    try {
+      setUpdateState(await window.supbot.installHBClientUpdate());
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    }
+  }, [messageApi]);
 
   useEffect(() => {
     void refresh();
@@ -306,6 +338,38 @@ function App() {
       }
     });
   }, [refresh]);
+
+  useEffect(() => {
+    let mounted = true;
+    void window.supbot.getHBClientUpdateState().then((state) => {
+      if (mounted && state) {
+        setUpdateState(state);
+      }
+    });
+    const unsubscribe = window.supbot.onHBClientUpdate((state) => setUpdateState(state));
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    const version = updateState.availableVersion;
+    if (updateState.status !== "available" || !version || promptedUpdateVersionsRef.current.has(version)) {
+      return;
+    }
+    promptedUpdateVersionsRef.current.add(version);
+    modalApi.confirm({
+      title: language === "zh" ? `发现 HBClient ${version}` : `HBClient ${version} is available`,
+      content: language === "zh"
+        ? `当前版本 ${updateState.currentVersion}。点击升级后将下载安装包，完成后由你确认重启安装。`
+        : `Current version: ${updateState.currentVersion}. Download the update now and restart when ready.`,
+      okText: language === "zh" ? "立即升级" : "Upgrade",
+      cancelText: language === "zh" ? "稍后" : "Later",
+      centered: true,
+      onOk: downloadHBClientUpdate
+    });
+  }, [downloadHBClientUpdate, language, modalApi, updateState.availableVersion, updateState.currentVersion, updateState.status]);
 
   useEffect(() => {
     if (view !== "chat") {
@@ -547,6 +611,7 @@ function App() {
   return (
     <ConfigProvider theme={theme} locale={language === "zh" ? zhCN : enUS}>
       {contextHolder}
+      {modalContextHolder}
       <main className="workspace-shell">
         <Topbar
           snapshot={snapshot}
@@ -559,6 +624,10 @@ function App() {
           rightCollapsed={rightCollapsed}
           setLeftCollapsed={setLeftCollapsed}
           setRightCollapsed={setRightCollapsed}
+          updateState={updateState}
+          checkUpdate={checkHBClientUpdate}
+          downloadUpdate={downloadHBClientUpdate}
+          installUpdate={installHBClientUpdate}
         />
         {view === "chat" ? (
           <section className={`workspace-grid ${leftCollapsed ? "left-collapsed" : ""} ${rightCollapsed ? "right-collapsed" : ""}`}>
@@ -688,7 +757,11 @@ function Topbar({
   leftCollapsed,
   rightCollapsed,
   setLeftCollapsed,
-  setRightCollapsed
+  setRightCollapsed,
+  updateState,
+  checkUpdate,
+  downloadUpdate,
+  installUpdate
 }: {
   snapshot: RuntimeSnapshot;
   view: WorkspaceView;
@@ -700,6 +773,10 @@ function Topbar({
   rightCollapsed: boolean;
   setLeftCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   setRightCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
+  updateState: HBClientUpdateState;
+  checkUpdate: () => void | Promise<void>;
+  downloadUpdate: () => void | Promise<void>;
+  installUpdate: () => void | Promise<void>;
 }) {
   return (
     <header className="topbar">
@@ -721,6 +798,13 @@ function Topbar({
         ]}
       />
       <div className="topbar-actions">
+        <HBClientUpdateButton
+          state={updateState}
+          language={language}
+          checkUpdate={checkUpdate}
+          downloadUpdate={downloadUpdate}
+          installUpdate={installUpdate}
+        />
         <Segmented
           size="small"
           value={language}
@@ -750,6 +834,81 @@ function Topbar({
       </div>
     </header>
   );
+}
+
+function HBClientUpdateButton({
+  state,
+  language,
+  checkUpdate,
+  downloadUpdate,
+  installUpdate
+}: {
+  state: HBClientUpdateState;
+  language: Language;
+  checkUpdate: () => void | Promise<void>;
+  downloadUpdate: () => void | Promise<void>;
+  installUpdate: () => void | Promise<void>;
+}) {
+  const chinese = language === "zh";
+  if (state.status === "available") {
+    const label = chinese ? `升级到 v${state.availableVersion}` : `Upgrade to v${state.availableVersion}`;
+    return (
+      <Tooltip title={label}>
+        <Button className="hbclient-update-button" type="primary" size="small" icon={<DownloadOutlined />} onClick={() => void downloadUpdate()}>
+          {label}
+        </Button>
+      </Tooltip>
+    );
+  }
+  if (state.status === "downloading") {
+    const percent = Math.round(state.progress?.percent || 0);
+    const progressTitle = state.progress
+      ? `${formatUpdateBytes(state.progress.transferred)} / ${formatUpdateBytes(state.progress.total)} · ${formatUpdateBytes(state.progress.bytesPerSecond)}/s`
+      : (chinese ? "正在下载安装包" : "Downloading update");
+    return (
+      <Tooltip title={progressTitle}>
+        <Button className="hbclient-update-button" size="small" loading disabled>
+          {percent}%
+        </Button>
+      </Tooltip>
+    );
+  }
+  if (state.status === "downloaded") {
+    const label = chinese ? "重启并安装" : "Restart and install";
+    return (
+      <Tooltip title={label}>
+        <Button className="hbclient-update-button" type="primary" size="small" icon={<SyncOutlined />} onClick={() => void installUpdate()}>
+          {label}
+        </Button>
+      </Tooltip>
+    );
+  }
+  const checking = state.status === "checking";
+  const installing = state.status === "installing";
+  const title = installing
+    ? (chinese ? "正在启动安装程序" : "Starting installer")
+    : (chinese ? "检查 HBClient 更新" : "Check for HBClient updates");
+  return (
+    <Tooltip title={title}>
+      <Button
+        className="hbclient-update-icon"
+        size="small"
+        aria-label={title}
+        icon={<SyncOutlined spin={checking || installing} />}
+        disabled={checking || installing}
+        onClick={() => void checkUpdate()}
+      />
+    </Tooltip>
+  );
+}
+
+function formatUpdateBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0 B";
+  }
+  const units = ["B", "KiB", "MiB", "GiB"];
+  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  return `${(value / 1024 ** index).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
 }
 
 function LeftPanel({

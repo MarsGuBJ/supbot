@@ -36,6 +36,7 @@ import type {
   ServstationSendDirectMessageInput,
   ServstationSendPromptInput,
   SubagentConfig,
+  HBClientUpdateState,
   SupbotEvent,
   ToolMarketConfigUpdate,
   ToolMarketQuery
@@ -43,6 +44,15 @@ import type {
 
 const api = {
   snapshot: () => ipcRenderer.invoke("snapshot"),
+  getHBClientUpdateState: () => ipcRenderer.invoke("hbclient:update:getState"),
+  checkHBClientUpdate: () => ipcRenderer.invoke("hbclient:update:check"),
+  downloadHBClientUpdate: () => ipcRenderer.invoke("hbclient:update:download"),
+  installHBClientUpdate: () => ipcRenderer.invoke("hbclient:update:install"),
+  onHBClientUpdate: (listener: (state: HBClientUpdateState) => void) => {
+    const wrapped = (_event: unknown, state: HBClientUpdateState) => listener(state);
+    ipcRenderer.on("hbclient:updateState", wrapped);
+    return () => ipcRenderer.off("hbclient:updateState", wrapped);
+  },
   createConversation: (title?: string) => ipcRenderer.invoke("conversation:create", title),
   deleteConversation: (id: string) => ipcRenderer.invoke("conversation:delete", id),
   sendPrompt: (input: SendPromptInput) => ipcRenderer.invoke("prompt:send", input),

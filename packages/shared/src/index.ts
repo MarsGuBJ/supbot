@@ -1478,6 +1478,32 @@ export interface RuntimeSnapshot {
   };
 }
 
+export type HBClientUpdateStatus =
+  | "idle"
+  | "checking"
+  | "available"
+  | "not_available"
+  | "downloading"
+  | "downloaded"
+  | "installing"
+  | "error";
+
+export interface HBClientUpdateProgress {
+  percent: number;
+  bytesPerSecond: number;
+  transferred: number;
+  total: number;
+}
+
+export interface HBClientUpdateState {
+  status: HBClientUpdateStatus;
+  currentVersion: string;
+  availableVersion?: string;
+  progress?: HBClientUpdateProgress;
+  error?: string;
+  checkedAt?: string;
+}
+
 export type SupbotEvent =
   | { type: "snapshot"; snapshot: RuntimeSnapshot }
   | { type: "job"; job: AgentJob }

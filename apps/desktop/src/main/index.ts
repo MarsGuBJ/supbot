@@ -4,9 +4,11 @@ import { hostname, userInfo } from "node:os";
 import { isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { JsonFileStorage, SupbotRuntime, ensureRuntimeDirs, identityContextFromAccessToken, oidcTokenSetFromTokenResponse, type RuntimeState, type StorageAdapter } from "@supbot/runtime";
 import type { AutopilotStartDataRunInput, CapabilityUpdateInput, DataSourceSpec, IdentityContext, McpConfigTransfer, McpServerInput, McpServerUpdate, MemoryAddInput, MemoryImportInput, MemoryRecallFeedbackInput, MemoryReplayRecallInput, MemorySearchQuery, MemoryUpdateInput, ModelConfigUpdate, PermissionMode, PermissionRule, PersonalityConfig, ProjectCreateInput, ProjectUpdateInput, RemoteBridgeConfig, ScheduledJobInput, SendPromptInput, ServstationA2AConfigUpdate, ServstationA2AOidcLoginInput, ServstationA2AOidcLoginResult, ServstationAutopilotStartInput, ServstationAutopilotStatusUpdate, ServstationClientSnapshotQuery, ServstationFlowEngineApprovalDecisionInput, ServstationFlowEngineLaunchInput, ServstationMailAccountDraft, ServstationMessageAttachmentUpload, ServstationMessageFolder, ServstationMessageAccountRef, ServstationScheduledJobInput, ServstationSendAgentMessageInput, ServstationSendDirectMessageInput, ServstationSendPromptInput, SubagentConfig, ToolMarketConfigUpdate, ToolMarketQuery } from "@supbot/shared";
+import { HBClientUpdateManager } from "./updateManager";
 
 let mainWindow: BrowserWindow | null = null;
 let runtime: SupbotRuntime | null = null;
+let updateManager: HBClientUpdateManager | null = null;
 const servstationMessageEventSubscriptions = new Map<string, AbortController>();
 const isDev = !app.isPackaged;
 const appDisplayName = "HBClient";
@@ -531,6 +533,11 @@ async function createWindow(): Promise<void> {
     }
   });
   hardenWebContents(mainWindow.webContents);
+  updateManager?.stop();
+  updateManager = new HBClientUpdateManager({
+    getFeedContext: hbClientUpdateFeedContext,
+    emitState: (state) => mainWindow?.webContents.send("hbclient:updateState", state)
+  });
 
   const devServerUrl = process.env.HBCLIENT_DEV_SERVER_URL || process.env.SUPBOT_DEV_SERVER_URL;
   if (devServerUrl) {
@@ -547,11 +554,23 @@ async function createWindow(): Promise<void> {
     await mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
   }
 
-  void autoConnectLocalBotstation();
+  void autoConnectLocalBotstation().finally(() => updateManager?.start());
 
   mainWindow.on("closed", () => {
+    updateManager?.stop();
     mainWindow = null;
   });
+}
+
+async function hbClientUpdateFeedContext(forceRefresh: boolean): Promise<{ baseUrl: string; accessToken: string }> {
+  const service = getRuntime();
+  const [config, identity] = await Promise.all([service.servstationA2AConfig(), service.identityContext()]);
+  const baseUrl = config.baseUrl || identity?.servstationUrl || process.env.HBCLIENT_BOTSTATION_BASE_URL || defaultBotstationBaseUrl;
+  const accessToken = await service.servstationA2AAccessToken(undefined, forceRefresh);
+  if (!accessToken) {
+    throw new Error("Botstation login is required before checking for HBClient updates.");
+  }
+  return { baseUrl: normalizeOidcUrl(baseUrl, "Botstation base URL"), accessToken };
 }
 
 async function autoConnectLocalBotstation(): Promise<void> {
@@ -595,6 +614,10 @@ function hasUsableBotstationOidcSession(config: { oidc?: { accessTokenExpiresAt?
 
 function registerIpc(): void {
   ipcMain.handle("snapshot", () => getRuntime().snapshot());
+  ipcMain.handle("hbclient:update:getState", () => updateManager?.getState());
+  ipcMain.handle("hbclient:update:check", () => updateManager?.check(true));
+  ipcMain.handle("hbclient:update:download", () => updateManager?.download());
+  ipcMain.handle("hbclient:update:install", () => updateManager?.install());
   ipcMain.handle("conversation:create", (_event, title?: string) => getRuntime().createConversation(optionalString(title, "title")));
   ipcMain.handle("conversation:delete", (_event, id: string) => getRuntime().deleteConversation(requiredString(id, "conversation id")));
   ipcMain.handle("prompt:send", (_event, input: SendPromptInput) => getRuntime().sendPrompt(validateSendPromptInput(input)));
@@ -646,10 +669,22 @@ function registerIpc(): void {
   ipcMain.handle("identity:update", (_event, input: IdentityContext) => getRuntime().updateIdentityContext(validateIdentityContext(input)));
   ipcMain.handle("servstationA2A:getConfig", () => getRuntime().servstationA2AConfig());
   ipcMain.handle("servstationA2A:updateConfig", (_event, input: ServstationA2AConfigUpdate) => getRuntime().updateServstationA2AConfig(validateServstationA2AConfigUpdate(input)));
-  ipcMain.handle("servstationA2A:loginOidc", (_event, input?: ServstationA2AOidcLoginInput) => loginServstationOidc(validateServstationA2AOidcLoginInput(input)));
-  ipcMain.handle("servstationA2A:refreshOidc", () => getRuntime().refreshServstationA2AOidcSession());
+  ipcMain.handle("servstationA2A:loginOidc", async (_event, input?: ServstationA2AOidcLoginInput) => {
+    const result = await loginServstationOidc(validateServstationA2AOidcLoginInput(input));
+    void updateManager?.check(false);
+    return result;
+  });
+  ipcMain.handle("servstationA2A:refreshOidc", async () => {
+    const result = await getRuntime().refreshServstationA2AOidcSession();
+    void updateManager?.check(false);
+    return result;
+  });
   ipcMain.handle("servstationA2A:logoutOidc", () => getRuntime().clearServstationA2AOidcSession());
-  ipcMain.handle("servstationA2A:connectReverse", () => getRuntime().connectServstationReverseBridge());
+  ipcMain.handle("servstationA2A:connectReverse", async () => {
+    const result = await getRuntime().connectServstationReverseBridge();
+    void updateManager?.check(false);
+    return result;
+  });
   ipcMain.handle("servstationA2A:disconnectReverse", () => getRuntime().disconnectServstationReverseBridge());
   ipcMain.handle("servstationClient:snapshot", (_event, input?: ServstationClientSnapshotQuery) => getRuntime().getServstationClientSnapshot(validateServstationClientSnapshotQuery(input)));
   ipcMain.handle("servstationClient:createConversation", (_event, title?: string) => getRuntime().createServstationConversation(optionalString(title, "servstation conversation title")));
@@ -1455,6 +1490,8 @@ app.on("window-all-closed", () => {
     app.quit();
   }
 });
+
+app.on("before-quit", () => updateManager?.stop());
 
 app.on("before-quit", () => {
   void runtime?.shutdown();

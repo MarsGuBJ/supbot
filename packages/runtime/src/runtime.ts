@@ -3186,7 +3186,7 @@ export class SupbotRuntime extends EventEmitter {
     };
   }
 
-  private async servstationA2AAccessToken(signal?: AbortSignal): Promise<string | undefined> {
+  async servstationA2AAccessToken(signal?: AbortSignal, forceRefresh = false): Promise<string | undefined> {
     if (this.state.servstationA2AConfig.authMode !== "oidc") {
       return this.state.servstationA2ASecret;
     }
@@ -3194,7 +3194,7 @@ export class SupbotRuntime extends EventEmitter {
     if (!tokens) {
       throw new Error("Servstation OIDC session is not configured.");
     }
-    if (oidcAccessTokenExpiringSoon(tokens)) {
+    if (forceRefresh || oidcAccessTokenExpiringSoon(tokens)) {
       await this.refreshServstationA2AOidcSession(signal);
       return parseServstationOidcSecret(this.state.servstationA2AOidcSecret)?.accessToken;
     }

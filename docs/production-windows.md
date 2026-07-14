@@ -21,6 +21,19 @@ Before publishing a build:
 - Upgrade over the previous installer and verify the existing user data directory still loads.
 - Record the generated installer name, app version, commit, and audit result in release notes.
 
+## Remote Updates
+
+HBClient checks the authenticated Botstation stable update feed after connecting and every 30 minutes. It never downloads or installs an update without user action.
+
+Publish a release from Botstation Admin Console:
+
+1. Build and sign the Windows x64 NSIS installer.
+2. Confirm the file name is `HBClient-{version}-win-x64.exe` and the embedded application version uses the same SemVer value.
+3. Open **客户端版本**, upload the EXE, confirm the version, and publish it.
+4. Verify an installed older HBClient displays the upgrade prompt, downloads the package, and offers **重启并安装**.
+
+Botstation stores installers in its existing artifact-repo MinIO bucket and generates `latest.yml` from the published release. The feed and installer require the user's Botstation access token. `HBCLIENT_UPDATE_FEED_URL` overrides the feed root for controlled testing; `HBCLIENT_ENABLE_DEV_UPDATES=1` enables updater wiring in an unpackaged development build.
+
 ## Data And Credentials
 
 Runtime data lives under Electron's `userData` directory unless `SUPBOT_USER_DATA_DIR` is set for development or testing. The app stores conversations, transcripts, memory, generated files, worktree metadata, schedules, MCP config, and Remote Bridge audit records under `data/`.
