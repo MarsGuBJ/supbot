@@ -44,11 +44,20 @@ describe("Server Agent projects", () => {
 
   it("keeps project actions and project-scoped sending wired into the Server Agent page", () => {
     const source = readFileSync(new URL("./main.tsx", import.meta.url), "utf8");
+    const messagesStart = source.indexOf("function ServerAgentMessages");
+    const messagesEnd = source.indexOf("function ServerAgentProjectGroup");
+    const serverAgentMessages = source.slice(messagesStart, messagesEnd);
 
     expect(source).toContain('data-testid="server-agent-project-list"');
     expect(source).toContain("server-agent-project-new-conversation-");
     expect(source).toContain("server-agent-project-resources-");
     expect(source).toContain("server-agent-project-rename-");
     expect(source).toContain("servstationPromptTarget(activeConversation?.id, draftConversation ? draftProjectId : undefined)");
+    expect(serverAgentMessages).toContain("onContextMenu={openSelectionMenu}");
+    expect(serverAgentMessages).toContain("runSelectionAction(\"copy\")");
+    expect(serverAgentMessages).not.toContain("runSelectionAction(\"memory\")");
+    expect(serverAgentMessages).not.toContain("加入记忆");
+    expect(serverAgentMessages).toContain("onContextMenu={openPromptMenu}");
+    expect(serverAgentMessages).toContain("runPromptAction(\"paste\")");
   });
 });

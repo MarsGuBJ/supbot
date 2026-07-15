@@ -2087,10 +2087,10 @@ button {
 .server-agent-workspace {
   min-height: 0;
   height: 100%;
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
-  gap: 14px;
-  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
   overflow: hidden;
   background: rgba(255, 250, 245, 0.66);
 }
@@ -2101,20 +2101,59 @@ button {
   justify-content: space-between;
   gap: 16px;
   min-width: 0;
-  padding-bottom: 14px;
+  padding-bottom: 8px;
   border-bottom: 1px solid var(--line);
 }
 
 .server-agent-header h2 {
-  margin: 4px 0 8px;
+  margin: 0 0 4px;
   font-size: 24px;
   line-height: 1.15;
   overflow-wrap: anywhere;
 }
 
 .server-agent-tabs {
+  flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
+}
+
+.server-agent-tabs > .ant-tabs-nav {
+  flex: 0 0 auto;
+  margin: 0 0 6px;
+  min-width: 0;
+}
+
+.server-agent-tabs > .ant-tabs-nav .ant-tabs-tab {
+  padding: 6px 0;
+}
+
+.server-agent-tabs > .ant-tabs-nav .ant-tabs-extra-content {
+  min-width: 0;
+}
+
+.server-agent-tab-extra {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.server-agent-tab-extra .tag-row {
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.server-agent-tab-extra .ant-tag {
+  max-width: min(260px, 24vw);
+  margin-inline-end: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .server-agent-tabs,

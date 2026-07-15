@@ -715,6 +715,7 @@ function App() {
           <ServerAgentWorkspace
             snapshot={snapshot}
             refreshRuntime={refresh}
+            copySelectedText={copySelectedText}
             t={t}
           />
         ) : view === "config" ? (
@@ -1146,10 +1147,12 @@ async function ensureServstationOidcSession(
 function ServerAgentWorkspace({
   snapshot,
   refreshRuntime,
+  copySelectedText,
   t
 }: {
   snapshot: RuntimeSnapshot;
   refreshRuntime: () => Promise<void>;
+  copySelectedText: (text: string) => Promise<void>;
   t: Translator;
 }) {
   const [remote, setRemote] = useState<ServstationClientSnapshot | null>(null);
@@ -1523,23 +1526,21 @@ function ServerAgentWorkspace({
   };
 
   const disabled = !connected || loading;
+  const tabBarExtra = (
+    <div className="server-agent-tab-extra">
+      <div className="tag-row">
+        <Tag color={connected ? "green" : reverseStatus === "error" ? "red" : "default"}>{t(`reverse:${reverseStatus}`)}</Tag>
+        <Tag>{remote?.baseUrl || snapshot.servstationA2A.config.baseUrl || snapshot.identityContext?.servstationUrl || t("No Servstation URL")}</Tag>
+        {remote?.identity?.userId ? <Tag>{remote.identity.userId}</Tag> : null}
+      </div>
+      <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={() => void loadRemote(activeConversation?.id, false, draftConversation)}>{t("Refresh")}</Button>
+      {connected ? null : <Button size="small" type="primary" icon={<ApiOutlined />} loading={connecting} onClick={() => void connectRemote()}>{t("Connect server Agent")}</Button>}
+    </div>
+  );
 
   return (
     <section className="server-agent-workspace">
       {contextHolder}
-      <div className="server-agent-header">
-        <div>
-          <div className="tag-row">
-            <Tag color={connected ? "green" : reverseStatus === "error" ? "red" : "default"}>{t(`reverse:${reverseStatus}`)}</Tag>
-            <Tag>{remote?.baseUrl || snapshot.servstationA2A.config.baseUrl || snapshot.identityContext?.servstationUrl || t("No Servstation URL")}</Tag>
-            {remote?.identity?.userId ? <Tag>{remote.identity.userId}</Tag> : null}
-          </div>
-        </div>
-        <Space wrap>
-          <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void loadRemote(activeConversation?.id, false, draftConversation)}>{t("Refresh")}</Button>
-          {connected ? null : <Button type="primary" icon={<ApiOutlined />} loading={connecting} onClick={() => void connectRemote()}>{t("Connect server Agent")}</Button>}
-        </Space>
-      </div>
       {!connected ? (
         <Alert
           type={reverseStatus === "error" ? "error" : "warning"}
@@ -1549,6 +1550,7 @@ function ServerAgentWorkspace({
       ) : null}
       <Tabs
         className="server-agent-tabs"
+        tabBarExtraContent={{ right: tabBarExtra }}
         items={[
           {
             key: "messages",
@@ -1584,6 +1586,7 @@ function ServerAgentWorkspace({
                 onPickAttachments={pickRemoteAttachments}
                 onSend={sendRemotePrompt}
                 onCancelRunning={cancelRunningJob}
+                copySelectedText={copySelectedText}
                 t={t}
               />
             )
@@ -1742,6 +1745,7 @@ function ServerAgentMessages({
   onPickAttachments,
   onSend,
   onCancelRunning,
+  copySelectedText,
   t
 }: {
   activeConversation?: ServstationConversation;
@@ -1773,12 +1777,20 @@ function ServerAgentMessages({
   onPickAttachments: () => Promise<void>;
   onSend: () => Promise<void>;
   onCancelRunning: () => Promise<void>;
+  copySelectedText: (text: string) => Promise<void>;
   t: Translator;
 }) {
+  const messageStreamRef = useRef<HTMLDivElement | null>(null);
+  const selectionMenuRef = useRef<HTMLDivElement | null>(null);
+  const promptMenuRef = useRef<HTMLDivElement | null>(null);
   const promptInputRef = useRef<TextAreaRef | null>(null);
   const [capabilityOpen, setCapabilityOpen] = useState(false);
   const [capabilitySearch, setCapabilitySearch] = useState("");
   const [newProjectName, setNewProjectName] = useState("");
+  const [selectionMenu, setSelectionMenu] = useState<SelectionContextMenu | null>(null);
+  const [selectionAction, setSelectionAction] = useState<"copy" | null>(null);
+  const [promptMenu, setPromptMenu] = useState<PromptContextMenu | null>(null);
+  const [promptAction, setPromptAction] = useState<"copy" | "paste" | null>(null);
   const projectGroups = useMemo(
     () => groupServstationConversations(projects, conversations),
     [conversations, projects]
@@ -1825,6 +1837,143 @@ function ServerAgentMessages({
       nextTextArea?.setSelectionRange(caret, caret);
     });
   }, [prompt, setPrompt]);
+
+  const closeSelectionMenu = useCallback(() => setSelectionMenu(null), []);
+  const closePromptMenu = useCallback(() => setPromptMenu(null), []);
+
+  const openSelectionMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const text = selectedTextWithin(event.currentTarget);
+    if (!text) {
+      setSelectionMenu(null);
+      return;
+    }
+    event.preventDefault();
+    closePromptMenu();
+    const menuWidth = 176;
+    const menuHeight = 52;
+    setSelectionMenu({
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
+      text
+    });
+  }, [closePromptMenu]);
+
+  const openPromptMenu = useCallback((event: React.MouseEvent<HTMLTextAreaElement>) => {
+    event.preventDefault();
+    closeSelectionMenu();
+    const target = event.currentTarget;
+    const selectionStart = target.selectionStart ?? prompt.length;
+    const selectionEnd = target.selectionEnd ?? selectionStart;
+    const start = Math.min(selectionStart, selectionEnd);
+    const end = Math.max(selectionStart, selectionEnd);
+    const menuWidth = 176;
+    const menuHeight = 92;
+    setPromptMenu({
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
+      selectionStart: start,
+      selectionEnd: end,
+      selectedText: prompt.slice(start, end)
+    });
+  }, [closeSelectionMenu, prompt]);
+
+  const runSelectionAction = useCallback(async (action: "copy") => {
+    if (!selectionMenu) {
+      return;
+    }
+    setSelectionAction(action);
+    try {
+      await copySelectedText(selectionMenu.text);
+      closeSelectionMenu();
+    } finally {
+      setSelectionAction(null);
+    }
+  }, [closeSelectionMenu, copySelectedText, selectionMenu]);
+
+  const runPromptAction = useCallback(async (action: "copy" | "paste") => {
+    if (!promptMenu) {
+      return;
+    }
+    setPromptAction(action);
+    try {
+      if (action === "copy") {
+        if (promptMenu.selectedText) {
+          await copySelectedText(promptMenu.selectedText);
+        }
+        closePromptMenu();
+        return;
+      }
+      const clipboardText = await readClipboardText();
+      const nextPrompt = `${prompt.slice(0, promptMenu.selectionStart)}${clipboardText}${prompt.slice(promptMenu.selectionEnd)}`;
+      const caret = promptMenu.selectionStart + clipboardText.length;
+      setPrompt(nextPrompt);
+      closePromptMenu();
+      window.requestAnimationFrame(() => {
+        const textarea = promptInputRef.current?.resizableTextArea?.textArea;
+        textarea?.focus();
+        textarea?.setSelectionRange(caret, caret);
+      });
+      message.success(t("已粘贴剪贴板内容。"));
+    } catch (error) {
+      message.error((error as Error).message);
+    } finally {
+      setPromptAction(null);
+    }
+  }, [closePromptMenu, copySelectedText, prompt, promptMenu, setPrompt, t]);
+
+  useEffect(() => {
+    if (!selectionMenu) {
+      return;
+    }
+    const onPointerDown = (event: PointerEvent) => {
+      if (selectionMenuRef.current?.contains(event.target as Node)) {
+        return;
+      }
+      closeSelectionMenu();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeSelectionMenu();
+      }
+    };
+    const onSelectionChange = () => {
+      const stream = messageStreamRef.current;
+      if (!stream || !selectedTextWithin(stream)) {
+        closeSelectionMenu();
+      }
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    document.addEventListener("selectionchange", onSelectionChange);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("selectionchange", onSelectionChange);
+    };
+  }, [closeSelectionMenu, selectionMenu]);
+
+  useEffect(() => {
+    if (!promptMenu) {
+      return;
+    }
+    const onPointerDown = (event: PointerEvent) => {
+      if (promptMenuRef.current?.contains(event.target as Node)) {
+        return;
+      }
+      closePromptMenu();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closePromptMenu();
+      }
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [closePromptMenu, promptMenu]);
 
   const submitProject = async () => {
     const name = newProjectName.trim();
@@ -1982,7 +2131,12 @@ function ServerAgentMessages({
             {runningJob ? <Button danger size="small" icon={<StopOutlined />} loading={busyId === `job:${runningJob.id}`} onClick={() => void onCancelRunning()}>{t("Stop")}</Button> : null}
           </div>
         </div>
-        <div className="server-agent-message-stream">
+        <div
+          className="server-agent-message-stream"
+          ref={messageStreamRef}
+          onScroll={closeSelectionMenu}
+          onContextMenu={openSelectionMenu}
+        >
           {messages.map((item) => (
             <div className={`message-row ${item.role === "agent" ? "assistant" : item.role}`} key={item.id}>
               <div className="message-bubble">
@@ -2007,6 +2161,56 @@ function ServerAgentMessages({
           ))}
           {!messages.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("No messages yet")} /> : null}
         </div>
+        {selectionMenu ? (
+          <div
+            ref={selectionMenuRef}
+            className="selection-context-menu"
+            style={{ left: selectionMenu.x, top: selectionMenu.y }}
+            role="menu"
+            aria-label={t("选中文本操作")}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              disabled={Boolean(selectionAction)}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => void runSelectionAction("copy")}
+            >
+              <CopyOutlined />
+              <span>{t("复制")}</span>
+            </button>
+          </div>
+        ) : null}
+        {promptMenu ? (
+          <div
+            ref={promptMenuRef}
+            className="selection-context-menu"
+            style={{ left: promptMenu.x, top: promptMenu.y }}
+            role="menu"
+            aria-label={t("提示词输入框操作")}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              disabled={!promptMenu.selectedText || Boolean(promptAction)}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => void runPromptAction("copy")}
+            >
+              <CopyOutlined />
+              <span>{t("复制")}</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={Boolean(promptAction)}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => void runPromptAction("paste")}
+            >
+              <FileTextOutlined />
+              <span>{t("粘贴")}</span>
+            </button>
+          </div>
+        ) : null}
         {attachments.length ? (
           <div className="attachment-strip">
             {attachments.map((attachment) => (
@@ -2027,6 +2231,7 @@ function ServerAgentMessages({
             autoSize={{ minRows: 2, maxRows: 6 }}
             placeholder={t("Message remote staff-agent...")}
             onChange={(event) => setPrompt(event.target.value)}
+            onContextMenu={openPromptMenu}
             onPressEnter={(event) => {
               if (!event.shiftKey) {
                 event.preventDefault();
