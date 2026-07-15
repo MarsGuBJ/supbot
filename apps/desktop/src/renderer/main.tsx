@@ -10,9 +10,11 @@ import {
   CompressOutlined,
   CopyOutlined,
   DeleteOutlined,
+  DownOutlined,
   DownloadOutlined,
   EditOutlined,
   FileTextOutlined,
+  FolderOutlined,
   FolderOpenOutlined,
   MailOutlined,
   MessageOutlined,
@@ -21,12 +23,15 @@ import {
   ApiOutlined,
   OrderedListOutlined,
   PaperClipOutlined,
+  PauseCircleOutlined,
   PlayCircleOutlined,
   PlusOutlined,
   ReloadOutlined,
+  RightOutlined,
   RobotOutlined,
   RollbackOutlined,
   SaveOutlined,
+  SearchOutlined,
   SendOutlined,
   SettingOutlined,
   StarFilled,
@@ -51,6 +56,7 @@ import {
   List,
   Modal,
   Popconfirm,
+  Popover,
   Segmented,
   Select,
   Slider,
@@ -91,7 +97,8 @@ import type {
   McpServerInput,
   McpServerPreset,
   McpServerSnapshot,
-  ModelConfigUpdate,
+  ModelProviderConfig,
+  ModelProviderUpdate,
   PendingToolPermission,
   PermissionRule,
   PersonalityConfig,
@@ -112,6 +119,7 @@ import type {
   ServstationMailAccount,
   ServstationMailAccountDraft,
   ServstationMailSecurityMode,
+  ServstationLocalCapabilityAsset,
   ServstationMessageAccountRef,
   ServstationMessageAttachmentContent,
   ServstationMessageAttachmentUpload,
@@ -119,6 +127,7 @@ import type {
   ServstationMessageFolder,
   ServstationMessageListItem,
   ServstationScheduledJob,
+  ServstationServiceDefinition,
   ServstationSessionJob,
   SubagentConfig,
   ToolCallRecord,
@@ -138,6 +147,21 @@ import {
   statusLabel
 } from "@supbot/ui";
 import { loadLanguage, saveLanguage, translate, type Language } from "./i18n";
+import {
+  mergeServstationAutopilotEvent,
+  servstationAutopilotControls,
+  servstationAutopilotDecisionReason,
+  servstationAutopilotEvidenceCount,
+  servstationAutopilotIsActive,
+  servstationAutopilotLatestStep
+} from "./servstationAutopilot";
+import {
+  buildEffectiveServstationServices,
+  buildVisibleServstationCapabilities,
+  filterVisibleServstationCapabilities,
+  formatServstationCapabilityPromptDirective,
+  type ServstationVisibleCapability
+} from "./servstationCapabilities";
 import "./styles.css";
 
 type WorkspaceView = "chat" | "server" | "config" | "market";
@@ -152,6 +176,7 @@ const defaultBotstationClientId = "botstation-agent-client-web";
 const defaultBotstationScope = "openid profile email";
 const defaultBotstationRedirectUri = "http://localhost:8800/oauth2/callback";
 const defaultBotstationUser = "dev-user";
+const projectConversationPreviewLimit = 5;
 const hiddenSlashCommandCapabilityIds = new Set(["tool.file", "tool.shell"]);
 const hiddenChatGeneratedFileExtensions = new Set([
   ".bat",
@@ -204,12 +229,12 @@ function App() {
   const [view, setView] = useState<WorkspaceView>("chat");
   const [detailPanel, setDetailPanel] = useState<DetailPanel>("memory");
   const [activeConversationId, setActiveConversationId] = useState("");
+  const [activeProjectId, setActiveProjectId] = useState("");
   const [prompt, setPrompt] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [sending, setSending] = useState(false);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
-  const [modelOpen, setModelOpen] = useState(false);
   const [subagentOpen, setSubagentOpen] = useState(false);
   const [editingSubagent, setEditingSubagent] = useState<SubagentConfig | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -420,6 +445,11 @@ function App() {
     () => snapshot?.conversations.find((item) => item.id === activeConversationId) || snapshot?.conversations[0],
     [snapshot?.conversations, activeConversationId]
   );
+  useEffect(() => {
+    if (activeConversation) {
+      setActiveProjectId(activeConversation.projectId || "");
+    }
+  }, [activeConversation?.id, activeConversation?.projectId]);
   const runningJob = useMemo(
     () => {
       const conversationId = activeConversation?.id || activeConversationId;
@@ -432,9 +462,11 @@ function App() {
     },
     [activeConversation?.id, activeConversationId, snapshot?.jobs]
   );
-  const startNewConversation = async () => {
-    const conversation = await window.supbot.createConversation();
+  const startNewConversation = async (projectId?: string | null) => {
+    const targetProjectId = projectId === undefined ? activeProjectId || undefined : projectId || undefined;
+    const conversation = await window.supbot.createConversation({ projectId: targetProjectId });
     setActiveConversationId(conversation.id);
+    setActiveProjectId(conversation.projectId || "");
     setPrompt("");
     setView("chat");
     await refresh();
@@ -459,7 +491,6 @@ function App() {
     } else if (command.action === "config") {
       openConfig("model");
     } else if (command.action === "model") {
-      setModelOpen(true);
       openConfig("model");
     } else if (command.action === "copy") {
       await copyLatest();
@@ -481,6 +512,7 @@ function App() {
     try {
       const result = await window.supbot.sendPrompt({
         conversationId: activeConversation?.id,
+        projectId: activeProjectId || undefined,
         prompt: text,
         attachments
       });
@@ -590,13 +622,6 @@ function App() {
     }
   }, [activeConversation, messageApi]);
 
-  const saveModel = async (values: ModelConfigUpdate) => {
-    await window.supbot.updateModelConfig(values);
-    setModelOpen(false);
-    messageApi.success(t("Model configuration saved."));
-    await refresh();
-  };
-
   if (!snapshot) {
     return (
       <ConfigProvider theme={theme}>
@@ -635,6 +660,8 @@ function App() {
               snapshot={snapshot}
               activeConversationId={activeConversation?.id || ""}
               setActiveConversationId={setActiveConversationId}
+              activeProjectId={activeProjectId}
+              setActiveProjectId={setActiveProjectId}
               collapsed={leftCollapsed}
               refresh={refresh}
               startNewConversation={startNewConversation}
@@ -688,7 +715,6 @@ function App() {
             userDataPath={userDataPath}
             focusTab={focusConfigTab}
             setFocusTab={setFocusConfigTab}
-            openModel={() => setModelOpen(true)}
             refresh={refresh}
             t={t}
             openSubagent={(subagent) => {
@@ -712,7 +738,6 @@ function App() {
           />
         )}
       </main>
-      <ModelModal open={modelOpen} config={snapshot.modelConfig} onCancel={() => setModelOpen(false)} onSave={saveModel} t={t} />
       <SubagentModal
         open={subagentOpen}
         subagent={editingSubagent}
@@ -727,6 +752,8 @@ function App() {
       />
       <ScheduleModal
         open={scheduleOpen}
+        projects={snapshot.projects}
+        defaultProjectId={activeProjectId || undefined}
         onCancel={() => setScheduleOpen(false)}
         t={t}
         onSave={async (input) => {
@@ -915,6 +942,8 @@ function LeftPanel({
   snapshot,
   activeConversationId,
   setActiveConversationId,
+  activeProjectId,
+  setActiveProjectId,
   collapsed,
   refresh,
   startNewConversation,
@@ -923,49 +952,94 @@ function LeftPanel({
   snapshot: RuntimeSnapshot;
   activeConversationId: string;
   setActiveConversationId: (id: string) => void;
+  activeProjectId: string;
+  setActiveProjectId: (id: string) => void;
   collapsed: boolean;
   refresh: () => void;
-  startNewConversation: () => Promise<void>;
+  startNewConversation: (projectId?: string | null) => Promise<void>;
   t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
+  const [newConversationOpen, setNewConversationOpen] = useState(false);
+  const [projectName, setProjectName] = useState("");
   const [creatingConversation, setCreatingConversation] = useState(false);
   const createConversation = async () => {
     setCreatingConversation(true);
     try {
-      await startNewConversation();
+      const name = projectName.trim();
+      if (!name) {
+        await startNewConversation(null);
+      } else {
+        const project = await window.supbot.createProjectFromName({ name });
+        await startNewConversation(project.id);
+      }
+      setNewConversationOpen(false);
+      setProjectName("");
+    } catch (error) {
+      message.error((error as Error).message);
     } finally {
       setCreatingConversation(false);
     }
   };
   return (
-    <aside className={`side-panel ${collapsed ? "is-collapsed" : ""}`}>
-      <div className="panel-scroll">
-        <section className="panel-section">
-          <div className="panel-heading">
-            <div className="section-title"><ClockCircleOutlined /> {t("Conversation history")}</div>
-            <Tooltip title={t("New conversation")}>
-              <Button
-                size="small"
-                type="primary"
-                icon={<PlusOutlined />}
-                aria-label={t("New conversation")}
-                loading={creatingConversation}
-                onClick={() => void createConversation()}
-              />
-            </Tooltip>
-          </div>
-          <HistoryPanel
-            conversations={snapshot.conversations}
-            activeConversationId={activeConversationId}
-            setActiveConversationId={setActiveConversationId}
-            refresh={refresh}
-            t={t}
-            embedded
-          />
-        </section>
-      </div>
-      <ServerAgentConnectionButton snapshot={snapshot} refresh={refresh} t={t} />
-    </aside>
+    <>
+      <aside className={`side-panel ${collapsed ? "is-collapsed" : ""}`}>
+        <div className="panel-scroll">
+          <section className="panel-section">
+            <div className="panel-heading">
+              <div className="section-title"><FolderOpenOutlined /> {t("Projects")}</div>
+              <Tooltip title={t("New conversation")}>
+                <Button
+                  size="small"
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  aria-label={t("New conversation")}
+                  onClick={() => setNewConversationOpen(true)}
+                />
+              </Tooltip>
+            </div>
+            <HistoryPanel
+              conversations={snapshot.conversations}
+              projects={snapshot.projects}
+              activeConversationId={activeConversationId}
+              setActiveConversationId={setActiveConversationId}
+              activeProjectId={activeProjectId}
+              setActiveProjectId={setActiveProjectId}
+              refresh={refresh}
+              startNewConversation={startNewConversation}
+              t={t}
+              embedded
+            />
+          </section>
+        </div>
+        <ServerAgentConnectionButton snapshot={snapshot} refresh={refresh} t={t} />
+      </aside>
+      <Modal
+        open={newConversationOpen}
+        title={t("New conversation")}
+        width={420}
+        okText={t(projectName.trim() ? "Create project and start conversation" : "Create unfiled conversation")}
+        confirmLoading={creatingConversation}
+        onOk={() => void createConversation()}
+        onCancel={() => {
+          if (!creatingConversation) {
+            setNewConversationOpen(false);
+            setProjectName("");
+          }
+        }}
+      >
+        <Form layout="vertical" onFinish={() => void createConversation()}>
+          <Form.Item label={t("Project name")} style={{ marginBottom: 0 }}>
+            <Input
+              autoFocus
+              maxLength={80}
+              value={projectName}
+              placeholder={t("Leave blank to create an unfiled conversation")}
+              onChange={(event) => setProjectName(event.target.value)}
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
+    </>
   );
 }
 
@@ -1087,9 +1161,14 @@ function ServerAgentWorkspace({
   const activeConversation = remote?.conversations.find((item) => item.id === activeConversationId) || remote?.conversations[0];
   const messages = useMemo(() => servstationMessagesFromJobs(remote?.jobs || []), [remote?.jobs]);
   const runningJob = useMemo(() => [...(remote?.jobs || [])].reverse().find((job) => !servstationJobIsTerminal(job)), [remote?.jobs]);
+  const autopilotRunId = remote?.autopilotRun?.id || "";
+  const autopilotActive = servstationAutopilotIsActive(remote?.autopilotRun);
+  const hasRunningJob = Boolean(runningJob);
 
-  const loadRemote = useCallback(async (conversationId?: string) => {
-    setLoading(true);
+  const loadRemote = useCallback(async (conversationId?: string, silent = false) => {
+    if (!silent) {
+      setLoading(true);
+    }
     try {
       const next = await window.supbot.getServstationClientSnapshot({ conversationId });
       setRemote(next);
@@ -1098,7 +1177,9 @@ function ServerAgentWorkspace({
     } catch (error) {
       messageApi.error((error as Error).message);
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   }, [messageApi]);
 
@@ -1110,12 +1191,36 @@ function ServerAgentWorkspace({
     if (!remote?.connected) {
       return;
     }
-    const intervalMs = (remote.jobs || []).some((job) => !servstationJobIsTerminal(job)) ? 2_000 : 15_000;
+    const intervalMs = hasRunningJob || autopilotActive ? 2_000 : 15_000;
     const timer = window.setInterval(() => {
-      void loadRemote(activeConversationId || undefined);
+      void loadRemote(activeConversationId || undefined, true);
     }, intervalMs);
     return () => window.clearInterval(timer);
-  }, [activeConversationId, loadRemote, remote?.connected, remote?.jobs]);
+  }, [activeConversationId, autopilotActive, hasRunningJob, loadRemote, remote?.connected]);
+
+  useEffect(() => {
+    if (!remote?.connected || !autopilotRunId || !autopilotActive) {
+      return;
+    }
+    let refreshTimer: number | undefined;
+    const unsubscribe = window.supbot.onServstationAutopilotEvent(autopilotRunId, (event) => {
+      setRemote((current) => current?.autopilotRun?.id === autopilotRunId
+        ? { ...current, autopilotEvents: mergeServstationAutopilotEvent(current.autopilotEvents, event) }
+        : current);
+      if (refreshTimer !== undefined) {
+        window.clearTimeout(refreshTimer);
+      }
+      refreshTimer = window.setTimeout(() => {
+        void loadRemote(activeConversationId || undefined, true);
+      }, 150);
+    });
+    return () => {
+      if (refreshTimer !== undefined) {
+        window.clearTimeout(refreshTimer);
+      }
+      unsubscribe();
+    };
+  }, [activeConversationId, autopilotActive, autopilotRunId, loadRemote, remote?.connected]);
 
   const connectRemote = async () => {
     setConnecting(true);
@@ -1251,8 +1356,8 @@ function ServerAgentWorkspace({
     try {
       await window.supbot.startServstationAutopilotRun({
         conversationId: activeConversation?.id,
-        goal: text,
-        prompt: text
+        prompt: text,
+        requestId: `hbclient-autopilot-${Date.now().toString(36)}`
       });
       setAutopilotPrompt("");
       await loadRemote(activeConversation?.id);
@@ -1314,6 +1419,9 @@ function ServerAgentWorkspace({
                 activeConversation={activeConversation}
                 conversations={remote?.conversations || []}
                 messages={messages}
+                services={remote?.services || []}
+                localCapabilities={remote?.localCapabilities || []}
+                capabilityLoadError={remote?.capabilityLoadError}
                 prompt={prompt}
                 attachments={attachments}
                 disabled={disabled}
@@ -1357,6 +1465,7 @@ function ServerAgentWorkspace({
                 scheduledJobs={remote?.scheduledJobs || []}
                 autopilotRun={remote?.autopilotRun || null}
                 autopilotEvents={remote?.autopilotEvents || []}
+                autopilotSteps={remote?.autopilotSteps || []}
                 autopilotPrompt={autopilotPrompt}
                 disabled={disabled}
                 busyId={busyId}
@@ -1399,6 +1508,9 @@ function ServerAgentMessages({
   activeConversation,
   conversations,
   messages,
+  services,
+  localCapabilities,
+  capabilityLoadError,
   prompt,
   attachments,
   disabled,
@@ -1418,6 +1530,9 @@ function ServerAgentMessages({
   activeConversation?: ServstationConversation;
   conversations: ServstationConversation[];
   messages: ServstationChatMessage[];
+  services: ServstationServiceDefinition[];
+  localCapabilities: ServstationLocalCapabilityAsset[];
+  capabilityLoadError?: string;
   prompt: string;
   attachments: Attachment[];
   disabled: boolean;
@@ -1434,6 +1549,97 @@ function ServerAgentMessages({
   onCancelRunning: () => Promise<void>;
   t: Translator;
 }) {
+  const promptInputRef = useRef<TextAreaRef | null>(null);
+  const [capabilityOpen, setCapabilityOpen] = useState(false);
+  const [capabilitySearch, setCapabilitySearch] = useState("");
+  const effectiveServices = useMemo(
+    () => buildEffectiveServstationServices(services, localCapabilities),
+    [localCapabilities, services]
+  );
+  const visibleCapabilities = useMemo(
+    () => buildVisibleServstationCapabilities(effectiveServices),
+    [effectiveServices]
+  );
+  const filteredCapabilities = useMemo(
+    () => filterVisibleServstationCapabilities(visibleCapabilities, capabilitySearch),
+    [capabilitySearch, visibleCapabilities]
+  );
+  const capabilityCounts = useMemo(() => {
+    let skills = 0;
+    let mcps = 0;
+    for (const item of visibleCapabilities) {
+      if (item.capabilityType === "mcp") {
+        mcps += 1;
+      } else {
+        skills += 1;
+      }
+    }
+    return { skills, mcps };
+  }, [visibleCapabilities]);
+
+  const insertCapability = useCallback((item: ServstationVisibleCapability) => {
+    const directive = formatServstationCapabilityPromptDirective(item);
+    const textArea = promptInputRef.current?.resizableTextArea?.textArea;
+    const currentValue = textArea?.value ?? prompt;
+    const fallbackPosition = currentValue.length;
+    const start = Math.max(0, Math.min(textArea?.selectionStart ?? fallbackPosition, currentValue.length));
+    const end = Math.max(start, Math.min(textArea?.selectionEnd ?? start, currentValue.length));
+    const nextPrompt = `${currentValue.slice(0, start)}${directive}${currentValue.slice(end)}`;
+    const caret = start + directive.length;
+    setPrompt(nextPrompt);
+    setCapabilityOpen(false);
+    window.requestAnimationFrame(() => {
+      const nextTextArea = promptInputRef.current?.resizableTextArea?.textArea;
+      nextTextArea?.focus();
+      nextTextArea?.setSelectionRange(caret, caret);
+    });
+  }, [prompt, setPrompt]);
+
+  const capabilityContent = (
+    <div className="server-agent-capability-popover">
+      <Input
+        allowClear
+        prefix={<SearchOutlined />}
+        placeholder={t("Search skills and MCPs")}
+        value={capabilitySearch}
+        onChange={(event) => setCapabilitySearch(event.target.value)}
+      />
+      <div className="server-agent-capability-counts">
+        <Tag>{t("skill")}: {capabilityCounts.skills}</Tag>
+        <Tag>MCP: {capabilityCounts.mcps}</Tag>
+      </div>
+      {capabilityLoadError ? (
+        <Alert
+          type="warning"
+          showIcon
+          message={t("Capabilities failed to load")}
+          description={capabilityLoadError}
+        />
+      ) : null}
+      <div className="server-agent-capability-list" role="list">
+        {filteredCapabilities.map((item) => (
+          <button
+            className="server-agent-capability-item"
+            key={item.key}
+            type="button"
+            role="listitem"
+            onClick={() => insertCapability(item)}
+          >
+            <span className="server-agent-capability-copy">
+              <strong>{item.name}</strong>
+              <small>{item.description || item.idLabel}</small>
+              {item.description ? <code>{item.idLabel}</code> : null}
+            </span>
+            <Tag>{item.capabilityType === "mcp" ? "MCP" : t("skill")}</Tag>
+          </button>
+        ))}
+        {!filteredCapabilities.length ? (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("No matching capabilities")} />
+        ) : null}
+      </div>
+    </div>
+  );
+
   return (
     <div className="server-agent-message-grid">
       <aside className="server-agent-conversations">
@@ -1448,7 +1654,6 @@ function ServerAgentMessages({
             <div className={`server-agent-conversation ${conversation.id === activeConversation?.id ? "is-active" : ""}`} key={conversation.id}>
               <button type="button" onClick={() => void onSelectConversation(conversation)}>
                 <strong>{servstationConversationTitle(conversation, t("New conversation"))}</strong>
-                <span>{conversation.jobCount} {t(conversation.jobCount === 1 ? "Task" : "Tasks")}</span>
                 <small>{formatDateTime(conversation.lastMessageAt || conversation.updatedAt)}</small>
               </button>
               <Popconfirm title={t("Delete conversation?")} onConfirm={() => void onDeleteConversation(conversation)}>
@@ -1461,11 +1666,24 @@ function ServerAgentMessages({
       </aside>
       <section className="server-agent-chat">
         <div className="server-agent-chat-title">
-          <div>
+          <div className="server-agent-chat-title-copy">
             <div className="chat-banner-label">{t("Messages")}</div>
             <strong>{activeConversation ? servstationConversationTitle(activeConversation, t("New conversation")) : t("No conversation yet")}</strong>
           </div>
-          {runningJob ? <Button danger size="small" icon={<StopOutlined />} loading={busyId === `job:${runningJob.id}`} onClick={() => void onCancelRunning()}>{t("Stop")}</Button> : null}
+          <div className="server-agent-chat-actions">
+            <Popover
+              content={capabilityContent}
+              trigger="click"
+              placement="bottomRight"
+              open={capabilityOpen}
+              overlayClassName="server-agent-capability-overlay"
+              destroyOnHidden
+              onOpenChange={setCapabilityOpen}
+            >
+              <Button size="small" icon={<ToolOutlined />} disabled={sending}>{t("Skills")}</Button>
+            </Popover>
+            {runningJob ? <Button danger size="small" icon={<StopOutlined />} loading={busyId === `job:${runningJob.id}`} onClick={() => void onCancelRunning()}>{t("Stop")}</Button> : null}
+          </div>
         </div>
         <div className="server-agent-message-stream">
           {messages.map((item) => (
@@ -1506,6 +1724,7 @@ function ServerAgentMessages({
             <Button icon={<PaperClipOutlined />} disabled={disabled || sending} onClick={() => void onPickAttachments()} />
           </Tooltip>
           <Input.TextArea
+            ref={promptInputRef}
             value={prompt}
             disabled={disabled || sending}
             autoSize={{ minRows: 2, maxRows: 6 }}
@@ -1529,6 +1748,7 @@ function ServerAgentFlows({
   scheduledJobs,
   autopilotRun,
   autopilotEvents,
+  autopilotSteps,
   autopilotPrompt,
   disabled,
   busyId,
@@ -1543,6 +1763,7 @@ function ServerAgentFlows({
   scheduledJobs: ServstationScheduledJob[];
   autopilotRun: ServstationAutopilotRun | null;
   autopilotEvents: NonNullable<ServstationClientSnapshot["autopilotEvents"]>;
+  autopilotSteps: NonNullable<ServstationClientSnapshot["autopilotSteps"]>;
   autopilotPrompt: string;
   disabled: boolean;
   busyId: string;
@@ -1554,6 +1775,15 @@ function ServerAgentFlows({
   onUpdateAutopilot: (status: "paused" | "watching" | "stopped") => Promise<void>;
   t: Translator;
 }) {
+  const controls = servstationAutopilotControls(autopilotRun);
+  const latestStep = servstationAutopilotLatestStep(autopilotSteps);
+  const evidence = servstationAutopilotEvidenceCount(autopilotRun);
+  const activeTarget = autopilotRun?.activeTargetId || "-";
+  const currentJob = autopilotRun?.currentJobId || latestStep?.jobId || "-";
+  const latestEvent = autopilotEvents[0];
+  const latestDecision = latestStep ? servstationAutopilotDecisionReason(latestStep) : autopilotRun?.lastDecision?.reason;
+  const submitDisabled = disabled || controls.promptLocked || !autopilotPrompt.trim();
+
   return (
     <div className="server-agent-flow-grid">
       <section className="server-agent-flow-column">
@@ -1589,32 +1819,102 @@ function ServerAgentFlows({
           {autopilotRun ? <Tag color={servstationStatusColor(autopilotRun.status)}>{t(autopilotRun.status)}</Tag> : null}
         </div>
         <div className="server-agent-autopilot">
-          <Input.TextArea
-            value={autopilotPrompt}
-            disabled={disabled || Boolean(autopilotRun && !["completed", "failed", "stopped", "needs_user"].includes(autopilotRun.status))}
-            autoSize={{ minRows: 3, maxRows: 6 }}
-            placeholder={t("Autopilot goal")}
-            onChange={(event) => setAutopilotPrompt(event.target.value)}
-          />
-          <Space wrap>
-            <Button type="primary" icon={<ThunderboltOutlined />} disabled={disabled || !autopilotPrompt.trim()} loading={busyId === "autopilot:start"} onClick={() => void onStartAutopilot()}>{t("Start run")}</Button>
-            <Button disabled={!autopilotRun || disabled} loading={busyId === "autopilot:paused"} onClick={() => void onUpdateAutopilot("paused")}>{t("Pause")}</Button>
-            <Button disabled={!autopilotRun || disabled} loading={busyId === "autopilot:watching"} onClick={() => void onUpdateAutopilot("watching")}>{t("Resume")}</Button>
-            <Button danger disabled={!autopilotRun || disabled} loading={busyId === "autopilot:stopped"} onClick={() => void onUpdateAutopilot("stopped")}>{t("Stop")}</Button>
-          </Space>
+          <div className="server-agent-autopilot-composer">
+            <Input.TextArea
+              value={autopilotPrompt}
+              disabled={disabled || controls.promptLocked}
+              autoSize={{ minRows: 3, maxRows: 6 }}
+              placeholder={t("Describe the outcome for the server Agent...")}
+              onChange={(event) => setAutopilotPrompt(event.target.value)}
+              onPressEnter={(event) => {
+                if (!event.shiftKey && !submitDisabled) {
+                  event.preventDefault();
+                  void onStartAutopilot();
+                }
+              }}
+            />
+            <Space wrap>
+              <Button type="primary" icon={<ThunderboltOutlined />} disabled={submitDisabled} loading={busyId === "autopilot:start"} onClick={() => void onStartAutopilot()}>{t("Submit prompt")}</Button>
+              {controls.canResume ? (
+                <Button icon={<PlayCircleOutlined />} disabled={disabled || !controls.canResume} loading={busyId === "autopilot:watching"} onClick={() => void onUpdateAutopilot("watching")}>{t("Resume")}</Button>
+              ) : (
+                <Button icon={<PauseCircleOutlined />} disabled={disabled || !controls.canPause} loading={busyId === "autopilot:paused"} onClick={() => void onUpdateAutopilot("paused")}>{t("Pause")}</Button>
+              )}
+              <Button danger icon={<StopOutlined />} disabled={disabled || !controls.canStop} loading={busyId === "autopilot:stopped"} onClick={() => void onUpdateAutopilot("stopped")}>{t("Stop")}</Button>
+            </Space>
+          </div>
           {autopilotRun ? (
-            <div className="server-agent-job">
-              <strong>{autopilotRun.goal || t("Autopilot")}</strong>
-              <div className="muted">{autopilotRun.currentJobId || autopilotRun.failureMessage || formatDateTime(autopilotRun.updatedAt)}</div>
-            </div>
-          ) : null}
-          <div className="server-agent-event-list">
-            {autopilotEvents.slice(0, 8).map((event) => (
-              <div className="runtime-event" key={event.id}>
-                <span>{formatDateTime(event.createdAt)}</span>
-                <small>{event.message || event.eventType}</small>
+            <div className="server-agent-autopilot-run">
+              <div className="server-agent-autopilot-goal">
+                <span>{t("Goal")}</span>
+                <strong>{autopilotRun.goal || t("Waiting for the server Agent to derive a goal")}</strong>
               </div>
-            ))}
+              <div className="server-agent-autopilot-stats">
+                <div><span>{t("Phase")}</span><strong>{t(autopilotRun.phase || autopilotRun.status)}</strong></div>
+                <div><span>{t("Steps")}</span><strong>{autopilotRun.stepCount ?? autopilotSteps.length}/{autopilotRun.maxSteps ?? "-"}</strong></div>
+                <div><span>{t("Evidence")}</span><strong>{evidence.met}/{evidence.total}</strong></div>
+                <div><span>{t("Retries")}</span><strong>{autopilotRun.totalRetries || 0}</strong></div>
+              </div>
+              <div className="server-agent-autopilot-targets">
+                <div><span>{t("Active target")}</span><code>{activeTarget}</code></div>
+                <div><span>{t("Current job")}</span><code>{currentJob}</code></div>
+              </div>
+              {latestStep ? (
+                <div className="server-agent-autopilot-highlight">
+                  <span>{t("Latest step")}</span>
+                  <strong>#{latestStep.sequence} {latestStep.kind} / {t(latestStep.status)}</strong>
+                </div>
+              ) : null}
+              <div className="server-agent-autopilot-highlight">
+                <span>{t("Latest event")}</span>
+                <strong>{latestEvent?.message || autopilotRun.failureMessage || "-"}</strong>
+              </div>
+              {latestDecision ? (
+                <div className="server-agent-autopilot-highlight">
+                  <span>{t("Decision")}</span>
+                  <strong>{latestDecision}</strong>
+                </div>
+              ) : null}
+              {autopilotRun.failureMessage ? <Alert type="error" showIcon message={autopilotRun.failureMessage} /> : null}
+            </div>
+          ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("Waiting for an Autopilot prompt")} />}
+          <div className="server-agent-autopilot-details">
+            <section>
+              <div className="section-title"><OrderedListOutlined /> {t("Steps")}</div>
+              <div className="server-agent-autopilot-step-list">
+                {autopilotSteps.slice(0, 10).map((step) => {
+                  const reason = servstationAutopilotDecisionReason(step);
+                  return (
+                    <div className="server-agent-autopilot-step" key={step.id}>
+                      <div className="activity-head">
+                        <strong>#{step.sequence} {step.kind}</strong>
+                        <Tag color={servstationStatusColor(step.status)}>{t(step.status)}</Tag>
+                      </div>
+                      <div className="server-agent-autopilot-step-meta">
+                        <span>{t("Attempt")} {step.attempt}</span>
+                        {step.jobId ? <code>{step.jobId}</code> : null}
+                        <span>{formatDateTime(step.updatedAt)}</span>
+                      </div>
+                      {reason ? <small>{reason}</small> : null}
+                      {step.errorClass ? <small className="danger-text">{step.errorClass}</small> : null}
+                    </div>
+                  );
+                })}
+                {!autopilotSteps.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("No Autopilot steps yet")} /> : null}
+              </div>
+            </section>
+            <section>
+              <div className="section-title"><ClockCircleOutlined /> {t("Events")}</div>
+              <div className="server-agent-event-list">
+                {autopilotEvents.slice(0, 10).map((event) => (
+                  <div className="runtime-event" key={event.id}>
+                    <span>{formatDateTime(event.createdAt)}</span>
+                    <small>{event.message || event.eventType}</small>
+                  </div>
+                ))}
+                {!autopilotEvents.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("No Autopilot events yet")} /> : null}
+              </div>
+            </section>
           </div>
         </div>
       </section>
@@ -3927,29 +4227,7 @@ function MessageBlocks({ message, t }: { message: ChatMessage; t: (key: string, 
           );
         }
         if (block.type === "tool_result") {
-          return (
-            <div className={`tool-card result ${block.isError ? "is-error" : ""}`} key={`${message.id}-${block.toolCallId}-result`}>
-              <div className="tool-card-head">
-                {block.isError ? <CloseCircleOutlined /> : <CheckCircleOutlined />}
-                <strong>{t("Tool result")}</strong>
-                {block.outputTruncated ? <Tag color="gold">{t("truncated")}</Tag> : null}
-              </div>
-              {block.outputParts?.length ? (
-                <div className="tool-result-parts">
-                  {block.outputParts.map((part, partIndex) => (
-                    <div className="tool-result-part" key={`${message.id}-${block.toolCallId}-part-${partIndex}`}>
-                      <div>
-                        <Tag>{part.type}</Tag>
-                        {part.mimeType ? <Tag>{part.mimeType}</Tag> : null}
-                      </div>
-                      <span>{part.text.slice(0, 360)}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-              <pre>{block.output.slice(0, 2400)}</pre>
-            </div>
-          );
+          return <ToolResultBlock block={block} messageId={message.id} t={t} key={`${message.id}-${block.toolCallId}-result`} />;
         }
         if (block.type === "thinking" || block.type === "message_delta") {
           return block.text ? <div className="message-text is-live" key={`${message.id}-${index}`}>{block.text}</div> : null;
@@ -3987,6 +4265,58 @@ function MessageBlocks({ message, t }: { message: ChatMessage; t: (key: string, 
         return <Alert key={`${message.id}-${index}`} type="error" message={block.message} />;
       })}
     </>
+  );
+}
+
+type ToolResultMessageBlock = Extract<NonNullable<ChatMessage["blocks"]>[number], { type: "tool_result" }>;
+
+function ToolResultBlock({
+  block,
+  messageId,
+  t
+}: {
+  block: ToolResultMessageBlock;
+  messageId: string;
+  t: (key: string, vars?: Record<string, string | number>) => string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className={`tool-card result ${block.isError ? "is-error" : ""} ${expanded ? "is-expanded" : "is-collapsed"}`}>
+      <div className="tool-card-head tool-result-head">
+        {block.isError ? <CloseCircleOutlined /> : <CheckCircleOutlined />}
+        <strong>{t("Tool result")}</strong>
+        {block.outputTruncated ? <Tag color="gold">{t("truncated")}</Tag> : null}
+        <Tooltip title={t(expanded ? "Collapse" : "Expand")}>
+          <Button
+            type="text"
+            size="small"
+            className="tool-result-toggle"
+            icon={expanded ? <DownOutlined /> : <RightOutlined />}
+            aria-label={t(expanded ? "Collapse" : "Expand")}
+            aria-expanded={expanded}
+            onClick={() => setExpanded((value) => !value)}
+          />
+        </Tooltip>
+      </div>
+      {expanded ? (
+        <div className="tool-result-content">
+          {block.outputParts?.length ? (
+            <div className="tool-result-parts">
+              {block.outputParts.map((part, partIndex) => (
+                <div className="tool-result-part" key={`${messageId}-${block.toolCallId}-part-${partIndex}`}>
+                  <div>
+                    <Tag>{part.type}</Tag>
+                    {part.mimeType ? <Tag>{part.mimeType}</Tag> : null}
+                  </div>
+                  <span>{part.text.slice(0, 360)}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          <pre>{block.output.slice(0, 2400)}</pre>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -4261,35 +4591,175 @@ function RightPanel({
   );
 }
 
-function HistoryPanel({ conversations, activeConversationId, setActiveConversationId, refresh, t, embedded = false }: {
+function HistoryPanel({
+  conversations,
+  projects,
+  activeConversationId,
+  setActiveConversationId,
+  activeProjectId,
+  setActiveProjectId,
+  refresh,
+  startNewConversation,
+  t,
+  embedded = false
+}: {
   conversations: Conversation[];
+  projects: Project[];
   activeConversationId: string;
   setActiveConversationId: (id: string) => void;
+  activeProjectId: string;
+  setActiveProjectId: (id: string) => void;
   refresh: () => void;
+  startNewConversation: (projectId?: string | null) => Promise<void>;
   t: (key: string, vars?: Record<string, string | number>) => string;
   embedded?: boolean;
 }) {
+  const conversationsByProject = useMemo(() => {
+    const projectIds = new Set(projects.map((project) => project.id));
+    const grouped = new Map<string, Conversation[]>();
+    for (const conversation of conversations) {
+      const projectId = conversation.projectId && projectIds.has(conversation.projectId) ? conversation.projectId : "";
+      const group = grouped.get(projectId) || [];
+      group.push(conversation);
+      grouped.set(projectId, group);
+    }
+    return grouped;
+  }, [conversations, projects]);
+
+  const selectConversation = (conversation: Conversation) => {
+    setActiveProjectId(conversation.projectId || "");
+    setActiveConversationId(conversation.id);
+  };
+
   return (
-    <div className={`activity-list history-list ${embedded ? "is-embedded" : ""}`}>
-      {conversations.map((conversation) => (
-        <div className={`activity-item history-item ${conversation.id === activeConversationId ? "is-active" : ""}`} key={conversation.id}>
-          <button className="history-item-content" type="button" onClick={() => setActiveConversationId(conversation.id)}>
-            <strong>{conversationTitle(conversation, t("New conversation"))}</strong>
-            <span className="muted">{formatDateTime(conversation.lastMessageAt || conversation.updatedAt)} · {conversation.messages.length} {t(conversation.messages.length === 1 ? "message" : "messages")}</span>
-          </button>
-          <Popconfirm
-            title={t("Delete conversation?")}
-            onConfirm={async () => {
-              await window.supbot.deleteConversation(conversation.id);
-              await refresh();
-            }}
-          >
-            <Button size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
-        </div>
+    <div className={`history-list ${embedded ? "is-embedded" : ""}`}>
+      {projects.map((project) => (
+        <ProjectConversationGroup
+          key={project.id}
+          project={project}
+          conversations={conversationsByProject.get(project.id) || []}
+          activeConversationId={activeConversationId}
+          activeProjectId={activeProjectId}
+          onSelectProject={setActiveProjectId}
+          onSelectConversation={selectConversation}
+          onCreateConversation={startNewConversation}
+          refresh={refresh}
+          t={t}
+        />
       ))}
-      {!conversations.length ? <Empty description={t("No conversations yet")} /> : null}
+      <ProjectConversationGroup
+        conversations={conversationsByProject.get("") || []}
+        activeConversationId={activeConversationId}
+        activeProjectId={activeProjectId}
+        onSelectProject={setActiveProjectId}
+        onSelectConversation={selectConversation}
+        onCreateConversation={startNewConversation}
+        refresh={refresh}
+        t={t}
+      />
     </div>
+  );
+}
+
+function ProjectConversationGroup({
+  project,
+  conversations,
+  activeConversationId,
+  activeProjectId,
+  onSelectProject,
+  onSelectConversation,
+  onCreateConversation,
+  refresh,
+  t
+}: {
+  project?: Project;
+  conversations: Conversation[];
+  activeConversationId: string;
+  activeProjectId: string;
+  onSelectProject: (id: string) => void;
+  onSelectConversation: (conversation: Conversation) => void;
+  onCreateConversation: (projectId?: string | null) => Promise<void>;
+  refresh: () => void;
+  t: (key: string, vars?: Record<string, string | number>) => string;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const projectId = project?.id || "";
+  const title = project?.name || t("Unfiled");
+  const archived = project?.status === "archived";
+  const hasHiddenConversations = conversations.length > projectConversationPreviewLimit;
+  const visibleConversations = showAll ? conversations : conversations.slice(0, projectConversationPreviewLimit);
+
+  const createConversation = async () => {
+    setCreating(true);
+    try {
+      await onCreateConversation(project?.id || null);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return (
+    <section className={`project-history-group ${activeProjectId === projectId ? "is-active" : ""} ${archived ? "is-archived" : ""}`}>
+      <div className="project-history-heading">
+        <Tooltip title={t(collapsed ? "Expand project" : "Collapse project")}>
+          <Button
+            type="text"
+            size="small"
+            className="project-history-toggle"
+            icon={collapsed ? <RightOutlined /> : <DownOutlined />}
+            aria-label={t(collapsed ? "Expand project" : "Collapse project")}
+            aria-expanded={!collapsed}
+            onClick={() => setCollapsed((value) => !value)}
+          />
+        </Tooltip>
+        <button className="project-history-title" type="button" onClick={() => onSelectProject(projectId)}>
+          {collapsed ? <FolderOutlined /> : <FolderOpenOutlined />}
+          <strong title={title}>{title}</strong>
+          <span>{conversations.length}</span>
+        </button>
+        <Tooltip title={archived ? t("Archived project") : t(project ? "New project conversation" : "New conversation")}>
+          <Button
+            type="text"
+            size="small"
+            className="project-history-add"
+            icon={<PlusOutlined />}
+            aria-label={t(project ? "New project conversation" : "New conversation")}
+            disabled={archived}
+            loading={creating}
+            onClick={() => void createConversation()}
+          />
+        </Tooltip>
+      </div>
+      {collapsed ? null : (
+        <div className="project-conversation-list">
+          {visibleConversations.map((conversation) => (
+            <div className={`activity-item history-item ${conversation.id === activeConversationId ? "is-active" : ""}`} key={conversation.id}>
+              <button className="history-item-content" type="button" onClick={() => onSelectConversation(conversation)}>
+                <strong>{conversationTitle(conversation, t("New conversation"))}</strong>
+                <span className="muted">{formatDateTime(conversation.lastMessageAt || conversation.updatedAt)} · {conversation.messages.length} {t(conversation.messages.length === 1 ? "message" : "messages")}</span>
+              </button>
+              <Popconfirm
+                title={t("Delete conversation?")}
+                onConfirm={async () => {
+                  await window.supbot.deleteConversation(conversation.id);
+                  await refresh();
+                }}
+              >
+                <Button size="small" type="text" danger icon={<DeleteOutlined />} aria-label={t("Delete conversation?")} />
+              </Popconfirm>
+            </div>
+          ))}
+          {!conversations.length ? <div className="project-history-empty">{t("No conversations in this project")}</div> : null}
+          {hasHiddenConversations ? (
+            <button className="project-history-more" type="button" onClick={() => setShowAll((value) => !value)}>
+              {showAll ? t("Collapse display") : t("Expand display")}
+            </button>
+          ) : null}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -5370,7 +5840,10 @@ function SchedulePanel({ snapshot, openSchedule, refresh, t }: { snapshot: Runti
         <div className="activity-item stacked" key={job.id}>
           <div className="activity-head">
             <strong>{job.title}</strong>
-            <Tag color={job.enabled ? "green" : "default"}>{job.enabled ? t("Enabled") : t("Off")}</Tag>
+            <Space size="small">
+              {job.projectId ? <Tag>{snapshot.projects.find((project) => project.id === job.projectId)?.name || t("Unfiled")}</Tag> : null}
+              <Tag color={job.enabled ? "green" : "default"}>{job.enabled ? t("Enabled") : t("Off")}</Tag>
+            </Space>
           </div>
           <div className="muted">{formatSchedule(job, t)}</div>
           <Space>
@@ -5656,7 +6129,6 @@ function ConfigWorkspace({
   userDataPath,
   focusTab,
   setFocusTab,
-  openModel,
   refresh,
   t,
   openSubagent
@@ -5665,7 +6137,6 @@ function ConfigWorkspace({
   userDataPath: string;
   focusTab: string;
   setFocusTab: (tab: string) => void;
-  openModel: () => void;
   refresh: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
   openSubagent: (subagent: SubagentConfig | null) => void;
@@ -5684,7 +6155,7 @@ function ConfigWorkspace({
         activeKey={focusTab}
         onChange={setFocusTab}
         items={[
-          { key: "model", label: t("Model"), children: <ModelConfigCard snapshot={snapshot} openModel={openModel} t={t} /> },
+          { key: "model", label: t("Model"), children: <ModelConfigCard snapshot={snapshot} refresh={refresh} t={t} /> },
           { key: "server-agent", label: t("Server Agent"), children: <RemoteStaffAgentConfigCard snapshot={snapshot} refresh={refresh} t={t} /> },
           { key: "mcp", label: "MCP", children: <McpServersCard snapshot={snapshot} refresh={refresh} t={t} /> },
           { key: "personality", label: t("Personality"), children: <PersonalityCard snapshot={snapshot} refresh={refresh} t={t} /> },
@@ -5988,33 +6459,19 @@ function RemoteStaffAgentConfigCard({ snapshot, refresh, t }: {
   const [saving, setSaving] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
   const config = snapshot.servstationA2A.config;
-  const oidc = config.oidc;
-  const reverse = config.reverse;
+  const identity = snapshot.identityContext;
 
   useEffect(() => {
     form.setFieldsValue({
-      enabled: config.enabled,
-      baseUrl: config.baseUrl || snapshot.identityContext?.servstationUrl || defaultBotstationBaseUrl,
-      authMode: "oidc",
       staffAgentAccount: config.staffAgentAccount || defaultBotstationUser,
-      staffAgentPassword: "",
-      clearStaffAgentPassword: false,
-      agentInstanceId: config.agentInstanceId || snapshot.identityContext?.agentInstanceId,
-      oidcIssuerUrl: oidc?.issuerUrl || defaultBotstationIssuerUrl,
-      oidcClientId: oidc?.clientId || defaultBotstationClientId,
-      oidcScope: oidc?.scope || defaultBotstationScope,
-      oidcRedirectUri: oidc?.redirectUri || defaultBotstationRedirectUri
+      staffAgentPassword: ""
     });
-  }, [config, form, oidc, snapshot.identityContext]);
+  }, [config, form]);
 
   const save = async (values: ServstationA2AConfigUpdate) => {
     setSaving(true);
     try {
-      await window.supbot.updateServstationA2AConfig({
-        ...values,
-        enabled: true,
-        authMode: "oidc"
-      });
+      await window.supbot.updateServstationA2AConfig(values);
       messageApi.success(t("Remote staff-agent configuration saved."));
       await refresh();
     } catch (error) {
@@ -6034,41 +6491,18 @@ function RemoteStaffAgentConfigCard({ snapshot, refresh, t }: {
         </div>
         <Space wrap>
           <Tag color={config.staffAgentPasswordSaved ? "green" : "default"}>{config.staffAgentPasswordSaved ? t("Password saved") : t("No password")}</Tag>
-          <Tag color={oidc?.refreshTokenSaved ? "green" : "default"}>{oidc?.refreshTokenSaved ? t("OIDC token saved") : t("No token")}</Tag>
-          <Tag color={reverse?.status === "connected" ? "green" : reverse?.status === "error" ? "red" : "default"}>{t(`reverse:${reverse?.status || "disconnected"}`)}</Tag>
+          <Tag color="blue">{t("Agent instance id")}: {identity?.agentInstanceId || t("No agent id")}</Tag>
         </Space>
       </div>
       <Form form={form} layout="vertical" onFinish={(values) => void save(values as ServstationA2AConfigUpdate)}>
-        <Form.Item label={t("Servstation base URL")} name="baseUrl">
-          <Input placeholder={defaultBotstationBaseUrl} />
-        </Form.Item>
-        <Form.Item label={t("OIDC issuer URL")} name="oidcIssuerUrl">
-          <Input placeholder={defaultBotstationIssuerUrl} />
-        </Form.Item>
-        <Form.Item label={t("OIDC client id")} name="oidcClientId">
-          <Input placeholder={defaultBotstationClientId} />
-        </Form.Item>
-        <Form.Item label={t("OIDC scope")} name="oidcScope">
-          <Input placeholder={defaultBotstationScope} />
-        </Form.Item>
         <Form.Item label={t("Staff-agent account")} name="staffAgentAccount">
           <Input autoComplete="username" />
         </Form.Item>
         <Form.Item label={t("Staff-agent password")} name="staffAgentPassword" extra={config.staffAgentPasswordSaved ? t("Leave blank to keep the existing password.") : t("Required for password login.")}>
           <Input.Password autoComplete="new-password" />
         </Form.Item>
-        <Form.Item name="clearStaffAgentPassword" valuePropName="checked">
-          <Switch checkedChildren={t("Clear saved password")} unCheckedChildren={t("Keep saved password")} />
-        </Form.Item>
-        <Form.Item label={t("Agent instance id")} name="agentInstanceId">
-          <Input />
-        </Form.Item>
-        <Form.Item label={t("OIDC redirect URI")} name="oidcRedirectUri">
-          <Input />
-        </Form.Item>
         <Space wrap>
           <Button type="primary" icon={<SaveOutlined />} htmlType="submit" loading={saving}>{t("Save")}</Button>
-          {config.staffAgentPasswordStorage ? <span className="muted">{t("Credential storage")}: {config.staffAgentPasswordStorage}</span> : null}
         </Space>
       </Form>
     </div>
@@ -6483,24 +6917,252 @@ function McpServersCard({ snapshot, refresh, t }: {
   );
 }
 
-function ModelConfigCard({ snapshot, openModel, t }: { snapshot: RuntimeSnapshot; openModel: () => void; t: (key: string, vars?: Record<string, string | number>) => string }) {
+function ModelConfigCard({ snapshot, refresh, t }: { snapshot: RuntimeSnapshot; refresh: () => void; t: (key: string, vars?: Record<string, string | number>) => string }) {
+  const [form] = Form.useForm<ModelProviderUpdate>();
+  const [messageApi, contextHolder] = message.useMessage();
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingProvider, setEditingProvider] = useState<ModelProviderConfig | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [testingId, setTestingId] = useState("");
+  const [activatingId, setActivatingId] = useState("");
+  const [deletingId, setDeletingId] = useState("");
+  const providers = snapshot.modelProviders.length ? snapshot.modelProviders : [snapshotProviderFallback(snapshot)];
+  const activeProviderId = snapshot.activeModelProviderId || providers[0]?.id || "";
+  const openProviderForm = (provider?: ModelProviderConfig) => {
+    setEditingProvider(provider || null);
+    form.setFieldsValue(provider ? modelProviderFormValues(provider) : newModelProviderValues(snapshot));
+    setModalOpen(true);
+  };
+  const closeProviderForm = () => {
+    setModalOpen(false);
+    setEditingProvider(null);
+    form.resetFields();
+  };
+  const saveProvider = async (values: ModelProviderUpdate) => {
+    setSaving(true);
+    try {
+      if (editingProvider) {
+        await window.supbot.updateModelProvider(editingProvider.id, values);
+      } else {
+        await window.supbot.createModelProvider(values);
+      }
+      closeProviderForm();
+      messageApi.success(t("Model provider saved."));
+      await refresh();
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const testProvider = async (provider?: ModelProviderConfig, values?: Partial<ModelProviderUpdate>) => {
+    const testKey = provider?.id || "__draft__";
+    setTestingId(testKey);
+    try {
+      const result = await window.supbot.testModelProvider(provider?.id, values);
+      if (result.ok) {
+        messageApi.success(t("Model test succeeded: {message}", { message: result.message }));
+      } else {
+        messageApi.warning(t(result.message));
+      }
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    } finally {
+      setTestingId("");
+    }
+  };
+  const activateProvider = async (provider: ModelProviderConfig) => {
+    setActivatingId(provider.id);
+    try {
+      await window.supbot.setActiveModelProvider(provider.id);
+      messageApi.success(t("Current model provider updated."));
+      await refresh();
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    } finally {
+      setActivatingId("");
+    }
+  };
+  const deleteProvider = async (provider: ModelProviderConfig) => {
+    setDeletingId(provider.id);
+    try {
+      await window.supbot.deleteModelProvider(provider.id);
+      messageApi.success(t("Model provider deleted."));
+      await refresh();
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    } finally {
+      setDeletingId("");
+    }
+  };
   return (
     <div className="settings-card">
+      {contextHolder}
       <div className="panel-heading">
         <div>
-          <div className="section-title"><SettingOutlined /> {t("Model provider")}</div>
-          <div className="muted">{t("OpenAI-compatible endpoint used by the local runtime.")}</div>
+          <div className="section-title"><SettingOutlined /> {t("Model providers")}</div>
+          <div className="muted">{t("Active provider")}: {snapshot.modelConfig.providerName} / {snapshot.modelConfig.model}</div>
         </div>
-        <Button type="primary" onClick={openModel}>{t("Change model")}</Button>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => openProviderForm()}>{t("New provider")}</Button>
       </div>
-      <div className="config-grid">
-        <div><span>{t("Provider")}</span><strong>{snapshot.modelConfig.providerName}</strong></div>
-        <div><span>{t("Base URL")}</span><strong>{snapshot.modelConfig.baseUrl}</strong></div>
-        <div><span>{t("Model")}</span><strong>{snapshot.modelConfig.model}</strong></div>
-        <div><span>{t("API key")}</span><strong>{snapshot.modelConfig.apiKeySaved ? `${t("Saved")} (${snapshot.modelConfig.apiKeyStorage})` : t("Missing")}</strong></div>
-      </div>
+      <List
+        className="model-provider-list"
+        dataSource={providers}
+        renderItem={(provider) => {
+          const isActive = provider.id === activeProviderId;
+          const deleteDisabled = providers.length <= 1;
+          return (
+            <List.Item
+              actions={[
+                <Tooltip key="test" title={t("Test")}>
+                  <Button
+                    size="small"
+                    icon={<ThunderboltOutlined />}
+                    loading={testingId === provider.id}
+                    onClick={() => void testProvider(provider)}
+                  />
+                </Tooltip>,
+                <Tooltip key="activate" title={isActive ? t("Current provider") : t("Set current")}>
+                  <Button
+                    size="small"
+                    icon={<CheckCircleOutlined />}
+                    disabled={isActive}
+                    loading={activatingId === provider.id}
+                    onClick={() => void activateProvider(provider)}
+                  />
+                </Tooltip>,
+                <Tooltip key="edit" title={t("Edit")}>
+                  <Button size="small" icon={<EditOutlined />} onClick={() => openProviderForm(provider)} />
+                </Tooltip>,
+                <Popconfirm
+                  key="delete"
+                  title={t("Delete model provider?")}
+                  disabled={deleteDisabled}
+                  onConfirm={() => void deleteProvider(provider)}
+                >
+                  <Tooltip title={deleteDisabled ? t("At least one provider is required.") : t("Delete")}>
+                    <Button size="small" danger icon={<DeleteOutlined />} disabled={deleteDisabled} loading={deletingId === provider.id} />
+                  </Tooltip>
+                </Popconfirm>
+              ]}
+            >
+              <List.Item.Meta
+                title={(
+                  <Space wrap>
+                    <span>{provider.providerName}</span>
+                    {isActive ? <Tag color="green">{t("Current")}</Tag> : null}
+                    <Tag color={provider.apiKeySaved ? "blue" : "default"}>
+                      {provider.apiKeySaved ? `${t("Saved")} (${provider.apiKeyStorage || "file"})` : t("Missing")}
+                    </Tag>
+                  </Space>
+                )}
+                description={(
+                  <Space direction="vertical" size={2}>
+                    <span className="mono">{provider.baseUrl}</span>
+                    <span>{provider.model} / temp {provider.temperature} / {provider.maxTokens}</span>
+                  </Space>
+                )}
+              />
+            </List.Item>
+          );
+        }}
+      />
+      <Modal
+        open={modalOpen}
+        title={editingProvider ? t("Edit model provider") : t("New model provider")}
+        onCancel={closeProviderForm}
+        onOk={() => form.submit()}
+        okText={t("Save")}
+        confirmLoading={saving}
+        footer={(_, { OkBtn, CancelBtn }) => (
+          <>
+            <Button
+              icon={<ThunderboltOutlined />}
+              loading={testingId === "__draft__"}
+              onClick={async () => {
+                const values = await form.validateFields();
+                await testProvider(editingProvider || undefined, values);
+              }}
+            >
+              {t("Test")}
+            </Button>
+            <CancelBtn />
+            <OkBtn />
+          </>
+        )}
+      >
+        <Form form={form} layout="vertical" onFinish={(values) => void saveProvider(values)}>
+          <Form.Item label={t("Provider name")} name="providerName" rules={[{ required: true }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item label={t("Base URL")} name="baseUrl" rules={[{ required: true }]}>
+            <Input placeholder="https://api.openai.com/v1" />
+          </Form.Item>
+          <Form.Item label={t("Model")} name="model" rules={[{ required: true }]}>
+            <Input placeholder="gpt-4.1-mini" />
+          </Form.Item>
+          <Form.Item
+            label={t("API key")}
+            name="apiKey"
+            extra={editingProvider?.apiKeySaved ? t("Leave blank to keep the existing key.") : t("Required for real model calls.")}
+          >
+            <Input.Password />
+          </Form.Item>
+          {editingProvider?.apiKeySaved ? (
+            <Form.Item label={t("Clear saved API key")} name="clearApiKey" valuePropName="checked">
+              <Switch />
+            </Form.Item>
+          ) : null}
+          <Form.Item label={t("Temperature")} name="temperature">
+            <Slider min={0} max={2} step={0.1} />
+          </Form.Item>
+          <Form.Item label={t("Max tokens")} name="maxTokens">
+            <InputNumber min={64} max={128000} style={{ width: "100%" }} />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
+}
+
+function snapshotProviderFallback(snapshot: RuntimeSnapshot): ModelProviderConfig {
+  const now = new Date().toISOString();
+  return {
+    id: snapshot.activeModelProviderId || "default",
+    providerName: snapshot.modelConfig.providerName,
+    baseUrl: snapshot.modelConfig.baseUrl,
+    model: snapshot.modelConfig.model,
+    temperature: snapshot.modelConfig.temperature,
+    maxTokens: snapshot.modelConfig.maxTokens,
+    apiKeySaved: snapshot.modelConfig.apiKeySaved,
+    apiKeyStorage: snapshot.modelConfig.apiKeyStorage,
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+function modelProviderFormValues(provider: ModelProviderConfig): ModelProviderUpdate {
+  return {
+    providerName: provider.providerName,
+    baseUrl: provider.baseUrl,
+    model: provider.model,
+    temperature: provider.temperature,
+    maxTokens: provider.maxTokens,
+    apiKey: "",
+    clearApiKey: false
+  };
+}
+
+function newModelProviderValues(snapshot: RuntimeSnapshot): ModelProviderUpdate {
+  return {
+    providerName: `${snapshot.modelConfig.providerName} copy`,
+    baseUrl: snapshot.modelConfig.baseUrl,
+    model: snapshot.modelConfig.model,
+    temperature: snapshot.modelConfig.temperature,
+    maxTokens: snapshot.modelConfig.maxTokens,
+    apiKey: "",
+    clearApiKey: false
+  };
 }
 
 function PersonalityCard({ snapshot, refresh, t }: { snapshot: RuntimeSnapshot; refresh: () => void; t: (key: string, vars?: Record<string, string | number>) => string }) {
@@ -6744,67 +7406,6 @@ function SubagentsCard({ snapshot, refresh, openSubagent, t }: { snapshot: Runti
   );
 }
 
-function ModelModal({ open, config, onCancel, onSave, t }: {
-  open: boolean;
-  config: RuntimeSnapshot["modelConfig"];
-  onCancel: () => void;
-  onSave: (values: ModelConfigUpdate) => Promise<void>;
-  t: (key: string, vars?: Record<string, string | number>) => string;
-}) {
-  const [form] = Form.useForm<ModelConfigUpdate>();
-  const [testing, setTesting] = useState(false);
-  useEffect(() => {
-    if (open) {
-      form.resetFields();
-      form.setFieldsValue({ ...config, apiKey: "", clearApiKey: false });
-    }
-  }, [open, config, form]);
-  return (
-    <Modal
-      open={open}
-      title={t("Model configuration")}
-      onCancel={onCancel}
-      onOk={() => form.submit()}
-      okText={t("Save")}
-      footer={(_, { OkBtn, CancelBtn }) => (
-        <>
-          <Button
-            loading={testing}
-            onClick={async () => {
-              setTesting(true);
-              try {
-                const values = form.getFieldsValue();
-                const result = await window.supbot.testModelConfig(values);
-                if (result.ok) {
-                  message.success(t("Model test succeeded: {message}", { message: result.message }));
-                } else {
-                  message.warning(t(result.message));
-                }
-              } finally {
-                setTesting(false);
-              }
-            }}
-          >
-            {t("Test")}
-          </Button>
-          <CancelBtn />
-          <OkBtn />
-        </>
-      )}
-    >
-      <Form form={form} layout="vertical" onFinish={(values) => void onSave(values)}>
-        <Form.Item label={t("Provider name")} name="providerName" rules={[{ required: true }]}><Input /></Form.Item>
-        <Form.Item label={t("Base URL")} name="baseUrl" rules={[{ required: true }]}><Input placeholder="https://api.openai.com/v1" /></Form.Item>
-        <Form.Item label={t("Model")} name="model" rules={[{ required: true }]}><Input placeholder="gpt-4.1-mini" /></Form.Item>
-        <Form.Item label={t("API key")} name="apiKey" extra={config.apiKeySaved ? t("Leave blank to keep the existing key.") : t("Required for real model calls.")}><Input.Password /></Form.Item>
-        <Form.Item label={t("Clear saved API key")} name="clearApiKey" valuePropName="checked"><Switch /></Form.Item>
-        <Form.Item label={t("Temperature")} name="temperature"><Slider min={0} max={2} step={0.1} /></Form.Item>
-        <Form.Item label={t("Max tokens")} name="maxTokens"><InputNumber min={64} max={128000} style={{ width: "100%" }} /></Form.Item>
-      </Form>
-    </Modal>
-  );
-}
-
 function SubagentModal({ open, subagent, onCancel, onSave, t }: {
   open: boolean;
   subagent: SubagentConfig | null;
@@ -6903,18 +7504,36 @@ function TranscriptModal({
   );
 }
 
-function ScheduleModal({ open, onCancel, onSave, t }: {
+function ScheduleModal({ open, projects, defaultProjectId, onCancel, onSave, t }: {
   open: boolean;
+  projects: Project[];
+  defaultProjectId?: string;
   onCancel: () => void;
   onSave: (input: ScheduledJobInput) => Promise<void>;
   t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
   const [form] = Form.useForm<ScheduledJobInput>();
+  useEffect(() => {
+    if (open) {
+      form.setFieldValue("projectId", defaultProjectId);
+    }
+  }, [defaultProjectId, form, open]);
   return (
     <Modal open={open} title={t("New scheduled prompt")} onCancel={onCancel} onOk={() => form.submit()} okText={t("Create")}>
       <Form form={form} layout="vertical" initialValues={{ scheduleKind: "once", enabled: true }} onFinish={(values) => void onSave(values)}>
         <Form.Item label={t("Title")} name="title" rules={[{ required: true }]}><Input /></Form.Item>
         <Form.Item label={t("Prompt")} name="prompt" rules={[{ required: true }]}><Input.TextArea rows={4} /></Form.Item>
+        <Form.Item label={t("Project")} name="projectId">
+          <Select
+            allowClear
+            placeholder={t("Unfiled")}
+            options={projects.map((project) => ({
+              value: project.id,
+              label: project.name,
+              disabled: project.status === "archived"
+            }))}
+          />
+        </Form.Item>
         <Form.Item label={t("Kind")} name="scheduleKind"><Select options={[{ value: "once", label: t("Once") }, { value: "daily", label: t("Daily") }, { value: "cron", label: t("Cron") }]} /></Form.Item>
         <Form.Item label={t("Run at ISO time")} name="runAt"><Input placeholder={new Date(Date.now() + 3600000).toISOString()} /></Form.Item>
         <Form.Item label={t("Cron expression")} name="cronExpr"><Input placeholder="0 9 * * 1-5" /></Form.Item>

@@ -3,13 +3,14 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
 import { hostname, userInfo } from "node:os";
 import { isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { JsonFileStorage, SupbotRuntime, ensureRuntimeDirs, identityContextFromAccessToken, oidcTokenSetFromTokenResponse, type RuntimeState, type StorageAdapter } from "@supbot/runtime";
-import type { AutopilotStartDataRunInput, CapabilityUpdateInput, DataSourceSpec, IdentityContext, McpConfigTransfer, McpServerInput, McpServerUpdate, MemoryAddInput, MemoryImportInput, MemoryRecallFeedbackInput, MemoryReplayRecallInput, MemorySearchQuery, MemoryUpdateInput, ModelConfigUpdate, PermissionMode, PermissionRule, PersonalityConfig, ProjectCreateInput, ProjectUpdateInput, RemoteBridgeConfig, ScheduledJobInput, SendPromptInput, ServstationA2AConfigUpdate, ServstationA2AOidcLoginInput, ServstationA2AOidcLoginResult, ServstationAutopilotStartInput, ServstationAutopilotStatusUpdate, ServstationClientSnapshotQuery, ServstationFlowEngineApprovalDecisionInput, ServstationFlowEngineLaunchInput, ServstationMailAccountDraft, ServstationMessageAttachmentUpload, ServstationMessageFolder, ServstationMessageAccountRef, ServstationScheduledJobInput, ServstationSendAgentMessageInput, ServstationSendDirectMessageInput, ServstationSendPromptInput, SubagentConfig, ToolMarketConfigUpdate, ToolMarketQuery } from "@supbot/shared";
+import type { AutopilotStartDataRunInput, CapabilityUpdateInput, CreateConversationInput, DataSourceSpec, IdentityContext, McpConfigTransfer, McpServerInput, McpServerUpdate, MemoryAddInput, MemoryImportInput, MemoryRecallFeedbackInput, MemoryReplayRecallInput, MemorySearchQuery, MemoryUpdateInput, ModelConfigUpdate, ModelProviderUpdate, PermissionMode, PermissionRule, PersonalityConfig, ProjectCreateFromNameInput, ProjectCreateInput, ProjectUpdateInput, RemoteBridgeConfig, ScheduledJobInput, SendPromptInput, ServstationA2AConfigUpdate, ServstationA2AOidcLoginInput, ServstationA2AOidcLoginResult, ServstationAutopilotStartInput, ServstationAutopilotStatusUpdate, ServstationClientSnapshotQuery, ServstationFlowEngineApprovalDecisionInput, ServstationFlowEngineLaunchInput, ServstationMailAccountDraft, ServstationMessageAttachmentUpload, ServstationMessageFolder, ServstationMessageAccountRef, ServstationScheduledJobInput, ServstationSendAgentMessageInput, ServstationSendDirectMessageInput, ServstationSendPromptInput, SubagentConfig, ToolMarketConfigUpdate, ToolMarketQuery } from "@supbot/shared";
 import { HBClientUpdateManager } from "./updateManager";
 
 let mainWindow: BrowserWindow | null = null;
 let runtime: SupbotRuntime | null = null;
 let updateManager: HBClientUpdateManager | null = null;
 const servstationMessageEventSubscriptions = new Map<string, AbortController>();
+const servstationAutopilotEventSubscriptions = new Map<string, AbortController>();
 const isDev = !app.isPackaged;
 const appDisplayName = "HBClient";
 const defaultBotstationBaseUrl = "http://localhost:8081";
@@ -57,11 +58,16 @@ class EncryptedStorage implements StorageAdapter {
 
   async load(): Promise<RuntimeState> {
     const state = await this.inner.load();
-    if (state.modelSecret) {
-      const decoded = this.decryptSecret(state.modelSecret);
-      state.modelSecret = decoded.value;
-      state.modelConfig.apiKeyStorage = decoded.kind;
-      state.modelConfig.apiKeySaved = true;
+    for (const provider of state.modelProviders) {
+      if (provider.apiKeySecret) {
+        const decoded = this.decryptSecret(provider.apiKeySecret);
+        provider.apiKeySecret = decoded.value;
+        provider.apiKeyStorage = decoded.kind;
+        provider.apiKeySaved = true;
+      } else {
+        provider.apiKeyStorage = undefined;
+        provider.apiKeySaved = false;
+      }
     }
     if (state.toolMarketSecret) {
       const decoded = this.decryptSecret(state.toolMarketSecret);
@@ -100,18 +106,23 @@ class EncryptedStorage implements StorageAdapter {
   async save(state: RuntimeState): Promise<void> {
     const copy: RuntimeState = {
       ...state,
-      modelConfig: { ...state.modelConfig },
+      modelProviders: state.modelProviders.map((provider) => ({ ...provider })),
       toolMarketConfig: { ...state.toolMarketConfig },
       servstationA2AConfig: {
         ...state.servstationA2AConfig,
         oidc: state.servstationA2AConfig.oidc ? { ...state.servstationA2AConfig.oidc } : undefined
       }
     };
-    if (copy.modelSecret) {
-      const encoded = this.encryptSecret(copy.modelSecret);
-      copy.modelSecret = encoded.value;
-      copy.modelConfig.apiKeyStorage = encoded.kind;
-      copy.modelConfig.apiKeySaved = true;
+    for (const provider of copy.modelProviders) {
+      if (provider.apiKeySecret) {
+        const encoded = this.encryptSecret(provider.apiKeySecret);
+        provider.apiKeySecret = encoded.value;
+        provider.apiKeyStorage = encoded.kind;
+        provider.apiKeySaved = true;
+      } else {
+        provider.apiKeyStorage = undefined;
+        provider.apiKeySaved = false;
+      }
     }
     if (copy.toolMarketSecret) {
       const encoded = this.encryptSecret(copy.toolMarketSecret);
@@ -618,7 +629,7 @@ function registerIpc(): void {
   ipcMain.handle("hbclient:update:check", () => updateManager?.check(true));
   ipcMain.handle("hbclient:update:download", () => updateManager?.download());
   ipcMain.handle("hbclient:update:install", () => updateManager?.install());
-  ipcMain.handle("conversation:create", (_event, title?: string) => getRuntime().createConversation(optionalString(title, "title")));
+  ipcMain.handle("conversation:create", (_event, input?: string | CreateConversationInput) => getRuntime().createConversation(validateCreateConversationInput(input)));
   ipcMain.handle("conversation:delete", (_event, id: string) => getRuntime().deleteConversation(requiredString(id, "conversation id")));
   ipcMain.handle("prompt:send", (_event, input: SendPromptInput) => getRuntime().sendPrompt(validateSendPromptInput(input)));
   ipcMain.handle("clipboard:readText", () => clipboard.readText());
@@ -631,6 +642,7 @@ function registerIpc(): void {
   ipcMain.handle("conversation:compact", (_event, id: string) => getRuntime().compactConversation(requiredString(id, "conversation id")));
   ipcMain.handle("conversation:loadTranscript", (_event, id: string) => getRuntime().loadTranscript(requiredString(id, "conversation id")));
   ipcMain.handle("project:createFromFolder", (_event, input: ProjectCreateInput) => getRuntime().createProjectFromFolder(validateProjectCreateInput(input)));
+  ipcMain.handle("project:createFromName", (_event, input: ProjectCreateFromNameInput) => getRuntime().createProjectFromName(validateProjectCreateFromNameInput(input)));
   ipcMain.handle("project:list", () => getRuntime().listProjects());
   ipcMain.handle("project:pickFolder", async () => {
     const result = await dialog.showOpenDialog(mainWindow!, {
@@ -696,6 +708,33 @@ function registerIpc(): void {
   ipcMain.handle("servstationClient:deleteScheduledJob", (_event, id: string) => getRuntime().deleteServstationScheduledJob(requiredString(id, "servstation scheduled job id")));
   ipcMain.handle("servstationClient:startAutopilotRun", (_event, input: ServstationAutopilotStartInput) => getRuntime().startServstationAutopilotRun(validateServstationAutopilotStartInput(input)));
   ipcMain.handle("servstationClient:updateAutopilotRun", (_event, input: ServstationAutopilotStatusUpdate) => getRuntime().updateServstationAutopilotRun(validateServstationAutopilotStatusUpdate(input)));
+  ipcMain.handle("servstationClient:subscribeAutopilotEvents", (event, id: string, runId: string) => {
+    const subscriptionId = requiredString(id, "servstation autopilot event subscription id");
+    const resolvedRunId = requiredString(runId, "servstation autopilot run id");
+    servstationAutopilotEventSubscriptions.get(subscriptionId)?.abort();
+    const controller = new AbortController();
+    servstationAutopilotEventSubscriptions.set(subscriptionId, controller);
+    const channel = `servstationClient:autopilotEvent:${subscriptionId}`;
+    void getRuntime().streamServstationAutopilotEvents(resolvedRunId, (payload) => {
+      if (!controller.signal.aborted && !event.sender.isDestroyed()) {
+        event.sender.send(channel, payload);
+      }
+    }, controller.signal).catch(() => undefined).finally(() => {
+      if (servstationAutopilotEventSubscriptions.get(subscriptionId) === controller) {
+        servstationAutopilotEventSubscriptions.delete(subscriptionId);
+      }
+    });
+    event.sender.once("destroyed", () => {
+      controller.abort();
+      servstationAutopilotEventSubscriptions.delete(subscriptionId);
+    });
+    return { subscriptionId };
+  });
+  ipcMain.handle("servstationClient:unsubscribeAutopilotEvents", (_event, id: string) => {
+    const subscriptionId = requiredString(id, "servstation autopilot event subscription id");
+    servstationAutopilotEventSubscriptions.get(subscriptionId)?.abort();
+    servstationAutopilotEventSubscriptions.delete(subscriptionId);
+  });
   ipcMain.handle("servstationClient:getFlowEngineSnapshot", () => getRuntime().getServstationFlowEngineSnapshot());
   ipcMain.handle("servstationClient:launchFlowEngineWorkflow", (_event, input: ServstationFlowEngineLaunchInput) => getRuntime().launchServstationFlowEngineWorkflow(validateServstationFlowEngineLaunchInput(input)));
   ipcMain.handle("servstationClient:getFlowEngineExecution", (_event, id: string) => getRuntime().getServstationFlowEngineExecution(requiredString(id, "servstation flow execution id")));
@@ -761,6 +800,11 @@ function registerIpc(): void {
   ipcMain.handle("memory:addRecallFeedback", (_event, input: MemoryRecallFeedbackInput) => getRuntime().addMemoryRecallFeedback(validateMemoryRecallFeedbackInput(input)));
   ipcMain.handle("model:update", (_event, input: ModelConfigUpdate) => getRuntime().updateModelConfig(validateModelConfigUpdate(input)));
   ipcMain.handle("model:test", (_event, input?: Partial<ModelConfigUpdate>) => getRuntime().testModelConfig(validatePartialModelConfigUpdate(input)));
+  ipcMain.handle("modelProvider:create", (_event, input: ModelProviderUpdate) => getRuntime().createModelProvider(validateModelProviderUpdate(input)));
+  ipcMain.handle("modelProvider:update", (_event, id: string, input: ModelProviderUpdate) => getRuntime().updateModelProvider(requiredString(id, "model provider id"), validateModelProviderUpdate(input)));
+  ipcMain.handle("modelProvider:delete", (_event, id: string) => getRuntime().deleteModelProvider(requiredString(id, "model provider id")));
+  ipcMain.handle("modelProvider:setActive", (_event, id: string) => getRuntime().setActiveModelProvider(requiredString(id, "model provider id")));
+  ipcMain.handle("modelProvider:test", (_event, id?: string, input?: Partial<ModelProviderUpdate>) => getRuntime().testModelProvider(optionalString(id, "model provider id"), validatePartialModelProviderUpdate(input)));
   ipcMain.handle("market-config:update", (_event, input: ToolMarketConfigUpdate) => getRuntime().updateToolMarketConfig(validateToolMarketConfigUpdate(input)));
   ipcMain.handle("personality:update", (_event, input: PersonalityConfig) => getRuntime().updatePersonality(validatePersonalityConfig(input)));
   ipcMain.handle("capability:update", (_event, id: string, input: CapabilityUpdateInput) => getRuntime().updateCapability(requiredString(id, "capability id"), validateCapabilityUpdateInput(input)));
@@ -820,6 +864,7 @@ function validateSendPromptInput(input: SendPromptInput): SendPromptInput {
   }
   return {
     conversationId: optionalString(value.conversationId, "conversation id"),
+    projectId: optionalString(value.projectId, "project id"),
     prompt: requiredString(value.prompt, "prompt"),
     workspaceMode: workspaceMode as SendPromptInput["workspaceMode"],
     attachments: Array.isArray(value.attachments) ? value.attachments.map(validateAttachment) : []
@@ -832,6 +877,15 @@ function validateProjectCreateInput(input: ProjectCreateInput): ProjectCreateInp
     rootPath: requiredString(value.rootPath, "project folder"),
     name: optionalString(value.name, "project name")
   };
+}
+
+function validateProjectCreateFromNameInput(input: ProjectCreateFromNameInput): ProjectCreateFromNameInput {
+  const value = object(input, "project input");
+  const name = requiredString(value.name, "project name");
+  if (name.length > 80) {
+    throw new Error("Project name must be 80 characters or fewer.");
+  }
+  return { name };
 }
 
 function validateProjectUpdateInput(input: ProjectUpdateInput): ProjectUpdateInput {
@@ -1204,6 +1258,10 @@ function validateMemoryRecallFeedbackInput(input: MemoryRecallFeedbackInput): Me
 }
 
 function validateModelConfigUpdate(input: ModelConfigUpdate): ModelConfigUpdate {
+  return validateModelProviderUpdate(input);
+}
+
+function validateModelProviderUpdate(input: ModelProviderUpdate): ModelProviderUpdate {
   const value = object(input, "model config");
   return {
     providerName: requiredString(value.providerName, "provider name"),
@@ -1216,7 +1274,25 @@ function validateModelConfigUpdate(input: ModelConfigUpdate): ModelConfigUpdate 
   };
 }
 
+function validateCreateConversationInput(input?: string | CreateConversationInput): string | CreateConversationInput {
+  if (typeof input === "string") {
+    return optionalString(input, "title") || "New conversation";
+  }
+  if (input === undefined) {
+    return {};
+  }
+  const value = object(input, "conversation input");
+  return {
+    title: optionalString(value.title, "title"),
+    projectId: optionalString(value.projectId, "project id")
+  };
+}
+
 function validatePartialModelConfigUpdate(input: Partial<ModelConfigUpdate> | undefined): Partial<ModelConfigUpdate> | undefined {
+  return validatePartialModelProviderUpdate(input);
+}
+
+function validatePartialModelProviderUpdate(input: Partial<ModelProviderUpdate> | undefined): Partial<ModelProviderUpdate> | undefined {
   if (!input) {
     return undefined;
   }
@@ -1322,6 +1398,7 @@ function validateMcpConfigTransfer(input: McpConfigTransfer): McpConfigTransfer 
 function validateScheduledJobInput(input: ScheduledJobInput): ScheduledJobInput {
   const value = object(input, "scheduled job");
   return {
+    projectId: optionalString(value.projectId, "project id"),
     title: optionalString(value.title, "scheduled job title") || "",
     prompt: requiredString(value.prompt, "scheduled job prompt"),
     scheduleKind: optionalEnum(value.scheduleKind, ["once", "daily", "cron"], "schedule kind") || "once",
@@ -1333,6 +1410,7 @@ function validateScheduledJobInput(input: ScheduledJobInput): ScheduledJobInput 
 
 function validateScheduledJobUpdate(input: Partial<ScheduledJobInput>): Partial<ScheduledJobInput> {
   return validatePartialObject(input, {
+    projectId: (value) => optionalString(value, "project id"),
     title: (value) => optionalString(value, "scheduled job title"),
     prompt: (value) => optionalString(value, "scheduled job prompt"),
     scheduleKind: (value) => optionalEnum(value, ["once", "daily", "cron"], "schedule kind"),
@@ -1494,5 +1572,13 @@ app.on("window-all-closed", () => {
 app.on("before-quit", () => updateManager?.stop());
 
 app.on("before-quit", () => {
+  for (const controller of servstationMessageEventSubscriptions.values()) {
+    controller.abort();
+  }
+  servstationMessageEventSubscriptions.clear();
+  for (const controller of servstationAutopilotEventSubscriptions.values()) {
+    controller.abort();
+  }
+  servstationAutopilotEventSubscriptions.clear();
   void runtime?.shutdown();
 });

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
@@ -110,6 +110,81 @@ function fakeJwt(claims: Record<string, unknown>): string {
   const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
   const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
   return `${header}.${payload}.`;
+}
+
+interface ZipTestEntry {
+  path: string;
+  content?: string | Buffer;
+  flags?: number;
+  externalFileAttributes?: number;
+}
+
+async function writeTestZip(filePath: string, entries: ZipTestEntry[]): Promise<void> {
+  const localParts: Buffer[] = [];
+  const centralParts: Buffer[] = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const name = Buffer.from(entry.path, "utf8");
+    const content = Buffer.isBuffer(entry.content) ? entry.content : Buffer.from(entry.content || "", "utf8");
+    const crc = crc32(content);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(entry.flags || 0, 6);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt16LE(0, 10);
+    local.writeUInt16LE(0, 12);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(content.length, 18);
+    local.writeUInt32LE(content.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    local.writeUInt16LE(0, 28);
+    localParts.push(local, name, content);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(entry.flags || 0, 8);
+    central.writeUInt16LE(0, 10);
+    central.writeUInt16LE(0, 12);
+    central.writeUInt16LE(0, 14);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(content.length, 20);
+    central.writeUInt32LE(content.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt16LE(0, 30);
+    central.writeUInt16LE(0, 32);
+    central.writeUInt16LE(0, 34);
+    central.writeUInt16LE(0, 36);
+    central.writeUInt32LE(entry.externalFileAttributes || 0, 38);
+    central.writeUInt32LE(offset, 42);
+    centralParts.push(central, name);
+    offset += local.length + name.length + content.length;
+  }
+  const centralOffset = offset;
+  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(0, 4);
+  end.writeUInt16LE(0, 6);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(centralSize, 12);
+  end.writeUInt32LE(centralOffset, 16);
+  end.writeUInt16LE(0, 20);
+  await writeFile(filePath, Buffer.concat([...localParts, ...centralParts, end]));
+}
+
+function crc32(buffer: Buffer): number {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc ^= byte;
+    for (let index = 0; index < 8; index += 1) {
+      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }
 
 async function withMockModel(
@@ -403,7 +478,16 @@ describe("SupbotRuntime", () => {
 
     expect(saved.apiKeySaved).toBe(true);
     expect(JSON.stringify(saved)).not.toContain("secret-token");
-    expect(runtime.snapshot().modelConfig.apiKeySaved).toBe(true);
+    const firstSnapshot = runtime.snapshot();
+    expect(firstSnapshot.modelConfig.apiKeySaved).toBe(true);
+    expect(firstSnapshot.modelProviders).toHaveLength(1);
+    expect(firstSnapshot.modelProviders[0]).toMatchObject({
+      providerName: "Local gateway",
+      model: "test-model",
+      apiKeySaved: true
+    });
+    expect(firstSnapshot.activeModelProviderId).toBe(firstSnapshot.modelProviders[0].id);
+    expect(JSON.stringify(firstSnapshot)).not.toContain("secret-token");
 
     const updated = await runtime.updateModelConfig({
       providerName: "DeepSeek",
@@ -431,6 +515,95 @@ describe("SupbotRuntime", () => {
       ok: false,
       message: expect.stringContaining("Model API key contains invalid characters")
     });
+  });
+
+  test("migrates legacy model config into a provider without leaking the key", async () => {
+    const rootDir = await createGitRoot();
+    const dir = await mkdtemp(join(tmpdir(), "supbot-test-"));
+    tempDirs.push(dir);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "state.json"), JSON.stringify({
+      modelConfig: {
+        ...defaultModelConfig,
+        providerName: "Legacy gateway",
+        baseUrl: "http://127.0.0.1:9000/v1",
+        model: "legacy-model",
+        temperature: 0.3,
+        maxTokens: 1234
+      },
+      modelSecret: "legacy-secret"
+    }, null, 2), "utf8");
+
+    const runtime = new SupbotRuntime(new JsonFileStorage(dir), { rootDir });
+    await runtime.init();
+    const snapshot = runtime.snapshot();
+    expect(snapshot.modelProviders).toHaveLength(1);
+    expect(snapshot.activeModelProviderId).toBe(snapshot.modelProviders[0].id);
+    expect(snapshot.modelConfig).toMatchObject({
+      providerName: "Legacy gateway",
+      model: "legacy-model",
+      apiKeySaved: true
+    });
+    expect(JSON.stringify(snapshot)).not.toContain("legacy-secret");
+
+    const persisted = JSON.parse(await readFile(join(dir, "state.json"), "utf8"));
+    expect(persisted.modelConfig).toBeUndefined();
+    expect(persisted.modelSecret).toBeUndefined();
+    expect(persisted.modelProviders[0].apiKeySecret).toBe("legacy-secret");
+  });
+
+  test("manages multiple model providers with a single active projection", async () => {
+    const runtime = await createRuntime();
+    const initial = runtime.snapshot().modelProviders[0];
+    const secondary = await runtime.createModelProvider({
+      providerName: "Provider B",
+      baseUrl: "http://127.0.0.1:9002/v1",
+      model: "model-b",
+      temperature: 0.2,
+      maxTokens: 2048,
+      apiKey: "secret-b"
+    });
+    expect(runtime.snapshot().activeModelProviderId).toBe(initial.id);
+
+    await runtime.setActiveModelProvider(secondary.id);
+    let snapshot = runtime.snapshot();
+    expect(snapshot.modelConfig).toMatchObject({
+      providerName: "Provider B",
+      baseUrl: "http://127.0.0.1:9002/v1",
+      model: "model-b",
+      apiKeySaved: true
+    });
+    expect(JSON.stringify(snapshot)).not.toContain("secret-b");
+
+    const tertiary = await runtime.createModelProvider({
+      providerName: "Provider C",
+      baseUrl: "http://127.0.0.1:9003/v1",
+      model: "model-c",
+      temperature: 0.6,
+      maxTokens: 4096,
+      apiKey: "secret-c"
+    });
+    await runtime.updateModelProvider(initial.id, {
+      providerName: "Provider A edited",
+      baseUrl: "http://127.0.0.1:9001/v1",
+      model: "model-a2",
+      temperature: 0.1,
+      maxTokens: 1024,
+      apiKey: "inactive-secret"
+    });
+    snapshot = runtime.snapshot();
+    expect(snapshot.activeModelProviderId).toBe(secondary.id);
+    expect(snapshot.modelConfig.providerName).toBe("Provider B");
+    expect(JSON.stringify(snapshot)).not.toContain("inactive-secret");
+
+    await runtime.deleteModelProvider(secondary.id);
+    snapshot = runtime.snapshot();
+    expect(snapshot.activeModelProviderId).toBe(tertiary.id);
+    expect(snapshot.modelConfig.providerName).toBe("Provider C");
+    expect(snapshot.modelProviders.map((provider) => provider.id)).not.toContain(secondary.id);
+
+    await runtime.deleteModelProvider(initial.id);
+    await expect(runtime.deleteModelProvider(tertiary.id)).rejects.toThrow("At least one model provider is required.");
   });
 
   test("creates a conversation and runs a fallback local job", async () => {
@@ -1079,6 +1252,141 @@ describe("SupbotRuntime", () => {
     }
   });
 
+  test("installs an uploaded ZIP skill package and restores it after restart", async () => {
+    const { runtime, dataDir, rootDir } = await createRuntimeWithPaths();
+    await runtime.setPermissionMode("bypassPermissions");
+    const uploadDir = await mkdtemp(join(tmpdir(), "supbot-upload-"));
+    tempDirs.push(uploadDir);
+    const zipPath = join(uploadDir, "zip-skill.zip");
+    await writeTestZip(zipPath, [{
+      path: "wrapped-zip-skill/SKILL.md",
+      content: "---\nname: Zip Skill\ndescription: Handles zipword package tasks.\n---\nWhen asked about zipword, reply with the installed package path.\n"
+    }]);
+    const zipSize = (await stat(zipPath)).size;
+    const conversation = await runtime.createConversation("Install ZIP skill");
+    const mock = await withMockModel(runtime, (body, call) => {
+      const parsed = JSON.parse(body);
+      if (call === 1) {
+        expect(parsed.tools.map((tool: { function: { name: string } }) => tool.function.name)).toContain("InspectPackageArchive");
+        return {
+          choices: [{
+            message: {
+              content: null,
+              tool_calls: [{
+                id: "call_inspect_zip",
+                type: "function",
+                function: { name: "InspectPackageArchive", arguments: JSON.stringify({ path: zipPath }) }
+              }]
+            }
+          }]
+        };
+      }
+      if (call === 2) {
+        const inspection = parsed.messages.find((message: { role: string; content: string }) => message.role === "tool")?.content || "";
+        const sha256 = inspection.match(/SHA-256:\s*([a-f0-9]{64})/)?.[1];
+        expect(inspection).toContain("Package inspection: Zip Skill");
+        expect(inspection).toContain(join(dataDir, "skills", "zip-skill"));
+        expect(sha256).toBeTruthy();
+        return {
+          choices: [{
+            message: {
+              content: null,
+              tool_calls: [{
+                id: "call_install_zip",
+                type: "function",
+                function: { name: "InstallPackageArchive", arguments: JSON.stringify({ path: zipPath, expectedSha256: sha256 }) }
+              }]
+            }
+          }]
+        };
+      }
+      const toolMessages = parsed.messages.filter((message: { role: string; content: string }) => message.role === "tool");
+      const installResult = toolMessages.at(-1)?.content || "";
+      expect(installResult).toContain("Installed package: Zip Skill");
+      expect(installResult).toContain("Installed skill instructions available now");
+      return { choices: [{ message: { content: "ZIP skill installed." } }] };
+    });
+    try {
+      const result = await runtime.sendPrompt({
+        conversationId: conversation.id,
+        prompt: "Install this ZIP skill package.",
+        attachments: [{ id: "zip-attachment", name: "zip-skill.zip", path: zipPath, size: zipSize }]
+      });
+      await waitForJob(runtime, result.job.id);
+      expect(runtime.snapshot().capabilities.find((capability) => capability.id === "local.skill.zip-skill")).toMatchObject({
+        kind: "skill",
+        enabled: true
+      });
+      expect(JSON.parse(await readFile(join(dataDir, "skills", "zip-skill", "supbot-local-package.json"), "utf8"))).toMatchObject({
+        kind: "skill",
+        id: "zip-skill",
+        sha256: expect.stringMatching(/^[a-f0-9]{64}$/)
+      });
+    } finally {
+      await mock.close();
+    }
+
+    const restarted = new SupbotRuntime(new JsonFileStorage(dataDir), { rootDir });
+    await restarted.init();
+    const contextMock = await withMockModel(restarted, (body) => {
+      const parsed = JSON.parse(body);
+      const system = parsed.messages.find((message: { role: string }) => message.role === "system")?.content || "";
+      expect(system).toContain("Zip Skill");
+      expect(system).toContain(join(dataDir, "skills", "zip-skill"));
+      return { choices: [{ message: { content: "ZIP skill context loaded." } }] };
+    });
+    try {
+      const result = await restarted.sendPrompt({ prompt: "Use Zip Skill for zipword." });
+      await waitForJob(restarted, result.job.id);
+    } finally {
+      await contextMock.close();
+    }
+  });
+
+  test("rejects unsafe uploaded ZIP package paths before extraction", async () => {
+    const runtime = await createRuntime();
+    await runtime.setPermissionMode("bypassPermissions");
+    const uploadDir = await mkdtemp(join(tmpdir(), "supbot-upload-"));
+    tempDirs.push(uploadDir);
+    const zipPath = join(uploadDir, "unsafe.zip");
+    await writeTestZip(zipPath, [{
+      path: "../evil/SKILL.md",
+      content: "---\nname: Evil\ndescription: Bad path.\n---\n"
+    }]);
+    const zipSize = (await stat(zipPath)).size;
+    const mock = await withMockModel(runtime, (body, call) => {
+      if (call === 1) {
+        return {
+          choices: [{
+            message: {
+              content: null,
+              tool_calls: [{
+                id: "call_inspect_unsafe",
+                type: "function",
+                function: { name: "InspectPackageArchive", arguments: JSON.stringify({ path: zipPath }) }
+              }]
+            }
+          }]
+        };
+      }
+      const parsed = JSON.parse(body);
+      const toolMessage = parsed.messages.find((message: { role: string; content: string }) => message.role === "tool")?.content || "";
+      expect(toolMessage).toContain("parent-directory path");
+      return { choices: [{ message: { content: "Rejected unsafe package." } }] };
+    });
+    try {
+      const result = await runtime.sendPrompt({
+        prompt: "Inspect this unsafe package.",
+        attachments: [{ id: "unsafe-zip", name: "unsafe.zip", path: zipPath, size: zipSize }]
+      });
+      await waitForJob(runtime, result.job.id);
+      const trace = runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id);
+      expect(trace?.toolCalls[0].status).toBe("failed");
+    } finally {
+      await mock.close();
+    }
+  });
+
   test("runs local write tool and records generated files", async () => {
     const runtime = await createRuntime();
     const result = await runtime.sendPrompt({ prompt: "/write note.txt\nhello from supbot" });
@@ -1258,6 +1566,100 @@ describe("SupbotRuntime", () => {
     });
     expect(denied.record.status).toBe("denied");
     await expect(readFile(join(project.rootPath, "README.md"), "utf8")).rejects.toThrow();
+  });
+
+  test("creates reusable project folders from a project name", async () => {
+    const { runtime, dataDir } = await createRuntimeWithPaths();
+    const project = await runtime.createProjectFromName({ name: "Quarterly: Report" });
+
+    expect(project.name).toBe("Quarterly: Report");
+    expect(project.rootPath).toBe(join(dataDir, "projects", "quarterly-report"));
+    expect(project.metadataPath).toBe(join(project.rootPath, ".supbot", "project.json"));
+    expect(await readFile(project.metadataPath, "utf8")).toContain("Quarterly: Report");
+
+    const reused = await runtime.createProjectFromName({ name: "Quarterly: Report" });
+    expect(reused.id).toBe(project.id);
+    expect(reused.rootPath).toBe(project.rootPath);
+  });
+
+  test("avoids occupied project folders and rejects invalid project names", async () => {
+    const { runtime, dataDir } = await createRuntimeWithPaths();
+    await mkdir(join(dataDir, "projects", "occupied"), { recursive: true });
+
+    const project = await runtime.createProjectFromName({ name: "Occupied" });
+    expect(project.rootPath).toBe(join(dataDir, "projects", "occupied-2"));
+    await expect(runtime.createProjectFromName({ name: "   " })).rejects.toThrow("Project name is required");
+    await expect(runtime.createProjectFromName({ name: "x".repeat(81) })).rejects.toThrow("80 characters or fewer");
+  });
+
+  test("associates conversations and prompt jobs with projects", async () => {
+    const runtime = await createRuntime();
+    const projectDir = await mkdtemp(join(tmpdir(), "supbot-conversation-project-"));
+    tempDirs.push(projectDir);
+    const project = await runtime.createProjectFromFolder({ rootPath: projectDir, name: "Conversation Project" });
+
+    const directConversation = await runtime.createConversation({ title: "Project thread", projectId: project.id });
+    expect(directConversation.projectId).toBe(project.id);
+
+    const first = await runtime.sendPrompt({ projectId: project.id, prompt: "Start a project conversation" });
+    expect(first.conversation.projectId).toBe(project.id);
+    expect(first.job.projectId).toBe(project.id);
+    await waitForJob(runtime, first.job.id);
+
+    const followup = await runtime.sendPrompt({ conversationId: first.conversation.id, prompt: "Continue in the same project" });
+    expect(followup.conversation.projectId).toBe(project.id);
+    expect(followup.job.projectId).toBe(project.id);
+    await waitForJob(runtime, followup.job.id);
+  });
+
+  test("reads project-relative files and blocks project reads outside the root", async () => {
+    const runtime = await createRuntime();
+    const projectDir = await mkdtemp(join(tmpdir(), "supbot-read-project-"));
+    tempDirs.push(projectDir);
+    const outsideDir = await mkdtemp(join(tmpdir(), "supbot-read-outside-"));
+    tempDirs.push(outsideDir);
+    await writeFile(join(projectDir, "inside.txt"), "inside project\n", "utf8");
+    const outsideFile = join(outsideDir, "outside.txt");
+    await writeFile(outsideFile, "outside project\n", "utf8");
+    const project = await runtime.createProjectFromFolder({ rootPath: projectDir, name: "Read Project" });
+
+    const inside = await runtime.sendPrompt({ projectId: project.id, prompt: "/read inside.txt" });
+    await waitForJob(runtime, inside.job.id);
+    const insideAssistant = runtime.snapshot().conversations.find((item) => item.id === inside.conversation.id)?.messages.find((message) => message.role === "assistant");
+    expect(insideAssistant?.text).toContain("inside project");
+
+    const outside = await runtime.sendPrompt({ projectId: project.id, prompt: `/read ${outsideFile}` });
+    await waitForJob(runtime, outside.job.id);
+    const outsideAssistant = runtime.snapshot().conversations.find((item) => item.id === outside.conversation.id)?.messages.find((message) => message.role === "assistant");
+    expect(outsideAssistant?.text).toContain("Project ReadFile target must stay inside");
+  });
+
+  test("rejects new conversations for missing or archived projects", async () => {
+    const runtime = await createRuntime();
+    await expect(runtime.createConversation({ projectId: "project_missing" })).rejects.toThrow("Project not found");
+
+    const projectDir = await mkdtemp(join(tmpdir(), "supbot-archived-project-"));
+    tempDirs.push(projectDir);
+    const project = await runtime.createProjectFromFolder({ rootPath: projectDir, name: "Archived Project" });
+    await runtime.updateProject(project.id, { status: "archived" });
+    await expect(runtime.createConversation({ projectId: project.id })).rejects.toThrow("Project is archived");
+  });
+
+  test("loads legacy unfiled conversations and continues them without a project", async () => {
+    const { runtime, dataDir, rootDir } = await createRuntimeWithPaths();
+    const conversation = await runtime.createConversation("Legacy conversation");
+    await runtime.shutdown();
+
+    const saved = JSON.parse(await readFile(join(dataDir, "state.json"), "utf8")) as { conversations: Array<Record<string, unknown>> };
+    expect(saved.conversations[0]).not.toHaveProperty("projectId");
+
+    const reloaded = new SupbotRuntime(new JsonFileStorage(dataDir), { rootDir });
+    await reloaded.init();
+    const result = await reloaded.sendPrompt({ conversationId: conversation.id, prompt: "Continue legacy conversation" });
+    expect(result.conversation.projectId).toBeUndefined();
+    expect(result.job.projectId).toBeUndefined();
+    await waitForJob(reloaded, result.job.id);
+    await reloaded.shutdown();
   });
 
   test("runs a project data autopilot workflow and records artifacts", async () => {
@@ -3209,14 +3611,39 @@ describe("SupbotRuntime", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z"
     }];
+    let currentRunStatus = "watching";
+    let autopilotStepsAvailable = true;
+    let autopilotStreamRequestCount = 0;
     const currentRun = {
       id: "run-1",
       agentInstanceId: "agent-client-1",
       conversationId: "conv-1",
       goal: "watch the plan",
       status: "watching",
+      lifecycleStatus: "active",
+      phase: "executing",
+      stepCount: 1,
+      maxSteps: 20,
+      latestEvidence: [{ id: "evidence-1", type: "job", status: "met", label: "Job completed", source: "job" }],
+      lastDecision: { action: "continue", reason: "Verify the output", nextPrompt: "Verify the output" },
+      noProgressCount: 0,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:01.000Z"
+    };
+    const autopilotStep = {
+      id: "step-1",
+      runId: "run-1",
+      sequence: 1,
+      kind: "initial",
+      status: "completed",
+      agentInstanceId: "agent-client-1",
+      jobId: "job-1",
+      attempt: 1,
+      input: { prompt: "watch the plan" },
+      decision: { action: "continue", reason: "Verify the output", nextPrompt: "Verify the output" },
+      evidence: currentRun.latestEvidence,
+      createdAt: "2026-01-01T00:00:01.000Z",
+      updatedAt: "2026-01-01T00:00:02.000Z"
     };
     const flowWorkflow = {
       id: "workflow-1",
@@ -3324,6 +3751,34 @@ describe("SupbotRuntime", () => {
           response.end(`event: messages.unread\ndata: ${JSON.stringify({ unreadCount: 1, messages: [messageItem] })}\n\n`);
           return;
         }
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/autopilot-runs/run-1/stream") {
+          autopilotStreamRequestCount += 1;
+          const event = autopilotStreamRequestCount === 1
+            ? {
+              id: "evt-stream-1",
+              runId: "run-1",
+              agentInstanceId: "agent-client-1",
+              eventType: "step_completed",
+              level: "info",
+              message: "step completed",
+              createdAt: "2026-01-01T00:00:04.000Z"
+            }
+            : {
+              id: "evt-stream-2",
+              runId: "run-1",
+              agentInstanceId: "agent-client-1",
+              eventType: "completed",
+              level: "info",
+              message: "run completed",
+              createdAt: "2026-01-01T00:00:05.000Z"
+            };
+          if (autopilotStreamRequestCount > 1) {
+            currentRunStatus = "completed";
+          }
+          response.setHeader("Content-Type", "text/event-stream");
+          response.end(`id: ${event.id}\nevent: ${event.eventType}\ndata: ${JSON.stringify(event)}\n\n`);
+          return;
+        }
         response.setHeader("Content-Type", "application/json");
         if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/conversations") {
           response.end(JSON.stringify({ conversations }));
@@ -3417,7 +3872,11 @@ describe("SupbotRuntime", () => {
           return;
         }
         if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/autopilot-runs/current") {
-          response.end(JSON.stringify({ run: currentRun }));
+          response.end(JSON.stringify({ run: { ...currentRun, status: currentRunStatus, lifecycleStatus: currentRunStatus === "completed" ? "completed" : "active" } }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/autopilot-runs/run-1") {
+          response.end(JSON.stringify({ run: { ...currentRun, status: currentRunStatus, lifecycleStatus: currentRunStatus === "completed" ? "completed" : "active" } }));
           return;
         }
         if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/autopilot-runs/run-1/events") {
@@ -3432,6 +3891,15 @@ describe("SupbotRuntime", () => {
               createdAt: "2026-01-01T00:00:03.000Z"
             }]
           }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/autopilot-runs/run-1/steps") {
+          if (!autopilotStepsAvailable) {
+            response.statusCode = 404;
+            response.end(JSON.stringify({ error: "not found" }));
+            return;
+          }
+          response.end(JSON.stringify({ steps: [autopilotStep] }));
           return;
         }
         if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-client-1/autopilot-runs") {
@@ -3607,6 +4075,7 @@ describe("SupbotRuntime", () => {
       const disconnected = await runtime.getServstationClientSnapshot();
       expect(disconnected.connected).toBe(false);
       expect(disconnected.conversations).toEqual([]);
+      expect(disconnected.autopilotSteps).toEqual([]);
       await expect(runtime.getServstationFlowEngineSnapshot()).rejects.toThrow("Servstation reverse A2A is not connected.");
       await (runtime as unknown as { updateServstationReverseState(input: Record<string, unknown>): Promise<void> }).updateServstationReverseState({
         enabled: true,
@@ -3622,8 +4091,16 @@ describe("SupbotRuntime", () => {
       expect(snapshot.conversations).toHaveLength(1);
       expect(snapshot.jobs[0]).toMatchObject({ id: "job-1", status: "completed" });
       expect(snapshot.scheduledJobs[0]).toMatchObject({ id: "schedule-1" });
-      expect(snapshot.autopilotRun?.id).toBe("run-1");
+      expect(snapshot.autopilotRun).toMatchObject({ id: "run-1", phase: "executing", stepCount: 1, maxSteps: 20 });
       expect(snapshot.autopilotEvents[0]?.id).toBe("evt-1");
+      expect(snapshot.autopilotSteps[0]).toMatchObject({ id: "step-1", sequence: 1, kind: "initial", attempt: 1 });
+      expect(await runtime.getServstationAutopilotRun("run-1")).toMatchObject({ id: "run-1", status: "watching" });
+      expect(await runtime.getServstationAutopilotSteps("run-1")).toHaveLength(1);
+
+      autopilotStepsAvailable = false;
+      const legacySnapshot = await runtime.getServstationClientSnapshot({ conversationId: "conv-1" });
+      expect(legacySnapshot.autopilotSteps).toEqual([]);
+      autopilotStepsAvailable = true;
 
       const sent = await runtime.sendServstationPrompt({
         prompt: "new remote prompt",
@@ -3647,8 +4124,20 @@ describe("SupbotRuntime", () => {
       await runtime.createServstationScheduledJob({ prompt: "scheduled prompt", scheduleKind: "once", runAt: "2026-01-02T00:00:00.000Z", enabled: true });
       await runtime.updateServstationScheduledJob("schedule-1", { enabled: false });
       await runtime.deleteServstationScheduledJob("schedule-1");
-      await runtime.startServstationAutopilotRun({ conversationId: "conv-1", goal: "finish the plan", prompt: "finish the plan" });
+      await runtime.startServstationAutopilotRun({ conversationId: "conv-1", prompt: "finish the plan", requestId: "autopilot-request-1" });
       await runtime.updateServstationAutopilotRun({ runId: "run-1", status: "paused" });
+      await runtime.updateServstationAutopilotRun({ runId: "run-1", status: "watching" });
+      await runtime.updateServstationAutopilotRun({ runId: "run-1", status: "stopped" });
+
+      const streamedAutopilotEvents: unknown[] = [];
+      await runtime.streamServstationAutopilotEvents("run-1", (event) => streamedAutopilotEvents.push(event));
+      expect(streamedAutopilotEvents).toMatchObject([
+        { id: "evt-stream-1", eventType: "step_completed" },
+        { id: "evt-stream-2", eventType: "completed" }
+      ]);
+      const streamRequests = requests.filter((item) => item.path === "/api/v1/agent/agent-client-1/autopilot-runs/run-1/stream");
+      expect(streamRequests).toHaveLength(2);
+      expect(streamRequests[1]?.headers["last-event-id"]).toBe("evt-stream-1");
 
       const flowSnapshot = await runtime.getServstationFlowEngineSnapshot();
       expect(flowSnapshot.launchableWorkflows[0]).toMatchObject({ id: "workflow-1", name: "Expense approval" });
@@ -3727,6 +4216,12 @@ describe("SupbotRuntime", () => {
       expect(requests.some((item) => item.method === "DELETE" && item.path === "/api/v1/agent/agent-client-1/scheduled-tasks/schedule-1")).toBe(true);
       expect(requests.some((item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/autopilot-runs")).toBe(true);
       expect(requests.some((item) => item.method === "PATCH" && item.path === "/api/v1/agent/agent-client-1/autopilot-runs/run-1")).toBe(true);
+      const autopilotStart = requests.find((item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/autopilot-runs");
+      expect(autopilotStart?.body).toEqual({ conversationId: "conv-1", prompt: "finish the plan", requestId: "autopilot-request-1" });
+      const autopilotUpdates = requests
+        .filter((item) => item.method === "PATCH" && item.path === "/api/v1/agent/agent-client-1/autopilot-runs/run-1")
+        .map((item) => item.body.status);
+      expect(autopilotUpdates).toEqual(["paused", "watching", "stopped"]);
       expect(requests.some((item) => item.method === "GET" && item.path === "/api/v1/flow-engine/workflows/launchable")).toBe(true);
       expect(requests.some((item) => item.method === "GET" && item.path === "/api/v1/flow-engine/tasks/pending")).toBe(true);
       expect(requests.some((item) => item.method === "GET" && item.path === "/api/v1/flow-engine/executions/mine")).toBe(true);
@@ -3807,6 +4302,7 @@ describe("SupbotRuntime", () => {
       expect(snapshot.connected).toBe(true);
       expect(snapshot.agentInstanceId).toBe("agent-client-1");
       expect(snapshot.autopilotRun).toBeNull();
+      expect(snapshot.autopilotSteps).toEqual([]);
     } finally {
       await new Promise<void>((resolve, reject) => servstation.close((error) => error ? reject(error) : resolve()));
     }
@@ -4391,5 +4887,27 @@ describe("SupbotRuntime", () => {
     const snapshot = runtime.snapshot();
     expect(snapshot.scheduledJobs[0].enabled).toBe(false);
     expect(snapshot.conversations[0].messages[0].text).toContain("[Scheduled] Ping");
+  });
+
+  test("runs scheduled prompts inside their project", async () => {
+    const runtime = await createRuntime();
+    const projectDir = await mkdtemp(join(tmpdir(), "supbot-scheduled-project-"));
+    tempDirs.push(projectDir);
+    const project = await runtime.createProjectFromFolder({ rootPath: projectDir, name: "Scheduled Project" });
+    await runtime.createScheduledJob({
+      projectId: project.id,
+      title: "Project Ping",
+      prompt: "scheduled project hello",
+      scheduleKind: "once",
+      runAt: new Date(Date.now() - 1000).toISOString(),
+      enabled: true
+    });
+
+    expect(await runtime.runDueScheduledJobs(new Date())).toBe(1);
+    const snapshot = runtime.snapshot();
+    expect(snapshot.scheduledJobs[0].projectId).toBe(project.id);
+    expect(snapshot.conversations[0].projectId).toBe(project.id);
+    expect(snapshot.jobs[0].projectId).toBe(project.id);
+    await waitForJob(runtime, snapshot.jobs[0].id);
   });
 });

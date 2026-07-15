@@ -19,12 +19,15 @@ import {
   type ChatMessageBlock,
   type CompactBoundary,
   type Conversation,
+  type CreateConversationInput,
   type DataArtifact,
   type DataArtifactKind,
   type DataSourceSpec,
   type GeneratedFile,
   type IdentityContext,
   type JobStatus,
+  type LocalPackageInspection,
+  type LocalPackageInstallResult,
   type McpConfigTransfer,
   type McpDiagnosticResult,
   type McpImportResult,
@@ -53,6 +56,8 @@ import {
   type MemoryUpdateInput,
   type ModelConfig,
   type ModelConfigUpdate,
+  type ModelProviderConfig,
+  type ModelProviderUpdate,
   type ModelTestResult,
   type CapabilityUpdateInput,
   nowIso,
@@ -61,6 +66,7 @@ import {
   type PermissionRule,
   type PersonalityConfig,
   type Project,
+  type ProjectCreateFromNameInput,
   type ProjectCreateInput,
   type ProjectUpdateInput,
   type QuerySession,
@@ -76,8 +82,10 @@ import {
   type ServstationA2AConfig,
   type ServstationA2AConfigUpdate,
   type ServstationA2AOidcSessionUpdate,
+  type ServstationAutopilotEvent,
   type ServstationAutopilotRun,
   type ServstationAutopilotStartInput,
+  type ServstationAutopilotStep,
   type ServstationAutopilotStatusUpdate,
   type ServstationClientSnapshot,
   type ServstationClientSnapshotQuery,
@@ -120,6 +128,7 @@ import {
 } from "@supbot/shared";
 import { AutopilotOrchestrator } from "./autopilotOrchestrator";
 import { stripQuotes, type LocalToolHost, type LocalToolResult } from "./localTools";
+import { LocalPackageManager } from "./localPackageManager";
 import { MemoryManager } from "./memoryManager";
 import { McpManager } from "./mcpManager";
 import { generateReply, normalizeModelApiKey } from "./modelClient";
@@ -136,7 +145,7 @@ import {
   refreshServstationOidcTokenSet,
   serializeServstationOidcSecret
 } from "./servstationOidc";
-import { createInitialState, normalizeIdentityContext, type RuntimeState, type StorageAdapter } from "./storage";
+import { createInitialState, normalizeIdentityContext, type ModelProviderState, type RuntimeState, type StorageAdapter } from "./storage";
 import { SubagentRunner } from "./subagentRunner";
 import { ToolExecutor } from "./toolExecutor";
 import { ToolRegistry } from "./toolRegistry";
@@ -155,6 +164,7 @@ interface RunningAutopilotRun {
 interface ProjectToolContextOptions {
   project?: Project;
   policy?: AutopilotWritePolicy;
+  allowProjectRootWrites?: boolean;
 }
 
 interface PendingPermissionWaiter {
@@ -171,6 +181,7 @@ export class SupbotRuntime extends EventEmitter {
   private readonly servstationA2AProvider: ServstationA2AProvider;
   private readonly servstationAgentClient: ServstationAgentClient;
   private readonly worktreeManager: WorktreeManager;
+  private readonly localPackageManager: LocalPackageManager;
   private readonly remoteBridgeManager: RemoteBridgeManager;
   private readonly servstationReverseBridgeClient: ServstationReverseBridgeClient;
   private readonly memoryManager = new MemoryManager({ randomId, nowIso });
@@ -188,6 +199,11 @@ export class SupbotRuntime extends EventEmitter {
     this.secretStorageKind = options.secretStorageKind || "file";
     this.marketSecretStorageKind = options.marketSecretStorageKind || this.secretStorageKind || "file";
     this.rootDir = options.rootDir || process.cwd();
+    this.localPackageManager = new LocalPackageManager({
+      dataDir: this.storage.getDataDir(),
+      randomId,
+      nowIso
+    });
     this.mcpManager = new McpManager({
       randomId,
       nowIso,
@@ -288,6 +304,8 @@ export class SupbotRuntime extends EventEmitter {
 
   async init(): Promise<RuntimeSnapshot> {
     this.state = await this.storage.load();
+    await this.reconcileLocalPackages();
+    await this.storage.save(this.state);
     this.mcpManager.setServers(this.state.mcpServers);
     this.worktreeManager.setWorktrees(this.state.worktrees);
     this.loaded = true;
@@ -308,11 +326,14 @@ export class SupbotRuntime extends EventEmitter {
 
   snapshot(): RuntimeSnapshot {
     this.assertLoaded();
+    const activeProvider = this.ensureActiveModelProvider();
     return {
       status: this.runningJobs.size || this.runningAutopilotRuns.size ? "running" : "ready",
       agentName: this.state.agentName,
       identityContext: this.state.identityContext,
-      modelConfig: redactModelConfig(this.state.modelConfig, this.state.modelSecret),
+      modelConfig: this.modelConfigFromProvider(activeProvider),
+      modelProviders: this.state.modelProviders.map((provider) => this.redactModelProvider(provider)),
+      activeModelProviderId: activeProvider.id,
       toolMarketConfig: redactToolMarketConfig(this.state.toolMarketConfig, this.state.toolMarketSecret, this.state.toolMarketPasswordSecret),
       personality: this.state.personality,
       capabilities: this.state.capabilities,
@@ -343,11 +364,17 @@ export class SupbotRuntime extends EventEmitter {
     };
   }
 
-  async createConversation(title = "New conversation"): Promise<Conversation> {
+  async createConversation(input: string | CreateConversationInput = "New conversation"): Promise<Conversation> {
     this.assertLoaded();
+    const title = typeof input === "string" ? input : input.title || "New conversation";
+    const projectId = typeof input === "string" ? undefined : input.projectId;
+    if (projectId) {
+      this.requireConversationProject(projectId);
+    }
     const now = nowIso();
     const conversation: Conversation = {
       id: randomId("conv"),
+      projectId,
       title,
       createdAt: now,
       updatedAt: now,
@@ -401,6 +428,30 @@ export class SupbotRuntime extends EventEmitter {
     await this.persistAndBroadcast();
     this.emitTyped({ type: "project_changed", project });
     return project;
+  }
+
+  async createProjectFromName(input: ProjectCreateFromNameInput): Promise<Project> {
+    this.assertLoaded();
+    const name = requiredString(input.name, "Project name");
+    if (name.length > 80) {
+      throw new Error("Project name must be 80 characters or fewer.");
+    }
+
+    const projectsRoot = join(this.storage.getDataDir(), "projects");
+    await mkdir(projectsRoot, { recursive: true });
+    const slug = safeProjectSlug(name);
+    for (let suffix = 1; ; suffix += 1) {
+      const folderName = suffix === 1 ? slug : `${slug}-${suffix}`;
+      const rootPath = join(projectsRoot, folderName);
+      const resolvedRoot = resolve(rootPath).toLowerCase();
+      const existing = this.state.projects.find((project) => resolve(project.rootPath).toLowerCase() === resolvedRoot);
+      if (existing && existing.status !== "archived" && existing.name.trim() === name) {
+        return this.createProjectFromFolder({ rootPath, name });
+      }
+      if (!await pathExists(rootPath)) {
+        return this.createProjectFromFolder({ rootPath, name });
+      }
+    }
   }
 
   listProjects(): Project[] {
@@ -513,9 +564,11 @@ export class SupbotRuntime extends EventEmitter {
 
   async sendPrompt(input: SendPromptInput): Promise<SendPromptResult> {
     this.assertLoaded();
-    const conversation = input.conversationId
-      ? this.findConversation(input.conversationId) || await this.createConversation(titleFromPrompt(input.prompt))
-      : await this.createConversation(titleFromPrompt(input.prompt));
+    const existingConversation = input.conversationId ? this.findConversation(input.conversationId) : undefined;
+    const conversation = existingConversation || await this.createConversation({
+      title: titleFromPrompt(input.prompt),
+      projectId: input.projectId
+    });
 
     const now = nowIso();
     const userMessage: ChatMessage = {
@@ -529,6 +582,7 @@ export class SupbotRuntime extends EventEmitter {
     const job: AgentJob = {
       id: randomId("job"),
       conversationId: conversation.id,
+      projectId: conversation.projectId,
       prompt: input.prompt,
       status: "queued",
       workspaceMode: input.workspaceMode || "main",
@@ -896,6 +950,25 @@ export class SupbotRuntime extends EventEmitter {
   async updateServstationAutopilotRun(input: ServstationAutopilotStatusUpdate): Promise<ServstationAutopilotRun> {
     this.assertLoaded();
     return this.servstationAgentClient.updateAutopilotRun(input);
+  }
+
+  async getServstationAutopilotRun(runId: string): Promise<ServstationAutopilotRun | null> {
+    this.assertLoaded();
+    return this.servstationAgentClient.fetchAutopilotRun(runId);
+  }
+
+  async getServstationAutopilotSteps(runId: string): Promise<ServstationAutopilotStep[]> {
+    this.assertLoaded();
+    return this.servstationAgentClient.fetchAutopilotSteps(runId);
+  }
+
+  async streamServstationAutopilotEvents(
+    runId: string,
+    onEvent: (event: ServstationAutopilotEvent) => void,
+    signal?: AbortSignal
+  ): Promise<void> {
+    this.assertLoaded();
+    await this.servstationAgentClient.streamAutopilotEvents(runId, onEvent, signal);
   }
 
   async getServstationFlowEngineSnapshot(): Promise<ServstationFlowEngineSnapshot> {
@@ -1491,7 +1564,7 @@ export class SupbotRuntime extends EventEmitter {
       this.state.scheduledJobs = this.state.scheduledJobs.map((item) => item.id === job.id
         ? { ...item, ...nextSchedule, lastRunAt: ranAt, updatedAt: ranAt }
         : item);
-      await this.sendPrompt({ prompt: `[Scheduled] ${job.title}\n\n${job.prompt}` });
+      await this.sendPrompt({ projectId: job.projectId, prompt: `[Scheduled] ${job.title}\n\n${job.prompt}` });
     }
     if (due.length) {
       await this.persistAndBroadcast();
@@ -1501,28 +1574,61 @@ export class SupbotRuntime extends EventEmitter {
 
   async updateModelConfig(update: ModelConfigUpdate): Promise<ModelConfig> {
     this.assertLoaded();
-    const providerName = requiredString(update.providerName, "Provider name");
-    const model = requiredString(update.model, "Model");
-    const baseUrl = inferModelBaseUrl(providerName, model, requiredString(update.baseUrl, "Base URL"));
-    const apiKey = normalizeModelApiKey(update.apiKey);
-    const next: ModelConfig = {
-      providerName,
-      baseUrl,
-      model,
-      temperature: clampNumber(Number(update.temperature), 0, 2),
-      maxTokens: Math.round(clampNumber(Number(update.maxTokens), 64, 128000)),
-      apiKeySaved: false
-    };
-    if (apiKey) {
-      this.state.modelSecret = apiKey;
-    } else if (update.clearApiKey) {
-      this.state.modelSecret = undefined;
-    }
-    next.apiKeySaved = Boolean(this.state.modelSecret);
-    next.apiKeyStorage = next.apiKeySaved ? this.secretStorageKind : undefined;
-    this.state.modelConfig = next;
+    const activeProvider = this.ensureActiveModelProvider();
+    await this.updateModelProvider(activeProvider.id, update);
+    return this.modelConfigFromProvider(this.ensureActiveModelProvider());
+  }
+
+  async createModelProvider(update: ModelProviderUpdate): Promise<ModelProviderConfig> {
+    this.assertLoaded();
+    this.ensureActiveModelProvider();
+    const createdAt = nowIso();
+    const provider = this.applyModelProviderUpdate({
+      id: randomId("model_provider"),
+      providerName: "",
+      baseUrl: "",
+      model: "",
+      temperature: 0.7,
+      maxTokens: 4096,
+      apiKeySaved: false,
+      createdAt,
+      updatedAt: createdAt
+    }, update);
+    this.state.modelProviders = [...this.state.modelProviders, provider];
     await this.persistAndBroadcast();
-    return redactModelConfig(this.state.modelConfig, this.state.modelSecret);
+    return this.redactModelProvider(provider);
+  }
+
+  async updateModelProvider(id: string, update: ModelProviderUpdate): Promise<ModelProviderConfig> {
+    this.assertLoaded();
+    const provider = this.requireModelProvider(id);
+    const next = this.applyModelProviderUpdate(provider, update);
+    this.state.modelProviders = this.state.modelProviders.map((item) => item.id === provider.id ? next : item);
+    await this.persistAndBroadcast();
+    return this.redactModelProvider(next);
+  }
+
+  async deleteModelProvider(id: string): Promise<void> {
+    this.assertLoaded();
+    const provider = this.requireModelProvider(id);
+    if (this.state.modelProviders.length <= 1) {
+      throw new Error("At least one model provider is required.");
+    }
+    const currentIndex = this.state.modelProviders.findIndex((item) => item.id === provider.id);
+    const remaining = this.state.modelProviders.filter((item) => item.id !== provider.id);
+    if (this.state.activeModelProviderId === provider.id) {
+      this.state.activeModelProviderId = remaining[Math.min(currentIndex, remaining.length - 1)]?.id;
+    }
+    this.state.modelProviders = remaining;
+    await this.persistAndBroadcast();
+  }
+
+  async setActiveModelProvider(id: string): Promise<ModelProviderConfig> {
+    this.assertLoaded();
+    const provider = this.requireModelProvider(id);
+    this.state.activeModelProviderId = provider.id;
+    await this.persistAndBroadcast();
+    return this.redactModelProvider(provider);
   }
 
   async updateToolMarketConfig(update: ToolMarketConfigUpdate): Promise<ToolMarketConfig> {
@@ -1559,23 +1665,31 @@ export class SupbotRuntime extends EventEmitter {
 
   async testModelConfig(update?: Partial<ModelConfigUpdate>): Promise<ModelTestResult> {
     this.assertLoaded();
-    const providerName = update?.providerName || this.state.modelConfig.providerName;
-    const model = update?.model || this.state.modelConfig.model;
-    const baseUrl = inferModelBaseUrl(providerName, model, update?.baseUrl || this.state.modelConfig.baseUrl);
-    const modelConfig: ModelConfig = update
-      ? {
-          providerName,
-          baseUrl,
-          model,
-          temperature: update.temperature ?? this.state.modelConfig.temperature,
-          maxTokens: update.maxTokens ?? this.state.modelConfig.maxTokens,
-          apiKeySaved: Boolean(update.apiKey || this.state.modelSecret),
-          apiKeyStorage: this.state.modelConfig.apiKeyStorage
-        }
-      : this.state.modelConfig;
+    return this.testModelProvider(this.ensureActiveModelProvider().id, update);
+  }
+
+  async testModelProvider(id?: string, update?: Partial<ModelProviderUpdate>): Promise<ModelTestResult> {
+    this.assertLoaded();
+    const baseProvider = id
+      ? this.requireModelProvider(id)
+      : update
+        ? { ...createInitialState().modelProviders[0], apiKeySecret: undefined }
+        : this.ensureActiveModelProvider();
+    const providerName = update?.providerName || baseProvider.providerName;
+    const model = update?.model || baseProvider.model;
+    const baseUrl = inferModelBaseUrl(providerName, model, update?.baseUrl || baseProvider.baseUrl);
+    const modelConfig: ModelConfig = {
+      providerName,
+      baseUrl,
+      model,
+      temperature: update?.temperature ?? baseProvider.temperature,
+      maxTokens: update?.maxTokens ?? baseProvider.maxTokens,
+      apiKeySaved: Boolean(update?.apiKey || (!update?.clearApiKey && baseProvider.apiKeySecret)),
+      apiKeyStorage: baseProvider.apiKeySecret ? this.secretStorageKind : undefined
+    };
     let apiKey: string;
     try {
-      apiKey = normalizeModelApiKey(update?.apiKey || this.state.modelSecret);
+      apiKey = normalizeModelApiKey(update?.apiKey || (update?.clearApiKey ? undefined : baseProvider.apiKeySecret));
     } catch (error) {
       return { ok: false, message: (error as Error).message };
     }
@@ -1731,9 +1845,13 @@ export class SupbotRuntime extends EventEmitter {
 
   async createScheduledJob(input: ScheduledJobInput): Promise<ScheduledJob> {
     this.assertLoaded();
+    if (input.projectId) {
+      this.requireConversationProject(input.projectId);
+    }
     const now = nowIso();
     const job: ScheduledJob = {
       id: randomId("schedule"),
+      projectId: input.projectId,
       title: input.title.trim() || titleFromPrompt(input.prompt),
       prompt: requiredString(input.prompt, "Prompt"),
       scheduleKind: input.scheduleKind,
@@ -1754,6 +1872,9 @@ export class SupbotRuntime extends EventEmitter {
     const current = this.state.scheduledJobs.find((item) => item.id === id);
     if (!current) {
       throw new Error(`Scheduled job not found: ${id}`);
+    }
+    if (input.projectId) {
+      this.requireConversationProject(input.projectId);
     }
     const next: ScheduledJob = {
       ...current,
@@ -1829,6 +1950,11 @@ export class SupbotRuntime extends EventEmitter {
       if (!conversation) {
         throw new Error("Conversation disappeared before the job could run.");
       }
+      const project = (job.projectId || conversation.projectId)
+        ? this.requireConversationProject(job.projectId || conversation.projectId!)
+        : undefined;
+      const toolContextOptions: ProjectToolContextOptions = project ? { project, allowProjectRootWrites: true } : {};
+      const cwd = project?.rootPath || process.cwd();
       const subagent = resolveMentionedSubagent(job.prompt, this.state.subagents);
       const assistantSeed: ChatMessage = {
         id: randomId("msg"),
@@ -1862,14 +1988,15 @@ export class SupbotRuntime extends EventEmitter {
         this.emitTyped({ type: "message", conversationId: conversation.id, message: finalMessage });
         return;
       }
+      const modelProvider = this.ensureActiveModelProvider();
       const engine = new QueryEngine({
         id: randomId("query"),
         jobId,
         conversationId: conversation.id,
         dataDir: this.storage.getDataDir(),
-        cwd: process.cwd(),
-        modelConfig: this.state.modelConfig,
-        apiKey: this.state.modelSecret,
+        cwd,
+        modelConfig: this.modelConfigFromProvider(modelProvider),
+        apiKey: modelProvider.apiKeySecret,
         personality: this.state.personality,
         subagent,
         capabilities: this.state.capabilities,
@@ -1877,7 +2004,7 @@ export class SupbotRuntime extends EventEmitter {
         compactBoundaries: this.state.compactBoundaries,
         memory: this.state.memory,
         registry: this.toolRegistry,
-        toolContext: this.createToolExecutionContext(controller.signal, jobId),
+        toolContext: this.createToolExecutionContext(controller.signal, jobId, 0, toolContextOptions),
         permissionMode: this.state.permissionMode,
         permissionRules: this.state.permissionRules,
         signal: controller.signal,
@@ -2255,14 +2382,15 @@ export class SupbotRuntime extends EventEmitter {
 
   private async runAutopilotTaskEngine(project: Project, run: AutopilotRun, task: AutopilotTask, signal: AbortSignal): Promise<{ text: string; generatedFiles: GeneratedFile[] }> {
     const staff = this.resolveStaffSubagent(task.staffAgent);
+    const modelProvider = this.ensureActiveModelProvider();
     const query = new QueryEngine({
       id: randomId("query"),
       jobId: `${run.id}:${task.id}`,
       conversationId: `autopilot_${run.id}`,
       dataDir: this.storage.getDataDir(),
       cwd: project.rootPath,
-      modelConfig: this.state.modelConfig,
-      apiKey: this.state.modelSecret,
+      modelConfig: this.modelConfigFromProvider(modelProvider),
+      apiKey: modelProvider.apiKeySecret,
       personality: this.state.personality,
       subagent: staff,
       capabilities: this.state.capabilities,
@@ -2387,6 +2515,14 @@ export class SupbotRuntime extends EventEmitter {
     const project = this.state.projects.find((item) => item.id === id);
     if (!project) {
       throw new Error(`Project not found: ${id}`);
+    }
+    return project;
+  }
+
+  private requireConversationProject(id: string): Project {
+    const project = this.requireProject(id);
+    if (project.status === "archived") {
+      throw new Error(`Project is archived: ${id}`);
     }
     return project;
   }
@@ -2702,8 +2838,11 @@ export class SupbotRuntime extends EventEmitter {
     const job = this.findRootJob(jobId);
     const worktree = job?.worktreeId ? this.worktreeManager.get(job.worktreeId) : undefined;
     const project = options.project;
-    const allowedWriteRoots = project ? this.projectManager.absoluteAllowedWriteRoots(project.rootPath, options.policy) : undefined;
+    const allowedWriteRoots = project
+      ? options.allowProjectRootWrites ? [resolve(project.rootPath)] : this.projectManager.absoluteAllowedWriteRoots(project.rootPath, options.policy)
+      : undefined;
     const workspacePath = project?.rootPath || worktree?.path || this.rootDir;
+    const allowedAttachmentPaths = this.attachmentPathsForConversation(job?.conversationId);
     const host: LocalToolHost = {
       dataDir: this.storage.getDataDir(),
       workspacePath,
@@ -2721,15 +2860,21 @@ export class SupbotRuntime extends EventEmitter {
       projectId: project?.id,
       projectRoot: project?.rootPath,
       allowedWriteRoots,
+      allowedAttachmentPaths,
       host,
       ensureIsolatedWorkspace: async (toolName: string) => this.ensureJobWorktree(jobId, toolName),
+      inspectPackageArchive: async (input: { path: string }): Promise<LocalPackageInspection> =>
+        this.inspectPackageArchive(input.path, allowedAttachmentPaths),
+      installPackageArchive: async (input: { path: string; expectedSha256: string }): Promise<LocalPackageInstallResult> =>
+        this.installPackageArchive(input.path, input.expectedSha256, allowedAttachmentPaths, signal),
       subagents: this.state.subagents,
       runSubagent: async (input: { subagentType?: string; prompt: string; signal: AbortSignal }): Promise<LocalToolResult> => {
+        const modelProvider = this.ensureActiveModelProvider();
         const runner = new SubagentRunner({
           dataDir: this.storage.getDataDir(),
           cwd: workspacePath,
-          modelConfig: this.state.modelConfig,
-          apiKey: this.state.modelSecret,
+          modelConfig: this.modelConfigFromProvider(modelProvider),
+          apiKey: modelProvider.apiKeySecret,
           personality: this.state.personality,
           capabilities: this.state.capabilities,
           subagents: this.state.subagents,
@@ -2787,6 +2932,119 @@ export class SupbotRuntime extends EventEmitter {
         });
       }
     };
+  }
+
+  private attachmentPathsForConversation(conversationId?: string): string[] {
+    if (!conversationId) {
+      return [];
+    }
+    const conversation = this.findConversation(conversationId);
+    return conversation?.messages.flatMap((message) =>
+      (message.attachments || []).map((attachment) => attachment.path).filter((path): path is string => Boolean(path))
+    ) || [];
+  }
+
+  private assertPackageAttachmentPath(filePath: string, allowedAttachmentPaths: string[]): string {
+    const resolvedPath = resolve(filePath);
+    if (!allowedAttachmentPaths.some((allowedPath) => resolve(allowedPath) === resolvedPath)) {
+      throw new Error("Installable package archives must be ZIP files uploaded in the current conversation.");
+    }
+    return resolvedPath;
+  }
+
+  private async inspectPackageArchive(filePath: string, allowedAttachmentPaths: string[]): Promise<LocalPackageInspection> {
+    const resolvedPath = this.assertPackageAttachmentPath(filePath, allowedAttachmentPaths);
+    return this.localPackageManager.inspectArchive(resolvedPath);
+  }
+
+  private async installPackageArchive(filePath: string, expectedSha256: string, allowedAttachmentPaths: string[], signal: AbortSignal): Promise<LocalPackageInstallResult> {
+    const resolvedPath = this.assertPackageAttachmentPath(filePath, allowedAttachmentPaths);
+    const inspection = await this.localPackageManager.inspectArchive(resolvedPath);
+    const oldManagedServerIds = this.state.mcpServers
+      .filter((server) => server.source?.kind === "local-package" && server.source.packageId === inspection.id)
+      .map((server) => server.id);
+    await Promise.all(oldManagedServerIds.map((serverId) => this.mcpManager.disconnect(serverId).catch(() => undefined)));
+    let result: LocalPackageInstallResult;
+    try {
+      result = await this.localPackageManager.installArchive(resolvedPath, expectedSha256, signal);
+    } catch (error) {
+      await Promise.all(oldManagedServerIds.map((serverId) => {
+        const server = this.state.mcpServers.find((item) => item.id === serverId);
+        return server?.enabled && server.autoConnect ? this.mcpManager.connect(serverId).catch(() => undefined) : Promise.resolve(undefined);
+      }));
+      throw error;
+    }
+
+    await this.reconcileLocalPackages();
+    const activationWarnings: string[] = [];
+    for (const serverId of result.activatedMcpServerIds) {
+      const server = this.state.mcpServers.find((item) => item.id === serverId);
+      if (!server?.enabled || !server.autoConnect) {
+        continue;
+      }
+      try {
+        await this.mcpManager.connect(serverId);
+      } catch (error) {
+        activationWarnings.push(`MCP ${server.name} failed to connect: ${(error as Error).message}`);
+      }
+    }
+    if (activationWarnings.length) {
+      await this.localPackageManager.rollbackInstall(result);
+      await this.reconcileLocalPackages();
+      await Promise.all(oldManagedServerIds.map((serverId) => {
+        const server = this.state.mcpServers.find((item) => item.id === serverId);
+        return server?.enabled && server.autoConnect ? this.mcpManager.connect(serverId).catch(() => undefined) : Promise.resolve(undefined);
+      }));
+      await this.recordMcpEvent("Local package installation rolled back", undefined, {
+        packageId: result.id,
+        kind: result.kind,
+        errors: activationWarnings
+      });
+      await this.persistAndBroadcast();
+      throw new Error(`Local package activation failed and was rolled back: ${activationWarnings.join("; ")}`);
+    }
+    await this.localPackageManager.finalizeInstall(result);
+    const finalResult = activationWarnings.length
+      ? { ...result, warnings: [...result.warnings, ...activationWarnings] }
+      : result;
+    await this.recordMcpEvent("Local package installed", undefined, {
+      packageId: finalResult.id,
+      kind: finalResult.kind,
+      installPath: finalResult.installPath,
+      mcpServers: finalResult.activatedMcpServerIds
+    });
+    await this.persistAndBroadcast();
+    return finalResult;
+  }
+
+  private async reconcileLocalPackages(): Promise<void> {
+    const scan = await this.localPackageManager.scanInstalledPackages();
+    const existingCapabilities = new Map(this.state.capabilities.map((capability) => [capability.id, capability]));
+    const localCapabilityIds = new Set(scan.capabilities.map((capability) => capability.id));
+    const nextLocalCapabilities = scan.capabilities.map((capability) => ({
+      ...capability,
+      enabled: existingCapabilities.get(capability.id)?.enabled ?? capability.enabled
+    }));
+    this.state.capabilities = [
+      ...this.state.capabilities.filter((capability) => !isLocalPackageCapabilityId(capability.id) || localCapabilityIds.has(capability.id)),
+      ...nextLocalCapabilities.filter((capability) => !this.state.capabilities.some((current) => current.id === capability.id))
+    ].map((capability) => nextLocalCapabilities.find((item) => item.id === capability.id) || capability);
+
+    const existingServers = new Map(this.state.mcpServers.map((server) => [server.id, server]));
+    const nonLocalServers = this.state.mcpServers.filter((server) => server.source?.kind !== "local-package");
+    const localServers = scan.mcpServers.map((server) => {
+      const existing = existingServers.get(server.id);
+      return {
+        ...server,
+        enabled: existing?.enabled ?? server.enabled,
+        autoConnect: existing?.autoConnect ?? server.autoConnect,
+        createdAt: existing?.createdAt || server.createdAt,
+        updatedAt: nowIso()
+      };
+    });
+    this.state.mcpServers = [...nonLocalServers, ...localServers];
+    this.mcpManager.setServers(this.state.mcpServers);
+    this.upsertMcpCapability();
   }
 
   private async requestToolPermission(permission: PendingToolPermission): Promise<"approved" | "denied"> {
@@ -3083,7 +3341,10 @@ export class SupbotRuntime extends EventEmitter {
 
   private async executeLocalTool(job: AgentJob, signal: AbortSignal): Promise<LocalToolResult | null> {
     const trimmed = job.prompt.trim();
-    const context = this.createToolExecutionContext(signal, job.id);
+    const conversation = this.findConversation(job.conversationId);
+    const projectId = job.projectId || conversation?.projectId;
+    const project = projectId ? this.requireConversationProject(projectId) : undefined;
+    const context = this.createToolExecutionContext(signal, job.id, 0, project ? { project, allowProjectRootWrites: true } : {});
     const executor = new ToolExecutor();
     const executeSlash = async (toolName: string, input: unknown) => {
       const envelope = await executor.execute({
@@ -3270,6 +3531,83 @@ export class SupbotRuntime extends EventEmitter {
     };
   }
 
+  private ensureActiveModelProvider(): ModelProviderState {
+    if (!this.state.modelProviders.length) {
+      const fallback = createInitialState().modelProviders[0];
+      this.state.modelProviders = [fallback];
+      this.state.activeModelProviderId = fallback.id;
+      return fallback;
+    }
+    const active = this.state.modelProviders.find((provider) => provider.id === this.state.activeModelProviderId);
+    if (active) {
+      return active;
+    }
+    const fallback = this.state.modelProviders[0];
+    this.state.activeModelProviderId = fallback.id;
+    return fallback;
+  }
+
+  private requireModelProvider(id: string): ModelProviderState {
+    const providerId = requiredString(id, "Model provider ID");
+    const provider = this.state.modelProviders.find((item) => item.id === providerId);
+    if (!provider) {
+      throw new Error(`Model provider not found: ${providerId}`);
+    }
+    return provider;
+  }
+
+  private applyModelProviderUpdate(current: ModelProviderState, update: ModelProviderUpdate): ModelProviderState {
+    const providerName = requiredString(update.providerName, "Provider name");
+    const model = requiredString(update.model, "Model");
+    const baseUrl = inferModelBaseUrl(providerName, model, requiredString(update.baseUrl, "Base URL"));
+    const apiKey = normalizeModelApiKey(update.apiKey);
+    let apiKeySecret = current.apiKeySecret;
+    if (apiKey) {
+      apiKeySecret = apiKey;
+    } else if (update.clearApiKey) {
+      apiKeySecret = undefined;
+    }
+    return {
+      ...current,
+      providerName,
+      baseUrl,
+      model,
+      temperature: clampNumber(Number(update.temperature), 0, 2),
+      maxTokens: Math.round(clampNumber(Number(update.maxTokens), 64, 128000)),
+      apiKeySecret,
+      apiKeySaved: Boolean(apiKeySecret),
+      apiKeyStorage: apiKeySecret ? this.secretStorageKind : undefined,
+      updatedAt: nowIso()
+    };
+  }
+
+  private modelConfigFromProvider(provider: ModelProviderState): ModelConfig {
+    return {
+      providerName: provider.providerName,
+      baseUrl: provider.baseUrl,
+      model: provider.model,
+      temperature: provider.temperature,
+      maxTokens: provider.maxTokens,
+      apiKeySaved: Boolean(provider.apiKeySecret),
+      apiKeyStorage: provider.apiKeySecret ? provider.apiKeyStorage || this.secretStorageKind : undefined
+    };
+  }
+
+  private redactModelProvider(provider: ModelProviderState): ModelProviderConfig {
+    return {
+      id: provider.id,
+      providerName: provider.providerName,
+      baseUrl: provider.baseUrl,
+      model: provider.model,
+      temperature: provider.temperature,
+      maxTokens: provider.maxTokens,
+      apiKeySaved: Boolean(provider.apiKeySecret),
+      apiKeyStorage: provider.apiKeySecret ? provider.apiKeyStorage || this.secretStorageKind : undefined,
+      createdAt: provider.createdAt,
+      updatedAt: provider.updatedAt
+    };
+  }
+
   private async persistAndBroadcast(): Promise<void> {
     await this.storage.save(this.state);
     this.emitTyped({ type: "snapshot", snapshot: this.snapshot() });
@@ -3380,7 +3718,14 @@ export class SupbotRuntime extends EventEmitter {
       enabled: input.enabled !== false,
       autoConnect: Boolean(input.autoConnect),
       createdAt: current?.createdAt || now,
-      updatedAt: now
+      updatedAt: now,
+      source: {
+        kind: "tool-market",
+        packageId: product.id,
+        packageKind: product.type === "skill" || product.type === "plugin" || product.type === "mcp" ? product.type : undefined,
+        packagePath: installPath,
+        componentId: input.id || id
+      }
     };
     this.state.mcpServers = [
       server,
@@ -3747,6 +4092,32 @@ function titleFromPrompt(prompt: string): string {
   return clean ? clean.slice(0, 60) : "New conversation";
 }
 
+function safeProjectSlug(value: string): string {
+  const normalized = value
+    .normalize("NFKC")
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}._-]+/gu, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[.\s-]+|[.\s-]+$/g, "")
+    .slice(0, 60)
+    .replace(/[.\s-]+$/g, "");
+  const slug = normalized || "project";
+  return /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(slug) ? `${slug}-project` : slug;
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
 function requiredString(value: string, label: string): string {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -3934,6 +4305,10 @@ function isScheduleDue(job: ScheduledJob, at: Date): boolean {
   }
   const next = job.nextRunAt || job.runAt;
   return Boolean(next && new Date(next).getTime() <= at.getTime());
+}
+
+function isLocalPackageCapabilityId(id: string): boolean {
+  return id.startsWith("local.skill.") || id.startsWith("local.plugin.") || id.startsWith("local.mcp.");
 }
 
 function nextScheduleState(job: ScheduledJob, at: Date): Pick<ScheduledJob, "enabled" | "nextRunAt"> {

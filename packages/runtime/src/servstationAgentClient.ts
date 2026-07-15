@@ -7,6 +7,7 @@ import type {
   ServstationAutopilotEvent,
   ServstationAutopilotRun,
   ServstationAutopilotStartInput,
+  ServstationAutopilotStep,
   ServstationAutopilotStatusUpdate,
   ServstationClientSnapshot,
   ServstationClientSnapshotQuery,
@@ -21,6 +22,8 @@ import type {
   ServstationMailAccount,
   ServstationMailAccountDraft,
   ServstationMailConnectionTestResult,
+  ServstationInstalledService,
+  ServstationLocalCapabilityAsset,
   ServstationMessageAttachmentContent,
   ServstationMessageDetail,
   ServstationMessageEvent,
@@ -30,6 +33,7 @@ import type {
   ServstationMessageUnreadSummary,
   ServstationScheduledJob,
   ServstationScheduledJobInput,
+  ServstationServiceDefinition,
   ServstationSendAgentMessageInput,
   ServstationSendDirectMessageInput,
   ServstationSendPromptInput,
@@ -59,12 +63,35 @@ interface ScheduledJobsResponse {
   tasks?: ServstationScheduledTask[];
 }
 
+interface ServicesResponse {
+  services?: ServstationServiceDefinition[];
+}
+
+interface InstalledServicesResponse {
+  services?: ServstationInstalledService[];
+}
+
+interface LocalCapabilitiesResponse {
+  assets?: ServstationLocalCapabilityAsset[];
+}
+
+interface CapabilitySnapshot {
+  services: ServstationServiceDefinition[];
+  installedServices: ServstationInstalledService[];
+  localCapabilities: ServstationLocalCapabilityAsset[];
+  capabilityLoadError?: string;
+}
+
 interface AutopilotRunResponse {
   run?: ServstationAutopilotRun;
 }
 
 interface AutopilotEventResponse {
   events?: ServstationAutopilotEvent[];
+}
+
+interface AutopilotStepResponse {
+  steps?: ServstationAutopilotStep[];
 }
 
 interface FlowEngineLaunchableResponse {
@@ -136,6 +163,9 @@ interface PromptAttachment {
 
 const CLIENT_ID = "supbot-server-agent-client";
 const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "canceled", "cancelled"]);
+const TERMINAL_AUTOPILOT_STATUSES = new Set(["completed", "failed", "stopped"]);
+const AUTOPILOT_STREAM_RETRY_MS = 1_500;
+const SSE_FRAME_BOUNDARY = /\r?\n\r?\n/;
 
 export class ServstationAgentClient {
   constructor(private readonly host: ServstationAgentClientHost) {}
@@ -162,25 +192,31 @@ export class ServstationAgentClient {
       conversations: [],
       jobs: [],
       scheduledJobs: [],
+      services: [],
+      installedServices: [],
+      localCapabilities: [],
       autopilotRun: null,
       autopilotEvents: [],
+      autopilotSteps: [],
       fetchedAt: this.host.nowIso()
     } satisfies ServstationClientSnapshot;
     if (!connected) {
       return baseSnapshot;
     }
     const agentInstanceId = await this.ensureAgentInstanceId(signal);
-    const [conversations, scheduledJobs, currentAutopilot] = await Promise.all([
+    const [conversations, scheduledJobs, currentAutopilot, capabilities] = await Promise.all([
       this.listConversations(agentInstanceId, signal),
       this.listScheduledJobs(agentInstanceId, signal),
-      this.fetchCurrentAutopilotRun(agentInstanceId, signal)
+      this.fetchCurrentAutopilotRun(agentInstanceId, signal),
+      this.fetchCapabilitySnapshot(agentInstanceId, signal)
     ]);
     const activeConversationId = query.conversationId && conversations.some((item) => item.id === query.conversationId)
       ? query.conversationId
       : conversations[0]?.id;
-    const [jobs, autopilotEvents] = await Promise.all([
+    const [jobs, autopilotEvents, autopilotSteps] = await Promise.all([
       activeConversationId ? this.listJobs(agentInstanceId, activeConversationId, signal) : Promise.resolve([]),
-      currentAutopilot?.id ? this.fetchAutopilotEvents(agentInstanceId, currentAutopilot.id, signal) : Promise.resolve([])
+      currentAutopilot?.id ? this.fetchAutopilotEvents(agentInstanceId, currentAutopilot.id, signal) : Promise.resolve([]),
+      currentAutopilot?.id ? this.fetchAutopilotStepsForAgent(agentInstanceId, currentAutopilot.id, signal) : Promise.resolve([])
     ]);
     return {
       ...baseSnapshot,
@@ -189,8 +225,13 @@ export class ServstationAgentClient {
       conversations,
       jobs,
       scheduledJobs,
+      services: capabilities.services,
+      installedServices: capabilities.installedServices,
+      localCapabilities: capabilities.localCapabilities,
+      capabilityLoadError: capabilities.capabilityLoadError,
       autopilotRun: currentAutopilot,
       autopilotEvents,
+      autopilotSteps,
       fetchedAt: this.host.nowIso()
     };
   }
@@ -300,15 +341,74 @@ export class ServstationAgentClient {
 
   async startAutopilotRun(input: ServstationAutopilotStartInput, signal?: AbortSignal): Promise<ServstationAutopilotRun> {
     const agentInstanceId = await this.ensureConnectedAgent(signal);
+    const conversationId = input.conversationId?.trim();
+    const goal = input.goal?.trim();
+    const prompt = input.prompt?.trim() || goal;
+    const requestId = input.requestId?.trim() || this.host.randomId("serv_autopilot");
     const response = await this.request<AutopilotRunResponse>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/autopilot-runs`, {
       method: "POST",
       signal,
-      body: JSON.stringify(input)
+      body: JSON.stringify({
+        ...(conversationId ? { conversationId } : {}),
+        ...(goal ? { goal } : {}),
+        ...(prompt ? { prompt } : {}),
+        requestId
+      })
     });
     if (!response.run) {
       throw new Error("Servstation did not return an autopilot run.");
     }
     return response.run;
+  }
+
+  async fetchAutopilotRun(runId: string, signal?: AbortSignal): Promise<ServstationAutopilotRun | null> {
+    const agentInstanceId = await this.ensureConnectedAgent(signal);
+    return this.fetchAutopilotRunForAgent(agentInstanceId, runId, signal);
+  }
+
+  async fetchAutopilotSteps(runId: string, signal?: AbortSignal): Promise<ServstationAutopilotStep[]> {
+    const agentInstanceId = await this.ensureConnectedAgent(signal);
+    return this.fetchAutopilotStepsForAgent(agentInstanceId, runId, signal);
+  }
+
+  async streamAutopilotEvents(
+    runId: string,
+    onEvent: (event: ServstationAutopilotEvent) => void,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const agentInstanceId = await this.ensureConnectedAgent(signal);
+    let lastEventId = "";
+    while (!signal?.aborted) {
+      try {
+        await this.openAutopilotEventStream(agentInstanceId, runId, lastEventId, (event) => {
+          lastEventId = event.id;
+          onEvent(event);
+        }, signal);
+      } catch (error) {
+        if (signal?.aborted) {
+          return;
+        }
+        if (isOptionalAgentFeatureMissing(error)) {
+          return;
+        }
+        await waitForAutopilotReconnect(signal);
+        continue;
+      }
+      if (signal?.aborted) {
+        return;
+      }
+      try {
+        const run = await this.fetchAutopilotRunForAgent(agentInstanceId, runId, signal);
+        if (!run || isTerminalAutopilotRun(run)) {
+          return;
+        }
+      } catch (error) {
+        if (signal?.aborted || isOptionalAgentFeatureMissing(error)) {
+          return;
+        }
+      }
+      await waitForAutopilotReconnect(signal);
+    }
   }
 
   async updateAutopilotRun(input: ServstationAutopilotStatusUpdate, signal?: AbortSignal): Promise<ServstationAutopilotRun> {
@@ -652,6 +752,61 @@ export class ServstationAgentClient {
     return Array.isArray(response.conversations) ? response.conversations : [];
   }
 
+  private async fetchCapabilitySnapshot(agentInstanceId: string, signal?: AbortSignal): Promise<CapabilitySnapshot> {
+    const [servicesResult, installedResult, localResult] = await Promise.allSettled([
+      this.listServices(signal),
+      this.listInstalledServices(agentInstanceId, signal),
+      this.listLocalCapabilities(signal)
+    ]);
+    const errors: string[] = [];
+    if (servicesResult.status === "rejected") {
+      errors.push(capabilityRequestError("/api/v1/services", servicesResult.reason));
+    }
+    if (installedResult.status === "rejected") {
+      errors.push(capabilityRequestError(`/api/v1/agent/${agentInstanceId}/installed-services`, installedResult.reason));
+    }
+    if (localResult.status === "rejected") {
+      errors.push(capabilityRequestError("/api/v1/capabilities/local", localResult.reason));
+    }
+    return {
+      services: servicesResult.status === "fulfilled" ? servicesResult.value : [],
+      installedServices: installedResult.status === "fulfilled" ? installedResult.value : [],
+      localCapabilities: localResult.status === "fulfilled" ? localResult.value : [],
+      ...(errors.length ? { capabilityLoadError: errors.join("; ") } : {})
+    };
+  }
+
+  private async listServices(signal?: AbortSignal): Promise<ServstationServiceDefinition[]> {
+    const response = await this.request<ServicesResponse | ServstationServiceDefinition[]>("/api/v1/services", {
+      method: "GET",
+      signal
+    });
+    return Array.isArray(response) ? response : Array.isArray(response.services) ? response.services : [];
+  }
+
+  private async listInstalledServices(agentInstanceId: string, signal?: AbortSignal): Promise<ServstationInstalledService[]> {
+    const response = await this.request<InstalledServicesResponse | ServstationInstalledService[]>(
+      `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/installed-services`,
+      { method: "GET", signal }
+    );
+    return Array.isArray(response) ? response : Array.isArray(response.services) ? response.services : [];
+  }
+
+  private async listLocalCapabilities(signal?: AbortSignal): Promise<ServstationLocalCapabilityAsset[]> {
+    try {
+      const response = await this.request<LocalCapabilitiesResponse | ServstationLocalCapabilityAsset[]>("/api/v1/capabilities/local", {
+        method: "GET",
+        signal
+      });
+      return Array.isArray(response) ? response : Array.isArray(response.assets) ? response.assets : [];
+    } catch (error) {
+      if ((error as Error & { status?: number }).status === 404) {
+        return [];
+      }
+      throw error;
+    }
+  }
+
   private async listJobs(agentInstanceId: string, conversationId: string, signal?: AbortSignal): Promise<ServstationSessionJob[]> {
     const response = await this.request<JobsResponse>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/jobs?conversationId=${encodeURIComponent(conversationId)}`, {
       method: "GET",
@@ -690,6 +845,92 @@ export class ServstationAgentClient {
       { method: "GET", signal }
     );
     return Array.isArray(response.events) ? response.events : [];
+  }
+
+  private async fetchAutopilotRunForAgent(agentInstanceId: string, runId: string, signal?: AbortSignal): Promise<ServstationAutopilotRun | null> {
+    try {
+      const response = await this.request<AutopilotRunResponse>(
+        `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/autopilot-runs/${encodeURIComponent(runId)}`,
+        { method: "GET", signal }
+      );
+      return response.run || null;
+    } catch (error) {
+      if (isOptionalAgentFeatureMissing(error)) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  private async fetchAutopilotStepsForAgent(agentInstanceId: string, runId: string, signal?: AbortSignal): Promise<ServstationAutopilotStep[]> {
+    try {
+      const response = await this.request<AutopilotStepResponse>(
+        `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/autopilot-runs/${encodeURIComponent(runId)}/steps?limit=50`,
+        { method: "GET", signal }
+      );
+      return Array.isArray(response.steps) ? response.steps : [];
+    } catch (error) {
+      if (isOptionalAgentFeatureMissing(error)) {
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  private async openAutopilotEventStream(
+    agentInstanceId: string,
+    runId: string,
+    lastEventId: string,
+    onEvent: (event: ServstationAutopilotEvent) => void,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const config = this.host.getConfig();
+    const identity = this.host.getIdentityContext();
+    const baseUrl = normalizeBaseUrl(config.baseUrl || identity?.servstationUrl);
+    if (!baseUrl) {
+      throw new Error("Servstation base URL is not configured.");
+    }
+    const response = await fetch(joinUrl(baseUrl, `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/autopilot-runs/${encodeURIComponent(runId)}/stream`), {
+      method: "GET",
+      headers: {
+        ...await this.headers(signal),
+        Accept: "text/event-stream",
+        ...(lastEventId ? { "Last-Event-ID": lastEventId } : {})
+      },
+      signal
+    });
+    if (!response.ok || !response.body) {
+      const text = await response.text().catch(() => "");
+      const payload = text.trim() ? safeJson(text) : {};
+      const error = new Error(errorMessage(payload) || text || response.statusText || `Servstation autopilot stream failed with HTTP ${response.status}.`) as Error & { status?: number; payload?: unknown };
+      error.status = response.status;
+      error.payload = payload;
+      throw error;
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        let boundary = SSE_FRAME_BOUNDARY.exec(buffer);
+        while (boundary) {
+          const frame = buffer.slice(0, boundary.index);
+          buffer = buffer.slice(boundary.index + boundary[0].length);
+          const event = parseAutopilotSseFrame(frame);
+          if (event) {
+            onEvent(event);
+          }
+          boundary = SSE_FRAME_BOUNDARY.exec(buffer);
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
   }
 
   private async listFlowEngineLaunchableWorkflows(signal?: AbortSignal): Promise<ServstationFlowEngineLaunchableWorkflow[]> {
@@ -931,10 +1172,40 @@ function errorMessage(value: unknown): string | undefined {
   return typeof record.error === "string" ? record.error : typeof record.message === "string" ? record.message : undefined;
 }
 
+function capabilityRequestError(path: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return `${path}: ${message}`;
+}
+
 function isOptionalAgentFeatureMissing(error: unknown): boolean {
   const status = (error as Error & { status?: number }).status;
   const message = (error as Error).message || "";
-  return status === 404 || (status === 400 && message.includes("missing agent instance id"));
+  return status === 404 || status === 405 || (status === 400 && message.includes("missing agent instance id"));
+}
+
+function isTerminalAutopilotRun(run: ServstationAutopilotRun): boolean {
+  return TERMINAL_AUTOPILOT_STATUSES.has(run.status) || TERMINAL_AUTOPILOT_STATUSES.has(run.lifecycleStatus || "");
+}
+
+async function waitForAutopilotReconnect(signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = () => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      signal?.removeEventListener("abort", finish);
+      resolve();
+    };
+    timer = setTimeout(finish, AUTOPILOT_STREAM_RETRY_MS);
+    signal?.addEventListener("abort", finish, { once: true });
+    if (signal?.aborted) {
+      finish();
+    }
+  });
 }
 
 function sanitizeMailAccount(account: ServstationMailAccount): ServstationMailAccount {
@@ -960,6 +1231,24 @@ function parseMessageSseFrame(frame: string): ServstationMessageEvent | null {
   }
   try {
     return { type: "messages.unread", data: JSON.parse(data.join("\n")) as ServstationMessageUnreadSummary };
+  } catch {
+    return null;
+  }
+}
+
+function parseAutopilotSseFrame(frame: string): ServstationAutopilotEvent | null {
+  const data: string[] = [];
+  for (const line of frame.split(/\r?\n/)) {
+    if (line.startsWith("data:")) {
+      data.push(line.slice("data:".length).trimStart());
+    }
+  }
+  if (!data.length) {
+    return null;
+  }
+  try {
+    const event = JSON.parse(data.join("\n")) as ServstationAutopilotEvent;
+    return event?.id && event?.runId ? event : null;
   } catch {
     return null;
   }

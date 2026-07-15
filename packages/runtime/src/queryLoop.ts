@@ -63,8 +63,12 @@ export async function queryLoop(input: QueryLoopInput): Promise<QueryLoopResult>
     for (let turn = 1; turn <= maxTurns; turn += 1) {
       trace.turns = turn;
       trace.updatedAt = nowIso();
-      const streamed = input.model.stream({
+      const modelRequest = {
         ...input.modelRequest,
+        tools: input.registry.toOpenAiTools()
+      };
+      const streamed = input.model.stream({
+        ...modelRequest,
         messages
       });
       let result: Awaited<ReturnType<ModelAdapter["complete"]>> | undefined;
@@ -82,7 +86,7 @@ export async function queryLoop(input: QueryLoopInput): Promise<QueryLoopResult>
         }
       }
       if (!result) {
-        result = await input.model.complete({ ...input.modelRequest, messages });
+        result = await input.model.complete({ ...modelRequest, messages });
       }
 
       if (!result.toolCalls.length) {

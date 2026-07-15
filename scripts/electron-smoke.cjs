@@ -168,22 +168,36 @@ async function main() {
   const text = String(bodyText);
   const hasHBClient = text.includes("HBClient");
   const hasDefaultChinese = text.includes("本地智能体控制台") && text.includes("对话") && text.includes("配置");
-  const toolUi = await evaluate(
+  const collapsedToolUi = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => ({
       hasToolCard: Boolean(document.querySelector(".tool-card")),
-      hasToolResult: document.body.innerText.includes("Tool completed from smoke"),
-      hasToolResultParts: Boolean(document.querySelector(".tool-result-part")),
-      hasToolResultPartTypes: document.body.innerText.includes("image/png") && document.body.innerText.includes("resource text"),
+      hasToolResultHeader: document.body.innerText.includes("工具结果") || document.body.innerText.includes("Tool result"),
+      hasToolResultToggle: Boolean(document.querySelector(".tool-result-toggle[aria-expanded='false']")),
+      isToolResultCollapsed: Boolean(document.querySelector(".tool-card.result.is-collapsed")) && !document.querySelector(".tool-result-content"),
       hasTruncatedMarker: document.body.innerText.includes("已截断") || document.body.innerText.includes("truncated")
     }))()`
+  );
+  const expandedToolUi = await evaluate(
+    page.webSocketDebuggerUrl,
+    `(async () => {
+      const toggle = document.querySelector(".tool-result-toggle");
+      toggle?.click();
+      await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+      return {
+        hasExpandedToggle: Boolean(document.querySelector(".tool-result-toggle[aria-expanded='true']")),
+        hasToolResult: document.body.innerText.includes("Tool completed from smoke"),
+        hasToolResultParts: Boolean(document.querySelector(".tool-result-part")),
+        hasToolResultPartTypes: document.body.innerText.includes("image/png") && document.body.innerText.includes("resource text")
+      };
+    })()`
   );
   console.log(JSON.stringify({
     rootChildren,
     hasHBClient,
     hasDefaultChinese,
     layoutMetrics,
-    toolUi,
+    toolUi: { collapsed: collapsedToolUi, expanded: expandedToolUi },
     url: page.url,
     bodyText: text.slice(0, 600),
     bodyHtml: String(bodyHtml).slice(0, 600),
@@ -200,7 +214,10 @@ async function main() {
   if (securityWarning) {
     throw new Error(`Electron security warning emitted: ${JSON.stringify(securityWarning)}`);
   }
-  if (!toolUi?.hasToolCard || !toolUi?.hasToolResult || !toolUi.hasToolResultParts || !toolUi.hasToolResultPartTypes || !toolUi.hasTruncatedMarker) {
+  if (!collapsedToolUi?.hasToolCard || !collapsedToolUi.hasToolResultHeader || !collapsedToolUi.hasToolResultToggle || !collapsedToolUi.isToolResultCollapsed || !collapsedToolUi.hasTruncatedMarker) {
+    throw new Error("Tool result card was not collapsed by default.");
+  }
+  if (!expandedToolUi?.hasExpandedToggle || !expandedToolUi.hasToolResult || !expandedToolUi.hasToolResultParts || !expandedToolUi.hasToolResultPartTypes) {
     throw new Error("Tool call cards did not render in the chat stream.");
   }
   const securityIpc = await evaluate(

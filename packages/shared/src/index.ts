@@ -43,6 +43,29 @@ export interface ModelConfigUpdate {
   clearApiKey?: boolean;
 }
 
+export interface ModelProviderConfig {
+  id: string;
+  providerName: string;
+  baseUrl: string;
+  model: string;
+  temperature: number;
+  maxTokens: number;
+  apiKeySaved: boolean;
+  apiKeyStorage?: "safeStorage" | "file";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ModelProviderUpdate {
+  providerName: string;
+  baseUrl: string;
+  model: string;
+  temperature: number;
+  maxTokens: number;
+  apiKey?: string;
+  clearApiKey?: boolean;
+}
+
 export interface ToolMarketConfig {
   source: ToolMarketSource;
   apiUrl: string;
@@ -152,6 +175,17 @@ export interface McpServerConfig {
   autoConnect: boolean;
   createdAt: string;
   updatedAt: string;
+  source?: McpServerSource;
+}
+
+export type LocalPackageKind = "skill" | "plugin" | "mcp";
+
+export interface McpServerSource {
+  kind: "tool-market" | "local-package";
+  packageId?: string;
+  packageKind?: LocalPackageKind;
+  packagePath?: string;
+  componentId?: string;
 }
 
 export interface McpServerStatus {
@@ -198,9 +232,72 @@ export interface McpServerInput {
   requestTimeoutMs?: number;
   enabled?: boolean;
   autoConnect?: boolean;
+  source?: McpServerSource;
 }
 
 export type McpServerUpdate = Partial<McpServerInput>;
+
+export type LocalPackageDependencyKind = "node" | "python";
+
+export interface LocalPackageDependencyPlan {
+  kind: LocalPackageDependencyKind;
+  manager: "pnpm" | "yarn" | "npm" | "pip";
+  command: string;
+  args: string[];
+  cwd: string;
+  reason: string;
+}
+
+export interface LocalPackageDependencyResult extends LocalPackageDependencyPlan {
+  exitCode: number | null;
+  stdout?: string;
+  stderr?: string;
+}
+
+export interface LocalPackageSkillComponent {
+  id: string;
+  name: string;
+  description: string;
+  path: string;
+  capabilityId: string;
+}
+
+export interface LocalPackageMcpComponent {
+  id: string;
+  name: string;
+  path: string;
+  serverId?: string;
+  command?: string;
+  args?: string[];
+  cwd?: string;
+  skipped?: boolean;
+  reason?: string;
+}
+
+export interface LocalPackageInspection {
+  kind: LocalPackageKind;
+  id: string;
+  name: string;
+  version?: string;
+  description: string;
+  sha256: string;
+  archivePath: string;
+  installPath: string;
+  rootPrefix?: string;
+  skills: LocalPackageSkillComponent[];
+  mcpServers: LocalPackageMcpComponent[];
+  dependencyPlan: LocalPackageDependencyPlan[];
+  warnings: string[];
+}
+
+export interface LocalPackageInstallResult extends LocalPackageInspection {
+  installedAt: string;
+  replaced: boolean;
+  dependencyResults: LocalPackageDependencyResult[];
+  capabilityIds: string[];
+  activatedMcpServerIds: string[];
+  skillContext?: string;
+}
 
 export interface McpLogRecord {
   id: string;
@@ -395,6 +492,85 @@ export interface ServstationA2AConfigUpdate {
   reverseClientInstanceId?: string;
 }
 
+export interface ServstationServiceSkillSpec {
+  name?: string;
+  displayName?: string;
+  description?: string;
+  skillMarkdown?: string;
+}
+
+export interface ServstationServiceMcpEntry {
+  name?: string;
+  description?: string;
+}
+
+export interface ServstationServicePluginSpec {
+  name?: string;
+  skills?: ServstationServiceSkillSpec[];
+  mcps?: ServstationServiceMcpEntry[];
+  mcpServers?: ServstationServiceMcpEntry[];
+}
+
+export interface ServstationServiceInstallSpec {
+  mcpServers?: Record<string, unknown> | ServstationServiceMcpEntry[];
+  skill?: ServstationServiceSkillSpec;
+  plugin?: ServstationServicePluginSpec;
+  url?: string;
+  openInNewTab?: boolean;
+}
+
+export interface ServstationServiceDefinition {
+  serviceId: string;
+  name: string;
+  description: string;
+  serviceType: "prompt-template" | "mcp" | "cli" | "skill" | "plugin" | "external-link" | string;
+  currentVersion?: string;
+  status: string;
+  effectivePromptTemplate?: string;
+  promptTemplateSchema?: {
+    inputs?: Array<{
+      name: string;
+      label: string;
+      type: string;
+      required: boolean;
+    }>;
+  };
+  installSpec?: ServstationServiceInstallSpec;
+}
+
+export interface ServstationInstalledService {
+  agentInstanceId: string;
+  serviceId: string;
+  serviceVersion: string;
+  status: string;
+  syncedAt: string;
+  lastError?: string;
+}
+
+export type ServstationLocalCapabilityAssetKind = "catalog_override" | "user_created" | "agent_generated";
+export type ServstationLocalCapabilityType = "skill" | "mcp" | "prompt-template";
+
+export interface ServstationLocalCapabilityAsset {
+  assetId: string;
+  tenantId: string;
+  organizationId: string;
+  departmentId: string;
+  userId: string;
+  assetKind: ServstationLocalCapabilityAssetKind | string;
+  capabilityType: ServstationLocalCapabilityType | string;
+  sourceServiceId?: string;
+  baseServiceVersion?: string;
+  name: string;
+  description?: string;
+  skillMarkdown?: string;
+  mcpServers?: Record<string, unknown>;
+  effectivePromptTemplate?: string;
+  enabled: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ServstationConversation {
   id: string;
   agentInstanceId: string;
@@ -455,6 +631,55 @@ export interface ServstationAutopilotEvaluation {
   evaluatedAt?: string;
 }
 
+export interface ServstationAutopilotEvidence {
+  id: string;
+  type: string;
+  status: "met" | "unmet" | "unknown";
+  label: string;
+  source: string;
+  reference?: string;
+  details?: unknown;
+}
+
+export interface ServstationAutopilotSuccessCriterion {
+  id: string;
+  description: string;
+  kind: string;
+  required: boolean;
+}
+
+export type ServstationAutopilotDecision =
+  | { action: "complete"; reason: string; evidence: ServstationAutopilotEvidence[] }
+  | { action: "continue"; reason: string; nextPrompt: string }
+  | { action: "retry"; reason: string; errorClass: string }
+  | { action: "ask_user"; reason: string; question: string }
+  | { action: "fail"; reason: string };
+
+export interface ServstationAutopilotStep {
+  id: string;
+  runId: string;
+  parentStepId?: string;
+  sequence: number;
+  kind: string;
+  status: string;
+  agentInstanceId: string;
+  jobId?: string;
+  attempt: number;
+  input?: unknown;
+  decision?: ServstationAutopilotDecision | Record<string, never>;
+  evidence?: ServstationAutopilotEvidence[];
+  errorClass?: string;
+  progressFingerprint?: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ServstationAutopilotStepListResponse {
+  steps: ServstationAutopilotStep[];
+}
+
 export interface ServstationAutopilotRun {
   id: string;
   agentInstanceId: string;
@@ -470,6 +695,15 @@ export interface ServstationAutopilotRun {
   monitoredAgents?: Array<Record<string, unknown>>;
   monitoredJobs?: Array<Record<string, unknown>>;
   lastEvaluation?: ServstationAutopilotEvaluation;
+  lifecycleStatus?: string;
+  phase?: string;
+  stepCount?: number;
+  maxSteps?: number;
+  deadlineAt?: string | null;
+  successCriteria?: ServstationAutopilotSuccessCriterion[];
+  latestEvidence?: ServstationAutopilotEvidence[];
+  lastDecision?: ServstationAutopilotDecision;
+  noProgressCount?: number;
   failureMessage?: string;
   lastCheckedAt?: string | null;
   completedAt?: string | null;
@@ -695,8 +929,13 @@ export interface ServstationClientSnapshot {
   conversations: ServstationConversation[];
   jobs: ServstationSessionJob[];
   scheduledJobs: ServstationScheduledJob[];
+  services: ServstationServiceDefinition[];
+  installedServices: ServstationInstalledService[];
+  localCapabilities: ServstationLocalCapabilityAsset[];
+  capabilityLoadError?: string;
   autopilotRun?: ServstationAutopilotRun | null;
   autopilotEvents: ServstationAutopilotEvent[];
+  autopilotSteps: ServstationAutopilotStep[];
   fetchedAt: string;
 }
 
@@ -1244,6 +1483,7 @@ export interface TranscriptLoadResult {
 
 export interface Conversation {
   id: string;
+  projectId?: string;
   title: string;
   createdAt: string;
   updatedAt: string;
@@ -1254,6 +1494,7 @@ export interface Conversation {
 export interface AgentJob {
   id: string;
   conversationId: string;
+  projectId?: string;
   prompt: string;
   status: JobStatus;
   workspaceMode?: WorkspaceMode;
@@ -1270,6 +1511,7 @@ export interface AgentJob {
 
 export interface ScheduledJob {
   id: string;
+  projectId?: string;
   title: string;
   prompt: string;
   scheduleKind: ScheduleKind;
@@ -1299,6 +1541,10 @@ export interface Project {
 export interface ProjectCreateInput {
   rootPath: string;
   name?: string;
+}
+
+export interface ProjectCreateFromNameInput {
+  name: string;
 }
 
 export interface ProjectUpdateInput {
@@ -1444,6 +1690,8 @@ export interface RuntimeSnapshot {
   agentName: string;
   identityContext?: IdentityContext;
   modelConfig: ModelConfig;
+  modelProviders: ModelProviderConfig[];
+  activeModelProviderId?: string;
   toolMarketConfig: ToolMarketConfig;
   personality: PersonalityConfig;
   capabilities: CapabilityDefinition[];
@@ -1527,6 +1775,7 @@ export type SupbotEvent =
 
 export interface SendPromptInput {
   conversationId?: string;
+  projectId?: string;
   prompt: string;
   attachments?: Attachment[];
   workspaceMode?: WorkspaceMode;
@@ -1539,12 +1788,18 @@ export interface SendPromptResult {
   job: AgentJob;
 }
 
+export interface CreateConversationInput {
+  title?: string;
+  projectId?: string;
+}
+
 export interface ModelTestResult {
   ok: boolean;
   message: string;
 }
 
 export interface ScheduledJobInput {
+  projectId?: string;
   title: string;
   prompt: string;
   scheduleKind: ScheduleKind;
@@ -1560,6 +1815,18 @@ export const defaultModelConfig: ModelConfig = {
   temperature: 0.2,
   maxTokens: 4096,
   apiKeySaved: false
+};
+
+export const defaultModelProviderConfig: ModelProviderConfig = {
+  id: "default",
+  providerName: defaultModelConfig.providerName,
+  baseUrl: defaultModelConfig.baseUrl,
+  model: defaultModelConfig.model,
+  temperature: defaultModelConfig.temperature,
+  maxTokens: defaultModelConfig.maxTokens,
+  apiKeySaved: false,
+  createdAt: "1970-01-01T00:00:00.000Z",
+  updatedAt: "1970-01-01T00:00:00.000Z"
 };
 
 export const defaultToolMarketConfig: ToolMarketConfig = {

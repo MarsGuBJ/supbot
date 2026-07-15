@@ -1,3 +1,4 @@
+import { isAbsolute, resolve } from "node:path";
 import type { GeneratedFile, PendingToolPermission, PermissionMode, PermissionRule, ToolCallRecord } from "@supbot/shared";
 import { nowIso } from "@supbot/shared";
 import type { AdapterToolCall } from "./modelAdapter";
@@ -80,7 +81,7 @@ export class ToolExecutor {
       return { record, toolResultText: `Error: ${projectBoundaryError}`, generatedFiles };
     }
     let executionContext = input.context;
-    if (tool.risk === "dangerous" && !input.context.projectRoot) {
+    if (tool.risk === "dangerous" && (tool.usesWorkspace ?? true) && !input.context.projectRoot) {
       try {
         const isolatedHost = await input.context.ensureIsolatedWorkspace?.(tool.name);
         if (isolatedHost) {
@@ -188,10 +189,25 @@ function validateToolInput(input: unknown, schema: { type: string; properties: R
 function validateProjectBoundary(tool: ToolDefinition, input: unknown, context: ToolExecutionContext): string | undefined {
   const projectRoot = context.projectRoot || context.host.projectRoot;
   const allowedWriteRoots = context.allowedWriteRoots || context.host.allowedWriteRoots || [];
-  if (!projectRoot || !allowedWriteRoots.length || tool.risk !== "dangerous") {
+  if (!projectRoot) {
     return undefined;
   }
   try {
+    if (tool.name === "ReadFile") {
+      const parsed = objectInput(input);
+      const target = typeof parsed.path === "string" ? parsed.path : "";
+      if (!target) {
+        return "Project ReadFile target path is required.";
+      }
+      const resolvedTarget = isAbsolute(target) ? resolve(target) : resolve(projectRoot, target);
+      if (!pathIsInside(projectRoot, resolvedTarget)) {
+        return `Project ReadFile target must stay inside ${projectRoot}.`;
+      }
+      return undefined;
+    }
+    if (!allowedWriteRoots.length || tool.risk !== "dangerous") {
+      return undefined;
+    }
     if (tool.name === "WriteFile") {
       const parsed = objectInput(input);
       const target = typeof parsed.path === "string" ? parsed.path : "";
@@ -227,6 +243,9 @@ function validateProjectShellCommand(command: string, projectRoot: string, allow
   }
   const writes = />|Out-File|Set-Content|Add-Content|New-Item|Copy-Item|Move-Item|Remove-Item|\brm\b|\bdel\b|Invoke-WebRequest[\s\S]*-OutFile|curl[\s\S]*\s-o\s/i.test(command);
   if (!writes) {
+    return undefined;
+  }
+  if (allowedWriteRoots.some((root) => pathIsInside(projectRoot, root) && pathIsInside(root, projectRoot))) {
     return undefined;
   }
   const normalized = command.replace(/\\/g, "/").toLowerCase();

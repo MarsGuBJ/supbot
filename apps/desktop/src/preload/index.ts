@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import type {
   AutopilotStartDataRunInput,
   CapabilityUpdateInput,
+  CreateConversationInput,
   IdentityContext,
   MemoryAddInput,
   MemoryImportInput,
@@ -13,9 +14,11 @@ import type {
   McpServerInput,
   McpServerUpdate,
   ModelConfigUpdate,
+  ModelProviderUpdate,
   PermissionMode,
   PermissionRule,
   PersonalityConfig,
+  ProjectCreateFromNameInput,
   ProjectCreateInput,
   ProjectUpdateInput,
   RemoteBridgeConfig,
@@ -23,6 +26,7 @@ import type {
   SendPromptInput,
   ServstationA2AConfigUpdate,
   ServstationA2AOidcLoginInput,
+  ServstationAutopilotEvent,
   ServstationAutopilotStartInput,
   ServstationAutopilotStatusUpdate,
   ServstationClientSnapshotQuery,
@@ -53,7 +57,7 @@ const api = {
     ipcRenderer.on("hbclient:updateState", wrapped);
     return () => ipcRenderer.off("hbclient:updateState", wrapped);
   },
-  createConversation: (title?: string) => ipcRenderer.invoke("conversation:create", title),
+  createConversation: (input?: string | CreateConversationInput) => ipcRenderer.invoke("conversation:create", input),
   deleteConversation: (id: string) => ipcRenderer.invoke("conversation:delete", id),
   sendPrompt: (input: SendPromptInput) => ipcRenderer.invoke("prompt:send", input),
   readClipboardText: () => ipcRenderer.invoke("clipboard:readText"),
@@ -66,6 +70,7 @@ const api = {
   compactConversation: (id: string) => ipcRenderer.invoke("conversation:compact", id),
   loadTranscript: (id: string) => ipcRenderer.invoke("conversation:loadTranscript", id),
   createProjectFromFolder: (input: ProjectCreateInput) => ipcRenderer.invoke("project:createFromFolder", input),
+  createProjectFromName: (input: ProjectCreateFromNameInput) => ipcRenderer.invoke("project:createFromName", input),
   listProjects: () => ipcRenderer.invoke("project:list"),
   pickProjectFolder: () => ipcRenderer.invoke("project:pickFolder"),
   openProject: (id: string) => ipcRenderer.invoke("project:open", id),
@@ -104,6 +109,17 @@ const api = {
   deleteServstationScheduledJob: (id: string) => ipcRenderer.invoke("servstationClient:deleteScheduledJob", id),
   startServstationAutopilotRun: (input: ServstationAutopilotStartInput) => ipcRenderer.invoke("servstationClient:startAutopilotRun", input),
   updateServstationAutopilotRun: (input: ServstationAutopilotStatusUpdate) => ipcRenderer.invoke("servstationClient:updateAutopilotRun", input),
+  onServstationAutopilotEvent: (runId: string, listener: (event: ServstationAutopilotEvent) => void) => {
+    const subscriptionId = `autopilot_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const channel = `servstationClient:autopilotEvent:${subscriptionId}`;
+    const wrapped = (_event: unknown, payload: ServstationAutopilotEvent) => listener(payload);
+    ipcRenderer.on(channel, wrapped);
+    ipcRenderer.invoke("servstationClient:subscribeAutopilotEvents", subscriptionId, runId).catch(() => undefined);
+    return () => {
+      ipcRenderer.off(channel, wrapped);
+      ipcRenderer.invoke("servstationClient:unsubscribeAutopilotEvents", subscriptionId).catch(() => undefined);
+    };
+  },
   getServstationFlowEngineSnapshot: () => ipcRenderer.invoke("servstationClient:getFlowEngineSnapshot"),
   launchServstationFlowEngineWorkflow: (input: ServstationFlowEngineLaunchInput) => ipcRenderer.invoke("servstationClient:launchFlowEngineWorkflow", input),
   getServstationFlowEngineExecution: (id: string) => ipcRenderer.invoke("servstationClient:getFlowEngineExecution", id),
@@ -154,6 +170,11 @@ const api = {
   addMemoryRecallFeedback: (input: MemoryRecallFeedbackInput) => ipcRenderer.invoke("memory:addRecallFeedback", input),
   updateModelConfig: (input: ModelConfigUpdate) => ipcRenderer.invoke("model:update", input),
   testModelConfig: (input?: Partial<ModelConfigUpdate>) => ipcRenderer.invoke("model:test", input),
+  createModelProvider: (input: ModelProviderUpdate) => ipcRenderer.invoke("modelProvider:create", input),
+  updateModelProvider: (id: string, input: ModelProviderUpdate) => ipcRenderer.invoke("modelProvider:update", id, input),
+  deleteModelProvider: (id: string) => ipcRenderer.invoke("modelProvider:delete", id),
+  setActiveModelProvider: (id: string) => ipcRenderer.invoke("modelProvider:setActive", id),
+  testModelProvider: (id?: string, input?: Partial<ModelProviderUpdate>) => ipcRenderer.invoke("modelProvider:test", id, input),
   updateToolMarketConfig: (input: ToolMarketConfigUpdate) => ipcRenderer.invoke("market-config:update", input),
   updatePersonality: (input: PersonalityConfig) => ipcRenderer.invoke("personality:update", input),
   updateCapability: (id: string, input: CapabilityUpdateInput) => ipcRenderer.invoke("capability:update", id, input),

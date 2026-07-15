@@ -11,7 +11,7 @@ import {
   type CompactBoundary,
   type Conversation,
   type DataArtifact,
-  defaultModelConfig,
+  defaultModelProviderConfig,
   defaultPersonality,
   defaultToolMarketConfig,
   type ChatMessage,
@@ -19,6 +19,7 @@ import {
   type McpServerConfig,
   type MemorySnapshot,
   type ModelConfig,
+  type ModelProviderConfig,
   type PendingToolPermission,
   type PermissionMode,
   type PermissionRule,
@@ -37,11 +38,15 @@ import {
   type ToolMarketConfig
 } from "@supbot/shared";
 
+export interface ModelProviderState extends ModelProviderConfig {
+  apiKeySecret?: string;
+}
+
 export interface RuntimeState {
   agentName: string;
   identityContext?: IdentityContext;
-  modelConfig: ModelConfig;
-  modelSecret?: string;
+  modelProviders: ModelProviderState[];
+  activeModelProviderId?: string;
   toolMarketConfig: ToolMarketConfig;
   toolMarketSecret?: string;
   toolMarketPasswordSecret?: string;
@@ -177,10 +182,17 @@ const defaultBotstationA2A = {
 };
 
 export function createInitialState(): RuntimeState {
+  const createdAt = new Date().toISOString();
+  const defaultProvider: ModelProviderState = {
+    ...defaultModelProviderConfig,
+    createdAt,
+    updatedAt: createdAt
+  };
   return {
     agentName: "HBClient Local Agent",
     identityContext: undefined,
-    modelConfig: { ...defaultModelConfig },
+    modelProviders: [defaultProvider],
+    activeModelProviderId: defaultProvider.id,
     toolMarketConfig: { ...defaultToolMarketConfig },
     personality: { ...defaultPersonality, traits: [...defaultPersonality.traits] },
     capabilities: defaultCapabilities.map((item) => ({ ...item })),
@@ -282,17 +294,20 @@ export class JsonFileStorage implements StorageAdapter {
   }
 }
 
-function normalizeState(input: Partial<RuntimeState>): RuntimeState {
+type LegacyRuntimeStateInput = Partial<RuntimeState> & {
+  modelConfig?: Partial<ModelConfig>;
+  modelSecret?: string;
+};
+
+function normalizeState(input: LegacyRuntimeStateInput): RuntimeState {
   const initial = createInitialState();
+  const modelProviders = normalizeModelProviders(input, initial.modelProviders);
+  const activeModelProviderId = normalizeActiveModelProviderId(input.activeModelProviderId, modelProviders);
   return {
     agentName: stringOr(input.agentName, initial.agentName),
     identityContext: normalizeIdentityContext(input.identityContext),
-    modelConfig: {
-      ...initial.modelConfig,
-      ...(input.modelConfig || {}),
-      apiKeySaved: Boolean(input.modelSecret)
-    },
-    modelSecret: typeof input.modelSecret === "string" ? input.modelSecret : undefined,
+    modelProviders,
+    activeModelProviderId,
     toolMarketConfig: normalizeToolMarketConfig(input, initial.toolMarketConfig),
     toolMarketSecret: typeof input.toolMarketSecret === "string" ? input.toolMarketSecret : undefined,
     toolMarketPasswordSecret: typeof input.toolMarketPasswordSecret === "string" ? input.toolMarketPasswordSecret : undefined,
@@ -305,8 +320,8 @@ function normalizeState(input: Partial<RuntimeState>): RuntimeState {
     deletedCapabilityIds: normalizeDeletedCapabilityIds(input.deletedCapabilityIds),
     subagents: Array.isArray(input.subagents) ? input.subagents : initial.subagents,
     conversations: Array.isArray(input.conversations) ? input.conversations.map(normalizeConversation) : [],
-    jobs: Array.isArray(input.jobs) ? input.jobs : [],
-    scheduledJobs: Array.isArray(input.scheduledJobs) ? input.scheduledJobs : [],
+    jobs: Array.isArray(input.jobs) ? input.jobs.map(normalizeAgentJob) : [],
+    scheduledJobs: Array.isArray(input.scheduledJobs) ? input.scheduledJobs.map(normalizeScheduledJob) : [],
     projects: Array.isArray(input.projects) ? input.projects.map(normalizeProject).filter(Boolean) as Project[] : [],
     autopilotRuns: Array.isArray(input.autopilotRuns) ? input.autopilotRuns.map(normalizeAutopilotRun).filter(Boolean) as AutopilotRun[] : [],
     autopilotTasks: Array.isArray(input.autopilotTasks) ? input.autopilotTasks.map(normalizeAutopilotTask).filter(Boolean) as AutopilotTask[] : [],
@@ -337,6 +352,97 @@ function normalizeState(input: Partial<RuntimeState>): RuntimeState {
     servstationA2AOidcSecret: typeof input.servstationA2AOidcSecret === "string" ? input.servstationA2AOidcSecret : undefined,
     servstationA2AStaffAgentPasswordSecret: typeof input.servstationA2AStaffAgentPasswordSecret === "string" ? input.servstationA2AStaffAgentPasswordSecret : undefined
   };
+}
+
+function normalizeModelProviders(input: LegacyRuntimeStateInput, initial: ModelProviderState[]): ModelProviderState[] {
+  const fallback = initial[0] || { ...defaultModelProviderConfig };
+  const seen = new Set<string>();
+  const providers = Array.isArray(input.modelProviders)
+    ? input.modelProviders
+        .map((provider, index) => normalizeModelProvider(provider, fallback, index, seen))
+        .filter(Boolean) as ModelProviderState[]
+    : [];
+  if (providers.length > 0) {
+    return providers;
+  }
+
+  const legacy = input.modelConfig || {};
+  const secret = typeof input.modelSecret === "string" ? input.modelSecret : undefined;
+  const timestamp = new Date().toISOString();
+  const apiKeyStorage = normalizeApiKeyStorage(legacy.apiKeyStorage);
+  return [
+    {
+      ...fallback,
+      id: fallback.id,
+      providerName: stringOr(legacy.providerName, fallback.providerName),
+      baseUrl: stringOr(legacy.baseUrl, fallback.baseUrl),
+      model: stringOr(legacy.model, fallback.model),
+      temperature: finiteNumberOr(legacy.temperature, fallback.temperature),
+      maxTokens: normalizePositiveNumber(legacy.maxTokens, fallback.maxTokens),
+      apiKeySecret: secret,
+      apiKeySaved: Boolean(secret),
+      apiKeyStorage: secret ? apiKeyStorage : undefined,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }
+  ];
+}
+
+function normalizeModelProvider(value: unknown, fallback: ModelProviderState, index: number, seen: Set<string>): ModelProviderState | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const input = value as Partial<ModelProviderState>;
+  const now = new Date().toISOString();
+  const rawId = typeof input.id === "string" && input.id.trim()
+    ? input.id.trim()
+    : index === 0
+      ? fallback.id
+      : `model-provider-${index + 1}`;
+  const id = uniqueModelProviderId(rawId, seen);
+  const apiKeySecret = typeof input.apiKeySecret === "string" ? input.apiKeySecret : undefined;
+  return {
+    ...fallback,
+    id,
+    providerName: stringOr(input.providerName, fallback.providerName),
+    baseUrl: stringOr(input.baseUrl, fallback.baseUrl),
+    model: stringOr(input.model, fallback.model),
+    temperature: finiteNumberOr(input.temperature, fallback.temperature),
+    maxTokens: normalizePositiveNumber(input.maxTokens, fallback.maxTokens),
+    apiKeySecret,
+    apiKeySaved: Boolean(apiKeySecret),
+    apiKeyStorage: apiKeySecret ? normalizeApiKeyStorage(input.apiKeyStorage) : undefined,
+    createdAt: typeof input.createdAt === "string" && input.createdAt ? input.createdAt : now,
+    updatedAt: typeof input.updatedAt === "string" && input.updatedAt ? input.updatedAt : now
+  };
+}
+
+function normalizeActiveModelProviderId(value: unknown, providers: ModelProviderState[]): string | undefined {
+  const preferred = typeof value === "string" && value.trim() ? value.trim() : undefined;
+  if (preferred && providers.some((provider) => provider.id === preferred)) {
+    return preferred;
+  }
+  return providers[0]?.id;
+}
+
+function uniqueModelProviderId(rawId: string, seen: Set<string>): string {
+  const base = rawId || "model-provider";
+  let candidate = base;
+  let index = 2;
+  while (seen.has(candidate)) {
+    candidate = `${base}-${index}`;
+    index += 1;
+  }
+  seen.add(candidate);
+  return candidate;
+}
+
+function normalizeApiKeyStorage(value: unknown): ModelProviderConfig["apiKeyStorage"] {
+  return value === "safeStorage" || value === "file" ? value : undefined;
+}
+
+function finiteNumberOr(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
 function normalizeMemory(value: unknown): MemorySnapshot {
@@ -382,7 +488,22 @@ function normalizeToolMarketConfig(input: Partial<RuntimeState>, initial: ToolMa
 function normalizeConversation(conversation: Conversation): Conversation {
   return {
     ...conversation,
+    projectId: typeof conversation.projectId === "string" && conversation.projectId ? conversation.projectId : undefined,
     messages: Array.isArray(conversation.messages) ? conversation.messages.map(normalizeMessage) : []
+  };
+}
+
+function normalizeAgentJob(job: AgentJob): AgentJob {
+  return {
+    ...job,
+    projectId: typeof job.projectId === "string" && job.projectId ? job.projectId : undefined
+  };
+}
+
+function normalizeScheduledJob(job: ScheduledJob): ScheduledJob {
+  return {
+    ...job,
+    projectId: typeof job.projectId === "string" && job.projectId ? job.projectId : undefined
   };
 }
 
@@ -587,7 +708,24 @@ function normalizeMcpServer(server: McpServerConfig): McpServerConfig | undefine
     enabled: server.enabled !== false,
     autoConnect: Boolean(server.autoConnect),
     createdAt: typeof server.createdAt === "string" ? server.createdAt : now,
-    updatedAt: typeof server.updatedAt === "string" ? server.updatedAt : now
+    updatedAt: typeof server.updatedAt === "string" ? server.updatedAt : now,
+    source: normalizeMcpServerSource(server.source)
+  };
+}
+
+function normalizeMcpServerSource(source: McpServerConfig["source"]): McpServerConfig["source"] {
+  if (!source || typeof source !== "object") {
+    return undefined;
+  }
+  if (source.kind !== "tool-market" && source.kind !== "local-package") {
+    return undefined;
+  }
+  return {
+    kind: source.kind,
+    packageId: typeof source.packageId === "string" ? source.packageId : undefined,
+    packageKind: source.packageKind === "skill" || source.packageKind === "plugin" || source.packageKind === "mcp" ? source.packageKind : undefined,
+    packagePath: typeof source.packagePath === "string" ? source.packagePath : undefined,
+    componentId: typeof source.componentId === "string" ? source.componentId : undefined
   };
 }
 

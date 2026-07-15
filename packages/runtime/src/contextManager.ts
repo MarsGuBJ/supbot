@@ -1,6 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import type { Dirent } from "node:fs";
-import { join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import type { CapabilityDefinition, ChatMessage, CompactBoundary, PersonalityConfig, SubagentConfig } from "@supbot/shared";
 import type { AdapterMessage } from "./modelAdapter";
 import { truncate } from "./localTools";
@@ -164,20 +164,17 @@ async function readInstalledSkillContext(input: SkillContextInput): Promise<stri
   try {
     entries = await readdir(skillsRoot, { withFileTypes: true });
   } catch {
-    return undefined;
+    entries = [];
   }
   const enabledIds = new Set(enabledSkills.map((capability) => capability.id));
   const candidates: InstalledSkill[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) {
-      continue;
-    }
-    const rootPath = join(skillsRoot, entry.name);
-    const manifest = await readSkillManifest(rootPath);
-    const manifestCapabilityId = manifest.capabilityId;
+  const skillEntries = await collectInstalledSkillEntries(input.dataDir, entries);
+  for (const entry of skillEntries) {
+    const rootPath = entry.rootPath;
+    const manifestCapabilityId = entry.capabilityId;
     const capability = manifestCapabilityId
       ? enabledSkills.find((item) => item.id === manifestCapabilityId)
-      : enabledSkills.find((item) => skillCapabilityMatchesDir(item, entry.name));
+      : enabledSkills.find((item) => skillCapabilityMatchesDir(item, entry.dirName));
     if ((manifestCapabilityId && !enabledIds.has(manifestCapabilityId)) || !capability) {
       continue;
     }
@@ -187,10 +184,10 @@ async function readInstalledSkillContext(input: SkillContextInput): Promise<stri
     }
     const metadata = parseSkillMetadata(content);
     const skill: InstalledSkill = {
-      dirName: entry.name,
+      dirName: entry.dirName,
       rootPath,
       capability,
-      name: metadata.name || capability.name || entry.name,
+      name: metadata.name || capability.name || entry.dirName,
       description: metadata.description || capability.description || "",
       content,
       score: 0
@@ -216,6 +213,44 @@ async function readInstalledSkillContext(input: SkillContextInput): Promise<stri
   return truncate(selected.map((skill) => formatSkillContext(skill, perSkillChars)).join("\n\n"), maxChars);
 }
 
+interface InstalledSkillEntry {
+  dirName: string;
+  rootPath: string;
+  capabilityId?: string;
+}
+
+async function collectInstalledSkillEntries(dataDir: string, skillRootEntries: Dirent[]): Promise<InstalledSkillEntry[]> {
+  const entries: InstalledSkillEntry[] = [];
+  const skillsRoot = join(dataDir, "skills");
+  for (const entry of skillRootEntries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const rootPath = join(skillsRoot, entry.name);
+    const manifest = await readSkillManifest(rootPath);
+    entries.push({ dirName: entry.name, rootPath, capabilityId: manifest.capabilityId });
+  }
+  const pluginRoot = join(dataDir, "plugins");
+  const pluginEntries = await readdir(pluginRoot, { withFileTypes: true }).catch(() => []);
+  for (const pluginEntry of pluginEntries) {
+    if (!pluginEntry.isDirectory()) {
+      continue;
+    }
+    const receipt = await readPackageReceipt(join(pluginRoot, pluginEntry.name));
+    for (const skill of receipt?.skills || []) {
+      if (!skill.path || !skill.capabilityId) {
+        continue;
+      }
+      entries.push({
+        dirName: basename(skill.path),
+        rootPath: resolve(skill.path),
+        capabilityId: skill.capabilityId
+      });
+    }
+  }
+  return entries;
+}
+
 async function readSkillFile(rootPath: string): Promise<string | undefined> {
   try {
     return await readFile(join(rootPath, "SKILL.md"), "utf8");
@@ -232,7 +267,20 @@ async function readSkillManifest(rootPath: string): Promise<{ capabilityId?: str
     const capabilityId = parsed.deployment?.capability?.id;
     return typeof capabilityId === "string" && capabilityId.trim() ? { capabilityId: capabilityId.trim() } : {};
   } catch {
-    return {};
+    const receipt = await readPackageReceipt(rootPath);
+    const capabilityId = receipt?.skills?.length === 1 ? receipt.skills[0]?.capabilityId : undefined;
+    return typeof capabilityId === "string" && capabilityId.trim() ? { capabilityId: capabilityId.trim() } : {};
+  }
+}
+
+async function readPackageReceipt(rootPath: string): Promise<{ skills?: Array<{ path?: string; capabilityId?: string }> } | undefined> {
+  try {
+    const parsed = JSON.parse(await readFile(join(rootPath, "supbot-local-package.json"), "utf8")) as {
+      skills?: Array<{ path?: string; capabilityId?: string }>;
+    };
+    return parsed && Array.isArray(parsed.skills) ? parsed : undefined;
+  } catch {
+    return undefined;
   }
 }
 

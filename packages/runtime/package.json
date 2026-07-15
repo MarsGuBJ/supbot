@@ -9,7 +9,8 @@
     "test": "npm run build -w @supbot/shared && vitest run"
   },
   "dependencies": {
-    "@supbot/shared": "file:../shared"
+    "@supbot/shared": "file:../shared",
+    "unzipper": "^0.12.3"
   },
   "devDependencies": {
     "vitest": "^4.1.9"

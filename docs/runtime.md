@@ -16,6 +16,24 @@ Tools are declared in `ToolRegistry` with `name`, `description`, JSON schema par
 
 Slash commands `/read`, `/write`, and `/shell` still exist, but they route through the same `ToolExecutor` and registry.
 
+## Conversation ZIP Package Installation
+
+Uploaded ZIP attachments can be installed by the agent through two normal tools: `InspectPackageArchive` and `InstallPackageArchive`. The install tool is dangerous, so it uses the existing permission card. No extra desktop IPC or package dialog is involved.
+
+`InspectPackageArchive` only accepts ZIP files already attached to the current conversation. It validates the archive before extraction: no absolute paths, parent-directory paths, symlinks, encrypted entries, duplicate paths, archives over 200 MiB, more than 20,000 entries, or more than 1 GiB of extracted data. It supports one wrapping directory around the real package root.
+
+Package formats:
+
+- Skill: root `SKILL.md` with front matter containing non-empty `name` and `description`.
+- Plugin: `.codex-plugin/plugin.json`, optional `skills` path, default `skills/`, and `mcpServers` either as an object or as a path such as `./.mcp.json`.
+- MCP: `.mcp.json` or legacy `supbot-mcp.json` containing `mcpServer` or `mcpServers`.
+
+Install targets are fixed under the runtime data directory: `skills/<id>`, `plugins/<id>`, and `mcp/<id>`. Successful installs write `supbot-local-package.json` with the package hash, version, components, dependency plan, dependency results, install time, and activated capability ids. Reinstalling the same id swaps directories through a staging path and keeps the old version until dependency installation and MCP activation succeed; failures roll back.
+
+Dependency installation happens only after `InstallPackageArchive` is approved. Node packages choose `pnpm install --frozen-lockfile`, `yarn install --frozen-lockfile`, `npm ci`, or `npm install` based on lockfiles and `package.json`. Python packages create `.venv`, then install `requirements.txt` or the package root. Commands run without a shell, allow lifecycle/build scripts, and time out after 10 minutes each.
+
+Installed skills become persistent capabilities and are available to future context builds. Plugin skills are scanned from the plugin package root and can reference their own files. Package-managed MCP servers are local stdio only; relative paths and supported root placeholders are resolved to the install directory, Python MCP commands prefer the package `.venv`, and HTTP/SSE configs are skipped with warnings. The model tool definition list is regenerated on every model turn, so newly connected MCP tools can appear in the same task's next turn.
+
 ## Local MCP
 
 Runtime 4.x includes a local stdio MCP adapter. `McpManager` stores configured servers in runtime state, starts enabled local commands on demand, performs MCP initialize plus `tools/list`, and maps discovered MCP tools into `ToolRegistry`.

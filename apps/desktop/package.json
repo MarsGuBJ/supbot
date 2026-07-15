@@ -17,8 +17,8 @@
   "scripts": {
     "build": "npm run build:renderer && npm run build:main",
     "build:renderer": "vite build",
-    "build:main": "esbuild src/main/index.ts src/preload/index.ts --bundle --platform=node --target=node22 --format=cjs --outdir=dist --external:electron",
-    "test": "vitest run src/main/updateManager.test.ts",
+    "build:main": "esbuild src/main/index.ts src/preload/index.ts --bundle --platform=node --target=node22 --format=cjs --outdir=dist --external:electron --external:@aws-sdk/client-s3",
+    "test": "vitest run src/main/updateManager.test.ts src/renderer/servstationAutopilot.test.ts src/renderer/servstationCapabilities.test.ts",
     "dev": "npm run build:main && concurrently -k \"vite --host 127.0.0.1\" \"cross-env HBCLIENT_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "start": "electron .",
     "dist:win": "electron-builder --win nsis",

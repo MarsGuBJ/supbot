@@ -656,7 +656,8 @@ function normalizeServerInput(input: McpServerInput, id: string, now: string, cr
     enabled: input.enabled !== false,
     autoConnect: Boolean(input.autoConnect),
     createdAt,
-    updatedAt: now
+    updatedAt: now,
+    source: cloneServerSource(input.source)
   };
 }
 
@@ -664,8 +665,13 @@ function cloneServer(server: McpServerConfig): McpServerConfig {
   return {
     ...server,
     args: [...server.args],
-    env: server.env ? { ...server.env } : undefined
+    env: server.env ? { ...server.env } : undefined,
+    source: cloneServerSource(server.source)
   };
+}
+
+function cloneServerSource(source: McpServerConfig["source"]): McpServerConfig["source"] {
+  return source ? { ...source } : undefined;
 }
 
 function parseTools(result: unknown, server: McpServerConfig): McpToolInfo[] {

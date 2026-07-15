@@ -7,6 +7,7 @@ import type {
   Attachment,
   CapabilityUpdateInput,
   Conversation,
+  CreateConversationInput,
   GeneratedFile,
   HBClientUpdateState,
   IdentityContext,
@@ -36,11 +37,14 @@ import type {
   McpToolInfo,
   ModelConfig,
   ModelConfigUpdate,
+  ModelProviderConfig,
+  ModelProviderUpdate,
   ModelTestResult,
   PermissionMode,
   PermissionRule,
   PersonalityConfig,
   Project,
+  ProjectCreateFromNameInput,
   ProjectCreateInput,
   ProjectUpdateInput,
   RemoteBridgeAuditRecord,
@@ -55,6 +59,7 @@ import type {
   ServstationA2AConfigUpdate,
   ServstationA2AOidcLoginInput,
   ServstationA2AOidcLoginResult,
+  ServstationAutopilotEvent,
   ServstationAutopilotRun,
   ServstationAutopilotStartInput,
   ServstationAutopilotStatusUpdate,
@@ -101,7 +106,7 @@ declare global {
       downloadHBClientUpdate(): Promise<HBClientUpdateState>;
       installHBClientUpdate(): Promise<HBClientUpdateState>;
       onHBClientUpdate(listener: (state: HBClientUpdateState) => void): () => void;
-      createConversation(title?: string): Promise<Conversation>;
+      createConversation(input?: string | CreateConversationInput): Promise<Conversation>;
       deleteConversation(id: string): Promise<void>;
       sendPrompt(input: SendPromptInput): Promise<SendPromptResult>;
       readClipboardText(): Promise<string>;
@@ -114,6 +119,7 @@ declare global {
       compactConversation(conversationId: string): Promise<import("@supbot/shared").CompactBoundary>;
       loadTranscript(conversationId: string): Promise<TranscriptLoadResult>;
       createProjectFromFolder(input: ProjectCreateInput): Promise<Project>;
+      createProjectFromName(input: ProjectCreateFromNameInput): Promise<Project>;
       listProjects(): Promise<Project[]>;
       pickProjectFolder(): Promise<string>;
       openProject(id: string): Promise<Project>;
@@ -152,6 +158,7 @@ declare global {
       deleteServstationScheduledJob(id: string): Promise<void>;
       startServstationAutopilotRun(input: ServstationAutopilotStartInput): Promise<ServstationAutopilotRun>;
       updateServstationAutopilotRun(input: ServstationAutopilotStatusUpdate): Promise<ServstationAutopilotRun>;
+      onServstationAutopilotEvent(runId: string, listener: (event: ServstationAutopilotEvent) => void): () => void;
       getServstationFlowEngineSnapshot(): Promise<ServstationFlowEngineSnapshot>;
       launchServstationFlowEngineWorkflow(input: ServstationFlowEngineLaunchInput): Promise<ServstationFlowEngineInitiatedExecution>;
       getServstationFlowEngineExecution(id: string): Promise<ServstationFlowEngineInitiatedExecution>;
@@ -192,6 +199,11 @@ declare global {
       addMemoryRecallFeedback(input: MemoryRecallFeedbackInput): Promise<MemoryRecallFeedback>;
       updateModelConfig(input: ModelConfigUpdate): Promise<ModelConfig>;
       testModelConfig(input?: Partial<ModelConfigUpdate>): Promise<ModelTestResult>;
+      createModelProvider(input: ModelProviderUpdate): Promise<ModelProviderConfig>;
+      updateModelProvider(id: string, input: ModelProviderUpdate): Promise<ModelProviderConfig>;
+      deleteModelProvider(id: string): Promise<void>;
+      setActiveModelProvider(id: string): Promise<ModelProviderConfig>;
+      testModelProvider(id?: string, input?: Partial<ModelProviderUpdate>): Promise<ModelTestResult>;
       updateToolMarketConfig(input: ToolMarketConfigUpdate): Promise<ToolMarketConfig>;
       updatePersonality(input: PersonalityConfig): Promise<PersonalityConfig>;
       updateCapability(id: string, input: CapabilityUpdateInput): Promise<import("@supbot/shared").CapabilityDefinition>;
