@@ -3325,7 +3325,7 @@ describe("SupbotRuntime", () => {
         if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-reverse-1/a2a-peers/reverse-connections") {
           expect(request.headers["x-tenant-id"]).toBe("tenant-rev");
           const parsed = JSON.parse(body) as Record<string, unknown>;
-          expect(parsed.capabilities).toEqual(["prompt.readOnly"]);
+          expect(parsed.capabilities).toEqual(["prompt.readOnly", "conversation.projectAware"]);
           expect(parsed.displayName).toBe("HBClient Desktop");
           expect(parsed.hbclientVersion).toBe("0.1.0");
           response.end(JSON.stringify({
@@ -3389,6 +3389,7 @@ describe("SupbotRuntime", () => {
       servstationUrl: baseUrl
     });
     await runtime.updateServstationA2AConfig({ enabled: true, baseUrl, authMode: "identityHeaders" });
+    const reverseProject = await runtime.createProjectFromName({ name: "Reverse Project" });
     const mock = await withMockModel(runtime, () => ({
       choices: [{ message: { content: "Local Supbot reverse result." } }]
     }));
@@ -3403,6 +3404,7 @@ describe("SupbotRuntime", () => {
           invocationId: "inv-reverse-1",
           requestId: "req-reverse-1",
           prompt: "Run a read-only local Supbot task",
+          projectId: reverseProject.id,
           timeoutMs: 5_000,
           userContext: {
             tenantId: "tenant-rev",
@@ -3428,7 +3430,10 @@ describe("SupbotRuntime", () => {
       });
       const reverseJob = runtime.snapshot().jobs.find((job) => job.prompt === "Run a read-only local Supbot task");
       expect(reverseJob?.workspaceMode).toBe("readOnly");
-      const conversationId = runtime.snapshot().conversations[0]?.id;
+      expect(reverseJob?.projectId).toBe(reverseProject.id);
+      const reverseConversation = runtime.snapshot().conversations.find((conversation) => conversation.id === reverseJob?.conversationId);
+      expect(reverseConversation?.projectId).toBe(reverseProject.id);
+      const conversationId = reverseConversation?.id;
       expect(conversationId).toBeTruthy();
       eventStream!.write([
         "id: snapshot-req-1",

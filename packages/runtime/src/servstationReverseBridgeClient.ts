@@ -20,9 +20,12 @@ interface ReverseBridgeHost {
   nowIso(): string;
 }
 
+export const SERVSTATION_PROJECT_AWARE_CAPABILITY = "conversation.projectAware";
+
 export interface ReversePromptInput {
   prompt: string;
   conversationId?: string;
+  projectId?: string;
   timeoutMs?: number;
   remoteCaller?: {
     requestId?: string;
@@ -69,6 +72,7 @@ interface ReverseInvocationEvent {
   requestId?: string;
   prompt?: string;
   conversationId?: string;
+  projectId?: string;
   timeoutMs?: number;
   userContext?: IdentityContext;
   agentInstanceId?: string;
@@ -198,7 +202,7 @@ export class ServstationReverseBridgeClient {
           body: JSON.stringify({
             clientInstanceId,
             displayName: "HBClient Desktop",
-            capabilities: ["prompt.readOnly"],
+            capabilities: ["prompt.readOnly", SERVSTATION_PROJECT_AWARE_CAPABILITY],
             hbclientVersion: "0.1.0"
           })
         }
@@ -336,6 +340,7 @@ export class ServstationReverseBridgeClient {
       const result = await this.host.sendReadOnlyPromptAndWait({
         prompt,
         conversationId: payload.conversationId,
+        projectId: payload.projectId,
         timeoutMs: normalizeTimeout(payload.timeoutMs),
         signal,
         remoteCaller: {
