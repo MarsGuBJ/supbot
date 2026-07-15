@@ -80,6 +80,10 @@ import type {
   ServstationMessageFolder,
   ServstationMessageListResponse,
   ServstationMessageUnreadSummary,
+  ServstationProject,
+  ServstationProjectResource,
+  ServstationDeleteProjectResponse,
+  ServstationDeleteProjectResourceResponse,
   ServstationScheduledJob,
   ServstationScheduledJobInput,
   ServstationSendAgentMessageInput,
@@ -149,7 +153,12 @@ declare global {
       connectServstationReverseBridge(): Promise<ServstationA2AConfig>;
       disconnectServstationReverseBridge(): Promise<ServstationA2AConfig>;
       getServstationClientSnapshot(query?: ServstationClientSnapshotQuery): Promise<ServstationClientSnapshot>;
-      createServstationConversation(title?: string): Promise<ServstationConversation>;
+      createServstationProject(name: string): Promise<ServstationProject>;
+      updateServstationProject(id: string, name: string): Promise<ServstationProject>;
+      deleteServstationProject(id: string): Promise<ServstationDeleteProjectResponse>;
+      listServstationProjectResources(id: string): Promise<ServstationProjectResource[]>;
+      deleteServstationProjectResource(projectId: string, resourceId: string): Promise<ServstationDeleteProjectResourceResponse>;
+      createServstationConversation(title?: string, projectId?: string): Promise<ServstationConversation>;
       deleteServstationConversation(id: string): Promise<void>;
       sendServstationPrompt(input: ServstationSendPromptInput): Promise<ServstationSendPromptResult>;
       cancelServstationJob(id: string): Promise<ServstationSessionJob>;

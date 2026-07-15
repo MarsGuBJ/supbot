@@ -699,7 +699,12 @@ function registerIpc(): void {
   });
   ipcMain.handle("servstationA2A:disconnectReverse", () => getRuntime().disconnectServstationReverseBridge());
   ipcMain.handle("servstationClient:snapshot", (_event, input?: ServstationClientSnapshotQuery) => getRuntime().getServstationClientSnapshot(validateServstationClientSnapshotQuery(input)));
-  ipcMain.handle("servstationClient:createConversation", (_event, title?: string) => getRuntime().createServstationConversation(optionalString(title, "servstation conversation title")));
+  ipcMain.handle("servstationClient:createProject", (_event, name: string) => getRuntime().createServstationProject(requiredString(name, "servstation project name")));
+  ipcMain.handle("servstationClient:updateProject", (_event, id: string, name: string) => getRuntime().updateServstationProject(requiredString(id, "servstation project id"), requiredString(name, "servstation project name")));
+  ipcMain.handle("servstationClient:deleteProject", (_event, id: string) => getRuntime().deleteServstationProject(requiredString(id, "servstation project id")));
+  ipcMain.handle("servstationClient:listProjectResources", (_event, id: string) => getRuntime().listServstationProjectResources(requiredString(id, "servstation project id")));
+  ipcMain.handle("servstationClient:deleteProjectResource", (_event, projectId: string, resourceId: string) => getRuntime().deleteServstationProjectResource(requiredString(projectId, "servstation project id"), requiredString(resourceId, "servstation project resource id")));
+  ipcMain.handle("servstationClient:createConversation", (_event, title?: string, projectId?: string) => getRuntime().createServstationConversation(optionalString(title, "servstation conversation title"), optionalString(projectId, "servstation project id")));
   ipcMain.handle("servstationClient:deleteConversation", (_event, id: string) => getRuntime().deleteServstationConversation(requiredString(id, "servstation conversation id")));
   ipcMain.handle("servstationClient:sendPrompt", (_event, input: ServstationSendPromptInput) => getRuntime().sendServstationPrompt(validateServstationSendPromptInput(input)));
   ipcMain.handle("servstationClient:cancelJob", (_event, id: string) => getRuntime().cancelServstationJob(requiredString(id, "servstation job id")));
@@ -1041,6 +1046,7 @@ function validateServstationSendPromptInput(input: ServstationSendPromptInput): 
   const value = object(input, "servstation prompt input");
   return compactUndefined({
     conversationId: optionalString(value.conversationId, "servstation conversation id"),
+    projectId: optionalString(value.projectId, "servstation project id"),
     prompt: requiredString(value.prompt, "servstation prompt"),
     requestId: optionalString(value.requestId, "servstation request id"),
     attachments: Array.isArray(value.attachments) ? value.attachments.map(validateAttachment) : [],

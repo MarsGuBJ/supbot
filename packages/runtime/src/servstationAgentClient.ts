@@ -12,6 +12,8 @@ import type {
   ServstationClientSnapshot,
   ServstationClientSnapshotQuery,
   ServstationConversation,
+  ServstationDeleteProjectResourceResponse,
+  ServstationDeleteProjectResponse,
   ServstationFlowEngineApprovalDecisionInput,
   ServstationFlowEngineExecutionEvent,
   ServstationFlowEngineInitiatedExecution,
@@ -31,6 +33,8 @@ import type {
   ServstationMessageListItem,
   ServstationMessageListResponse,
   ServstationMessageUnreadSummary,
+  ServstationProject,
+  ServstationProjectResource,
   ServstationScheduledJob,
   ServstationScheduledJobInput,
   ServstationServiceDefinition,
@@ -52,6 +56,14 @@ interface ServstationAgentClientHost {
 
 interface ConversationsResponse {
   conversations?: ServstationConversation[];
+}
+
+interface ProjectsResponse {
+  projects?: ServstationProject[];
+}
+
+interface ProjectResourcesResponse {
+  resources?: ServstationProjectResource[];
 }
 
 interface JobsResponse {
@@ -189,6 +201,7 @@ export class ServstationAgentClient {
       identity,
       lastError: reverse?.lastError,
       activeConversationId: query.conversationId,
+      projects: [],
       conversations: [],
       jobs: [],
       scheduledJobs: [],
@@ -204,7 +217,8 @@ export class ServstationAgentClient {
       return baseSnapshot;
     }
     const agentInstanceId = await this.ensureAgentInstanceId(signal);
-    const [conversations, scheduledJobs, currentAutopilot, capabilities] = await Promise.all([
+    const [projects, conversations, scheduledJobs, currentAutopilot, capabilities] = await Promise.all([
+      this.listProjects(agentInstanceId, signal),
       this.listConversations(agentInstanceId, signal),
       this.listScheduledJobs(agentInstanceId, signal),
       this.fetchCurrentAutopilotRun(agentInstanceId, signal),
@@ -222,6 +236,7 @@ export class ServstationAgentClient {
       ...baseSnapshot,
       agentInstanceId,
       activeConversationId,
+      projects,
       conversations,
       jobs,
       scheduledJobs,
@@ -236,12 +251,58 @@ export class ServstationAgentClient {
     };
   }
 
-  async createConversation(title?: string, signal?: AbortSignal): Promise<ServstationConversation> {
+  async createProject(name: string, signal?: AbortSignal): Promise<ServstationProject> {
+    const agentInstanceId = await this.ensureConnectedAgent(signal);
+    return this.request<ServstationProject>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/projects`, {
+      method: "POST",
+      signal,
+      body: JSON.stringify({ name })
+    });
+  }
+
+  async updateProject(projectId: string, name: string, signal?: AbortSignal): Promise<ServstationProject> {
+    const agentInstanceId = await this.ensureConnectedAgent(signal);
+    return this.request<ServstationProject>(
+      `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/projects/${encodeURIComponent(projectId)}`,
+      {
+        method: "PATCH",
+        signal,
+        body: JSON.stringify({ name })
+      }
+    );
+  }
+
+  async deleteProject(projectId: string, signal?: AbortSignal): Promise<ServstationDeleteProjectResponse> {
+    const agentInstanceId = await this.ensureConnectedAgent(signal);
+    return this.request<ServstationDeleteProjectResponse>(
+      `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/projects/${encodeURIComponent(projectId)}`,
+      { method: "DELETE", signal }
+    );
+  }
+
+  async listProjectResources(projectId: string, signal?: AbortSignal): Promise<ServstationProjectResource[]> {
+    const agentInstanceId = await this.ensureConnectedAgent(signal);
+    const response = await this.request<ProjectResourcesResponse>(
+      `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/projects/${encodeURIComponent(projectId)}/resources`,
+      { method: "GET", signal }
+    );
+    return Array.isArray(response.resources) ? response.resources : [];
+  }
+
+  async deleteProjectResource(projectId: string, resourceId: string, signal?: AbortSignal): Promise<ServstationDeleteProjectResourceResponse> {
+    const agentInstanceId = await this.ensureConnectedAgent(signal);
+    return this.request<ServstationDeleteProjectResourceResponse>(
+      `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/projects/${encodeURIComponent(projectId)}/resources/${encodeURIComponent(resourceId)}`,
+      { method: "DELETE", signal }
+    );
+  }
+
+  async createConversation(title?: string, projectId?: string, signal?: AbortSignal): Promise<ServstationConversation> {
     const agentInstanceId = await this.ensureConnectedAgent(signal);
     return this.request<ServstationConversation>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/conversations`, {
       method: "POST",
       signal,
-      body: JSON.stringify(title ? { title } : {})
+      body: JSON.stringify({ title, projectId })
     });
   }
 
@@ -257,7 +318,7 @@ export class ServstationAgentClient {
     const agentInstanceId = await this.ensureConnectedAgent(signal);
     const conversation = input.conversationId
       ? undefined
-      : await this.createConversation(undefined, signal);
+      : await this.createConversation(undefined, input.projectId, signal);
     const conversationId = input.conversationId || conversation?.id || "";
     if (!conversationId) {
       throw new Error("Servstation conversation id is required.");
@@ -752,6 +813,14 @@ export class ServstationAgentClient {
     return Array.isArray(response.conversations) ? response.conversations : [];
   }
 
+  private async listProjects(agentInstanceId: string, signal?: AbortSignal): Promise<ServstationProject[]> {
+    const response = await this.request<ProjectsResponse>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/projects`, {
+      method: "GET",
+      signal
+    });
+    return Array.isArray(response.projects) ? response.projects : [];
+  }
+
   private async fetchCapabilitySnapshot(agentInstanceId: string, signal?: AbortSignal): Promise<CapabilitySnapshot> {
     const [servicesResult, installedResult, localResult] = await Promise.allSettled([
       this.listServices(signal),
@@ -1075,6 +1144,7 @@ function fallbackConversation(agentInstanceId: string, conversationId: string, j
   return {
     id: conversationId,
     agentInstanceId,
+    projectId: job.projectId,
     title: "Remote conversation",
     runtimeSessionId: job.runtimeSessionId || "",
     jobCount: 1,

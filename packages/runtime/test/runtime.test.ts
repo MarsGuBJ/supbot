@@ -3717,9 +3717,33 @@ describe("SupbotRuntime", () => {
     const attachmentPath = join(dataDir, "remote-note.txt");
     await writeFile(attachmentPath, "hello remote", "utf8");
     const requests: Array<{ method: string; path: string; headers: Record<string, string | string[] | undefined>; body: Record<string, unknown> }> = [];
+    const projects = [{
+      id: "project-1",
+      agentInstanceId: "agent-client-1",
+      name: "Project One",
+      resourceCount: 1,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:02.000Z"
+    }];
+    const projectResources = [{
+      id: "resource-1",
+      projectId: "project-1",
+      agentInstanceId: "agent-client-1",
+      conversationId: "conv-1",
+      jobId: "job-1",
+      resourceType: "generated",
+      fileName: "plan.md",
+      contentType: "text/markdown",
+      sizeBytes: 128,
+      relativePath: "artifacts/plan.md",
+      summary: "Project plan",
+      createdAt: "2026-01-01T00:00:02.000Z"
+    }];
     const conversations = [{
       id: "conv-1",
       agentInstanceId: "agent-client-1",
+      projectId: "project-1",
+      projectName: "Project One",
       title: "Planning",
       runtimeSessionId: "runtime-1",
       jobCount: 1,
@@ -3925,6 +3949,40 @@ describe("SupbotRuntime", () => {
           return;
         }
         response.setHeader("Content-Type", "application/json");
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/projects") {
+          response.end(JSON.stringify({ projects }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-client-1/projects") {
+          const project = {
+            id: "project-new",
+            agentInstanceId: "agent-client-1",
+            name: String(parsedBody.name || ""),
+            resourceCount: 0,
+            createdAt: "2026-01-01T00:03:00.000Z",
+            updatedAt: "2026-01-01T00:03:00.000Z"
+          };
+          projects.unshift(project);
+          response.end(JSON.stringify(project));
+          return;
+        }
+        if (request.method === "PATCH" && url.pathname === "/api/v1/agent/agent-client-1/projects/project-1") {
+          const updated = { ...projects.find((item) => item.id === "project-1"), name: parsedBody.name, updatedAt: "2026-01-01T00:04:00.000Z" };
+          response.end(JSON.stringify(updated));
+          return;
+        }
+        if (request.method === "DELETE" && url.pathname === "/api/v1/agent/agent-client-1/projects/project-1") {
+          response.end(JSON.stringify({ deletedProjectId: "project-1", deletedResources: 1, unlinkedConversations: 1 }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/projects/project-1/resources") {
+          response.end(JSON.stringify({ resources: projectResources }));
+          return;
+        }
+        if (request.method === "DELETE" && url.pathname === "/api/v1/agent/agent-client-1/projects/project-1/resources/resource-1") {
+          response.end(JSON.stringify({ deletedResourceId: "resource-1" }));
+          return;
+        }
         if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/conversations") {
           response.end(JSON.stringify({ conversations }));
           return;
@@ -3933,7 +3991,9 @@ describe("SupbotRuntime", () => {
           const conversation = {
             id: "conv-new",
             agentInstanceId: "agent-client-1",
-            title: "New conversation",
+            projectId: parsedBody.projectId,
+            projectName: parsedBody.projectId === "project-1" ? "Project One" : undefined,
+            title: parsedBody.title || "New conversation",
             runtimeSessionId: "runtime-new",
             jobCount: 0,
             createdAt: "2026-01-01T00:01:00.000Z",
@@ -4219,6 +4279,7 @@ describe("SupbotRuntime", () => {
       });
       const disconnected = await runtime.getServstationClientSnapshot();
       expect(disconnected.connected).toBe(false);
+      expect(disconnected.projects).toEqual([]);
       expect(disconnected.conversations).toEqual([]);
       expect(disconnected.autopilotSteps).toEqual([]);
       await expect(runtime.getServstationFlowEngineSnapshot()).rejects.toThrow("Servstation reverse A2A is not connected.");
@@ -4233,7 +4294,9 @@ describe("SupbotRuntime", () => {
         agentInstanceId: "agent-client-1",
         activeConversationId: "conv-1"
       });
+      expect(snapshot.projects[0]).toMatchObject({ id: "project-1", name: "Project One", resourceCount: 1 });
       expect(snapshot.conversations).toHaveLength(1);
+      expect(snapshot.conversations[0]).toMatchObject({ projectId: "project-1", projectName: "Project One" });
       expect(snapshot.jobs[0]).toMatchObject({ id: "job-1", status: "completed" });
       expect(snapshot.scheduledJobs[0]).toMatchObject({ id: "schedule-1" });
       expect(snapshot.autopilotRun).toMatchObject({ id: "run-1", phase: "executing", stepCount: 1, maxSteps: 20 });
@@ -4248,23 +4311,37 @@ describe("SupbotRuntime", () => {
       autopilotStepsAvailable = true;
 
       const sent = await runtime.sendServstationPrompt({
+        projectId: "project-1",
         prompt: "new remote prompt",
         attachments: [{ id: "att-1", name: "remote-note.txt", path: attachmentPath, size: 12, mimeType: "text/plain" }]
       });
       expect(sent.conversation.id).toBe("conv-new");
+      expect(sent.conversation.projectId).toBe("project-1");
       expect(sent.snapshot.jobs[0]).toMatchObject({ id: "job-new", status: "queued" });
+      const postConversation = requests.find((item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/conversations");
+      expect(postConversation?.body).toEqual({ projectId: "project-1" });
       const postJob = requests.find((item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/jobs");
       expect(postJob?.body).toMatchObject({
         clientId: "supbot-server-agent-client",
         jobType: "interactive",
         conversationId: "conv-new"
       });
+      expect(postJob?.body).not.toHaveProperty("projectId");
       expect(((postJob?.body.payload as Record<string, unknown>).attachments as Array<Record<string, unknown>>)[0]).toMatchObject({
         name: "remote-note.txt",
         mimeType: "text/plain",
         contentBase64: Buffer.from("hello remote").toString("base64")
       });
 
+      expect(await runtime.createServstationProject("Project Two")).toMatchObject({ id: "project-new", name: "Project Two" });
+      expect(await runtime.updateServstationProject("project-1", "Project Renamed")).toMatchObject({ id: "project-1", name: "Project Renamed" });
+      expect(await runtime.listServstationProjectResources("project-1")).toEqual(projectResources);
+      expect(await runtime.deleteServstationProjectResource("project-1", "resource-1")).toEqual({ deletedResourceId: "resource-1" });
+      expect(await runtime.deleteServstationProject("project-1")).toEqual({
+        deletedProjectId: "project-1",
+        deletedResources: 1,
+        unlinkedConversations: 1
+      });
       await runtime.cancelServstationJob("job-1");
       await runtime.createServstationScheduledJob({ prompt: "scheduled prompt", scheduleKind: "once", runAt: "2026-01-02T00:00:00.000Z", enabled: true });
       await runtime.updateServstationScheduledJob("schedule-1", { enabled: false });
@@ -4356,6 +4433,11 @@ describe("SupbotRuntime", () => {
       expect(streamedEvents).toEqual([{ type: "messages.unread", data: { unreadCount: 1, messages: [messageItem] } }]);
 
       expect(requests.some((item) => item.method === "PATCH" && item.path === "/api/v1/agent/agent-client-1/jobs?jobId=job-1")).toBe(true);
+      expect(requests.some((item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/projects" && item.body.name === "Project Two")).toBe(true);
+      expect(requests.some((item) => item.method === "PATCH" && item.path === "/api/v1/agent/agent-client-1/projects/project-1" && item.body.name === "Project Renamed")).toBe(true);
+      expect(requests.some((item) => item.method === "GET" && item.path === "/api/v1/agent/agent-client-1/projects/project-1/resources")).toBe(true);
+      expect(requests.some((item) => item.method === "DELETE" && item.path === "/api/v1/agent/agent-client-1/projects/project-1/resources/resource-1")).toBe(true);
+      expect(requests.some((item) => item.method === "DELETE" && item.path === "/api/v1/agent/agent-client-1/projects/project-1")).toBe(true);
       expect(requests.some((item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/scheduled-tasks")).toBe(true);
       expect(requests.some((item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/scheduled-tasks/schedule-1/pause")).toBe(true);
       expect(requests.some((item) => item.method === "DELETE" && item.path === "/api/v1/agent/agent-client-1/scheduled-tasks/schedule-1")).toBe(true);
@@ -4402,6 +4484,10 @@ describe("SupbotRuntime", () => {
         response.setHeader("Content-Type", "application/json");
         if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/conversations") {
           response.end(JSON.stringify({ conversations: [] }));
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/projects") {
+          response.end(JSON.stringify({ projects: [] }));
           return;
         }
         if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/scheduled-tasks") {

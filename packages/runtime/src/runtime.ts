@@ -90,6 +90,8 @@ import {
   type ServstationClientSnapshot,
   type ServstationClientSnapshotQuery,
   type ServstationConversation,
+  type ServstationDeleteProjectResourceResponse,
+  type ServstationDeleteProjectResponse,
   type ServstationFlowEngineApprovalDecisionInput,
   type ServstationFlowEngineExecutionEvent,
   type ServstationFlowEngineInitiatedExecution,
@@ -105,6 +107,8 @@ import {
   type ServstationMessageFolder,
   type ServstationMessageListResponse,
   type ServstationMessageUnreadSummary,
+  type ServstationProject,
+  type ServstationProjectResource,
   type ServstationScheduledJob,
   type ServstationScheduledJobInput,
   type ServstationSendAgentMessageInput,
@@ -914,9 +918,34 @@ export class SupbotRuntime extends EventEmitter {
     return this.servstationAgentClient.snapshot(query);
   }
 
-  async createServstationConversation(title?: string): Promise<ServstationConversation> {
+  async createServstationProject(name: string): Promise<ServstationProject> {
     this.assertLoaded();
-    return this.servstationAgentClient.createConversation(title);
+    return this.servstationAgentClient.createProject(name);
+  }
+
+  async updateServstationProject(projectId: string, name: string): Promise<ServstationProject> {
+    this.assertLoaded();
+    return this.servstationAgentClient.updateProject(projectId, name);
+  }
+
+  async deleteServstationProject(projectId: string): Promise<ServstationDeleteProjectResponse> {
+    this.assertLoaded();
+    return this.servstationAgentClient.deleteProject(projectId);
+  }
+
+  async listServstationProjectResources(projectId: string): Promise<ServstationProjectResource[]> {
+    this.assertLoaded();
+    return this.servstationAgentClient.listProjectResources(projectId);
+  }
+
+  async deleteServstationProjectResource(projectId: string, resourceId: string): Promise<ServstationDeleteProjectResourceResponse> {
+    this.assertLoaded();
+    return this.servstationAgentClient.deleteProjectResource(projectId, resourceId);
+  }
+
+  async createServstationConversation(title?: string, projectId?: string): Promise<ServstationConversation> {
+    this.assertLoaded();
+    return this.servstationAgentClient.createConversation(title, projectId);
   }
 
   async deleteServstationConversation(conversationId: string): Promise<void> {

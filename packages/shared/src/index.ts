@@ -574,6 +574,8 @@ export interface ServstationLocalCapabilityAsset {
 export interface ServstationConversation {
   id: string;
   agentInstanceId: string;
+  projectId?: string;
+  projectName?: string;
   title: string;
   runtimeSessionId: string;
   jobCount: number;
@@ -589,6 +591,7 @@ export interface ServstationSessionJob {
   clientId: string;
   jobType: string;
   conversationId?: string;
+  projectId?: string;
   runtimeSessionId?: string;
   payload?: unknown;
   status: string;
@@ -602,6 +605,41 @@ export interface ServstationSessionJob {
   heartbeatAt?: string | null;
   leaseExpiresAt?: string | null;
   finishedAt?: string | null;
+}
+
+export interface ServstationProject {
+  id: string;
+  agentInstanceId: string;
+  name: string;
+  resourceCount?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ServstationProjectResource {
+  id: string;
+  projectId: string;
+  agentInstanceId: string;
+  conversationId?: string;
+  jobId?: string;
+  resourceType: string;
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+  sha256?: string;
+  relativePath?: string;
+  summary?: string;
+  createdAt: string;
+}
+
+export interface ServstationDeleteProjectResponse {
+  deletedProjectId: string;
+  deletedResources: number;
+  unlinkedConversations: number;
+}
+
+export interface ServstationDeleteProjectResourceResponse {
+  deletedResourceId: string;
 }
 
 export interface ServstationScheduledJob {
@@ -926,6 +964,7 @@ export interface ServstationClientSnapshot {
   identity?: IdentityContext;
   lastError?: string;
   activeConversationId?: string;
+  projects: ServstationProject[];
   conversations: ServstationConversation[];
   jobs: ServstationSessionJob[];
   scheduledJobs: ServstationScheduledJob[];
@@ -945,6 +984,7 @@ export interface ServstationClientSnapshotQuery {
 
 export interface ServstationSendPromptInput {
   conversationId?: string;
+  projectId?: string;
   prompt: string;
   requestId?: string;
   attachments?: Attachment[];

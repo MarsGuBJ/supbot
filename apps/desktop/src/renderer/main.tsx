@@ -9,6 +9,7 @@ import {
   CloseCircleOutlined,
   CompressOutlined,
   CopyOutlined,
+  DatabaseOutlined,
   DeleteOutlined,
   DownOutlined,
   DownloadOutlined,
@@ -126,6 +127,8 @@ import type {
   ServstationMessageDetail,
   ServstationMessageFolder,
   ServstationMessageListItem,
+  ServstationProject,
+  ServstationProjectResource,
   ServstationScheduledJob,
   ServstationServiceDefinition,
   ServstationSessionJob,
@@ -162,6 +165,11 @@ import {
   formatServstationCapabilityPromptDirective,
   type ServstationVisibleCapability
 } from "./servstationCapabilities";
+import {
+  groupServstationConversations,
+  servstationPromptTarget,
+  type ServstationConversationGroup
+} from "./servstationProjects";
 import "./styles.css";
 
 type WorkspaceView = "chat" | "server" | "config" | "market";
@@ -1146,6 +1154,8 @@ function ServerAgentWorkspace({
 }) {
   const [remote, setRemote] = useState<ServstationClientSnapshot | null>(null);
   const [activeConversationId, setActiveConversationId] = useState("");
+  const [draftConversation, setDraftConversation] = useState(false);
+  const [draftProjectId, setDraftProjectId] = useState("");
   const [prompt, setPrompt] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [loading, setLoading] = useState(false);
@@ -1153,27 +1163,45 @@ function ServerAgentWorkspace({
   const [connecting, setConnecting] = useState(false);
   const [busyId, setBusyId] = useState("");
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [projectResourcesOpen, setProjectResourcesOpen] = useState(false);
+  const [projectResourcesLoading, setProjectResourcesLoading] = useState(false);
+  const [selectedProject, setSelectedProject] = useState<ServstationProject | null>(null);
+  const [projectResources, setProjectResources] = useState<ServstationProjectResource[]>([]);
   const [autopilotPrompt, setAutopilotPrompt] = useState("");
   const [flowPendingCount, setFlowPendingCount] = useState(0);
   const [messageApi, contextHolder] = message.useMessage();
   const reverseStatus = snapshot.servstationA2A.config.reverse?.status || "disconnected";
   const connected = reverseStatus === "connected";
-  const activeConversation = remote?.conversations.find((item) => item.id === activeConversationId) || remote?.conversations[0];
-  const messages = useMemo(() => servstationMessagesFromJobs(remote?.jobs || []), [remote?.jobs]);
-  const runningJob = useMemo(() => [...(remote?.jobs || [])].reverse().find((job) => !servstationJobIsTerminal(job)), [remote?.jobs]);
+  const activeConversation = draftConversation
+    ? undefined
+    : remote?.conversations.find((item) => item.id === activeConversationId) || remote?.conversations[0];
+  const activeProjectId = draftConversation ? draftProjectId : activeConversation?.projectId || "";
+  const activeProject = remote?.projects.find((project) => project.id === activeProjectId);
+  const messages = useMemo(
+    () => draftConversation ? [] : servstationMessagesFromJobs(remote?.jobs || []),
+    [draftConversation, remote?.jobs]
+  );
+  const runningJob = useMemo(
+    () => draftConversation ? undefined : [...(remote?.jobs || [])].reverse().find((job) => !servstationJobIsTerminal(job)),
+    [draftConversation, remote?.jobs]
+  );
   const autopilotRunId = remote?.autopilotRun?.id || "";
   const autopilotActive = servstationAutopilotIsActive(remote?.autopilotRun);
   const hasRunningJob = Boolean(runningJob);
 
-  const loadRemote = useCallback(async (conversationId?: string, silent = false) => {
+  const loadRemote = useCallback(async (conversationId?: string, silent = false, preserveDraft = false) => {
     if (!silent) {
       setLoading(true);
     }
     try {
       const next = await window.supbot.getServstationClientSnapshot({ conversationId });
       setRemote(next);
-      const selected = next.activeConversationId || next.conversations[0]?.id || "";
-      setActiveConversationId(selected);
+      if (!preserveDraft) {
+        const selected = next.activeConversationId || next.conversations[0]?.id || "";
+        setActiveConversationId(selected);
+        setDraftConversation(false);
+        setDraftProjectId("");
+      }
     } catch (error) {
       messageApi.error((error as Error).message);
     } finally {
@@ -1188,7 +1216,7 @@ function ServerAgentWorkspace({
   }, [loadRemote, reverseStatus]);
 
   useEffect(() => {
-    if (!remote?.connected) {
+    if (!remote?.connected || draftConversation) {
       return;
     }
     const intervalMs = hasRunningJob || autopilotActive ? 2_000 : 15_000;
@@ -1196,10 +1224,10 @@ function ServerAgentWorkspace({
       void loadRemote(activeConversationId || undefined, true);
     }, intervalMs);
     return () => window.clearInterval(timer);
-  }, [activeConversationId, autopilotActive, hasRunningJob, loadRemote, remote?.connected]);
+  }, [activeConversationId, autopilotActive, draftConversation, hasRunningJob, loadRemote, remote?.connected]);
 
   useEffect(() => {
-    if (!remote?.connected || !autopilotRunId || !autopilotActive) {
+    if (!remote?.connected || !autopilotRunId || !autopilotActive || draftConversation) {
       return;
     }
     let refreshTimer: number | undefined;
@@ -1220,7 +1248,7 @@ function ServerAgentWorkspace({
       }
       unsubscribe();
     };
-  }, [activeConversationId, autopilotActive, autopilotRunId, loadRemote, remote?.connected]);
+  }, [activeConversationId, autopilotActive, autopilotRunId, draftConversation, loadRemote, remote?.connected]);
 
   const connectRemote = async () => {
     setConnecting(true);
@@ -1238,6 +1266,8 @@ function ServerAgentWorkspace({
   };
 
   const selectConversation = async (conversation: ServstationConversation) => {
+    setDraftConversation(false);
+    setDraftProjectId("");
     setActiveConversationId(conversation.id);
     await loadRemote(conversation.id);
   };
@@ -1245,6 +1275,8 @@ function ServerAgentWorkspace({
   const createConversation = async () => {
     setBusyId("conversation:create");
     try {
+      setDraftConversation(false);
+      setDraftProjectId("");
       const conversation = await window.supbot.createServstationConversation();
       await loadRemote(conversation.id);
     } catch (error) {
@@ -1254,11 +1286,116 @@ function ServerAgentWorkspace({
     }
   };
 
-  const deleteConversation = async (conversation: ServstationConversation) => {
-    setBusyId(`conversation:${conversation.id}`);
+  const startProjectConversation = (project: ServstationProject) => {
+    setDraftConversation(true);
+    setDraftProjectId(project.id);
+    setActiveConversationId("");
+    setPrompt("");
+    setAttachments([]);
+  };
+
+  const createProject = async (name: string): Promise<boolean> => {
+    setBusyId("project:create");
     try {
-      await window.supbot.deleteServstationConversation(conversation.id);
-      await loadRemote("");
+      const project = await window.supbot.createServstationProject(name);
+      setRemote((current) => current
+        ? { ...current, projects: [project, ...current.projects.filter((item) => item.id !== project.id)] }
+        : current);
+      messageApi.success(t("Project created."));
+      return true;
+    } catch (error) {
+      messageApi.error((error as Error).message);
+      return false;
+    } finally {
+      setBusyId("");
+    }
+  };
+
+  const updateProject = async (project: ServstationProject, name: string): Promise<boolean> => {
+    setBusyId(`project:rename:${project.id}`);
+    try {
+      const updated = await window.supbot.updateServstationProject(project.id, name);
+      setRemote((current) => current
+        ? {
+            ...current,
+            projects: current.projects.map((item) => item.id === updated.id ? { ...item, ...updated } : item),
+            conversations: current.conversations.map((conversation) =>
+              conversation.projectId === updated.id ? { ...conversation, projectName: updated.name } : conversation
+            )
+          }
+        : current);
+      setSelectedProject((current) => current?.id === updated.id ? { ...current, ...updated } : current);
+      messageApi.success(t("Project renamed."));
+      return true;
+    } catch (error) {
+      messageApi.error((error as Error).message);
+      return false;
+    } finally {
+      setBusyId("");
+    }
+  };
+
+  const deleteProject = async (project: ServstationProject) => {
+    setBusyId(`project:delete:${project.id}`);
+    try {
+      await window.supbot.deleteServstationProject(project.id);
+      setRemote((current) => current
+        ? {
+            ...current,
+            projects: current.projects.filter((item) => item.id !== project.id),
+            conversations: current.conversations.map((conversation) =>
+              conversation.projectId === project.id
+                ? { ...conversation, projectId: undefined, projectName: undefined }
+                : conversation
+            )
+          }
+        : current);
+      setDraftProjectId((current) => current === project.id ? "" : current);
+      if (selectedProject?.id === project.id) {
+        setProjectResourcesOpen(false);
+        setSelectedProject(null);
+        setProjectResources([]);
+      }
+      messageApi.success(t("Project deleted."));
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    } finally {
+      setBusyId("");
+    }
+  };
+
+  const loadProjectResources = async (project: ServstationProject) => {
+    setSelectedProject(project);
+    setProjectResourcesOpen(true);
+    setProjectResourcesLoading(true);
+    try {
+      setProjectResources(await window.supbot.listServstationProjectResources(project.id));
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    } finally {
+      setProjectResourcesLoading(false);
+    }
+  };
+
+  const deleteProjectResource = async (resource: ServstationProjectResource) => {
+    if (!selectedProject) {
+      return;
+    }
+    setBusyId(`resource:delete:${resource.id}`);
+    try {
+      await window.supbot.deleteServstationProjectResource(selectedProject.id, resource.id);
+      setProjectResources((items) => items.filter((item) => item.id !== resource.id));
+      setRemote((current) => current
+        ? {
+            ...current,
+            projects: current.projects.map((project) =>
+              project.id === selectedProject.id
+                ? { ...project, resourceCount: Math.max((project.resourceCount || 0) - 1, 0) }
+                : project
+            )
+          }
+        : current);
+      messageApi.success(t("Resource deleted."));
     } catch (error) {
       messageApi.error((error as Error).message);
     } finally {
@@ -1276,12 +1413,14 @@ function ServerAgentWorkspace({
     setAttachments([]);
     try {
       const result = await window.supbot.sendServstationPrompt({
-        conversationId: activeConversation?.id,
+        ...servstationPromptTarget(activeConversation?.id, draftConversation ? draftProjectId : undefined),
         prompt: text,
         attachments
       });
       setRemote(result.snapshot);
       setActiveConversationId(result.conversation.id);
+      setDraftConversation(false);
+      setDraftProjectId("");
     } catch (error) {
       setPrompt(text);
       messageApi.error((error as Error).message);
@@ -1397,7 +1536,7 @@ function ServerAgentWorkspace({
           </div>
         </div>
         <Space wrap>
-          <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void loadRemote(activeConversation?.id)}>{t("Refresh")}</Button>
+          <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void loadRemote(activeConversation?.id, false, draftConversation)}>{t("Refresh")}</Button>
           {connected ? null : <Button type="primary" icon={<ApiOutlined />} loading={connecting} onClick={() => void connectRemote()}>{t("Connect server Agent")}</Button>}
         </Space>
       </div>
@@ -1417,6 +1556,10 @@ function ServerAgentWorkspace({
             children: (
               <ServerAgentMessages
                 activeConversation={activeConversation}
+                activeProject={activeProject}
+                activeProjectId={activeProjectId}
+                draftConversation={draftConversation}
+                projects={remote?.projects || []}
                 conversations={remote?.conversations || []}
                 messages={messages}
                 services={remote?.services || []}
@@ -1432,7 +1575,12 @@ function ServerAgentWorkspace({
                 setAttachments={setAttachments}
                 onSelectConversation={selectConversation}
                 onCreateConversation={createConversation}
-                onDeleteConversation={deleteConversation}
+                onRefresh={() => loadRemote(activeConversation?.id, false, draftConversation)}
+                onCreateProject={createProject}
+                onUpdateProject={updateProject}
+                onDeleteProject={deleteProject}
+                onOpenProjectResources={loadProjectResources}
+                onStartProjectConversation={startProjectConversation}
                 onPickAttachments={pickRemoteAttachments}
                 onSend={sendRemotePrompt}
                 onCancelRunning={cancelRunningJob}
@@ -1500,12 +1648,76 @@ function ServerAgentWorkspace({
         onSave={saveSchedule}
         t={t}
       />
+      <Modal
+        open={projectResourcesOpen}
+        title={selectedProject ? `${t("Project resources")}: ${selectedProject.name}` : t("Project resources")}
+        width={720}
+        onCancel={() => {
+          setProjectResourcesOpen(false);
+          setSelectedProject(null);
+          setProjectResources([]);
+        }}
+        footer={(
+          <Button
+            icon={<ReloadOutlined />}
+            loading={projectResourcesLoading}
+            onClick={() => {
+              if (selectedProject) {
+                void loadProjectResources(selectedProject);
+              }
+            }}
+          >
+            {t("Refresh")}
+          </Button>
+        )}
+      >
+        <div className="server-agent-resource-list" data-testid="server-agent-project-resource-list">
+          {projectResources.map((resource) => (
+            <div className="server-agent-resource-item" key={resource.id}>
+              <div className="server-agent-resource-main">
+                <div className="server-agent-resource-title">
+                  <FileTextOutlined />
+                  <strong title={resource.fileName}>{resource.fileName}</strong>
+                  <Tag>{resource.resourceType}</Tag>
+                  <Tag>{resource.contentType}</Tag>
+                </div>
+                <div className="server-agent-resource-meta">
+                  <span>{formatFileSize(resource.sizeBytes)}</span>
+                  <span>{formatDateTime(resource.createdAt)}</span>
+                </div>
+                {resource.summary ? <p className="server-agent-resource-summary">{resource.summary}</p> : null}
+                {resource.relativePath ? <code className="server-agent-resource-path">{resource.relativePath}</code> : null}
+              </div>
+              <Popconfirm title={t("Delete project resource?")} onConfirm={() => void deleteProjectResource(resource)}>
+                <Button
+                  data-testid={`server-agent-project-resource-delete-${resource.id}`}
+                  size="small"
+                  type="text"
+                  danger
+                  icon={<DeleteOutlined />}
+                  loading={busyId === `resource:delete:${resource.id}`}
+                  aria-label={t("Delete project resource?")}
+                />
+              </Popconfirm>
+            </div>
+          ))}
+          {!projectResources.length ? (
+            projectResourcesLoading
+              ? <div className="server-agent-resource-empty">{t("Loading...")}</div>
+              : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("No project resources")} />
+          ) : null}
+        </div>
+      </Modal>
     </section>
   );
 }
 
 function ServerAgentMessages({
   activeConversation,
+  activeProject,
+  activeProjectId,
+  draftConversation,
+  projects,
   conversations,
   messages,
   services,
@@ -1521,13 +1733,22 @@ function ServerAgentMessages({
   setAttachments,
   onSelectConversation,
   onCreateConversation,
-  onDeleteConversation,
+  onRefresh,
+  onCreateProject,
+  onUpdateProject,
+  onDeleteProject,
+  onOpenProjectResources,
+  onStartProjectConversation,
   onPickAttachments,
   onSend,
   onCancelRunning,
   t
 }: {
   activeConversation?: ServstationConversation;
+  activeProject?: ServstationProject;
+  activeProjectId: string;
+  draftConversation: boolean;
+  projects: ServstationProject[];
   conversations: ServstationConversation[];
   messages: ServstationChatMessage[];
   services: ServstationServiceDefinition[];
@@ -1543,7 +1764,12 @@ function ServerAgentMessages({
   setAttachments: React.Dispatch<React.SetStateAction<Attachment[]>>;
   onSelectConversation: (conversation: ServstationConversation) => Promise<void>;
   onCreateConversation: () => Promise<void>;
-  onDeleteConversation: (conversation: ServstationConversation) => Promise<void>;
+  onRefresh: () => Promise<void>;
+  onCreateProject: (name: string) => Promise<boolean>;
+  onUpdateProject: (project: ServstationProject, name: string) => Promise<boolean>;
+  onDeleteProject: (project: ServstationProject) => Promise<void>;
+  onOpenProjectResources: (project: ServstationProject) => Promise<void>;
+  onStartProjectConversation: (project: ServstationProject) => void;
   onPickAttachments: () => Promise<void>;
   onSend: () => Promise<void>;
   onCancelRunning: () => Promise<void>;
@@ -1552,6 +1778,11 @@ function ServerAgentMessages({
   const promptInputRef = useRef<TextAreaRef | null>(null);
   const [capabilityOpen, setCapabilityOpen] = useState(false);
   const [capabilitySearch, setCapabilitySearch] = useState("");
+  const [newProjectName, setNewProjectName] = useState("");
+  const projectGroups = useMemo(
+    () => groupServstationConversations(projects, conversations),
+    [conversations, projects]
+  );
   const effectiveServices = useMemo(
     () => buildEffectiveServstationServices(services, localCapabilities),
     [localCapabilities, services]
@@ -1594,6 +1825,16 @@ function ServerAgentMessages({
       nextTextArea?.setSelectionRange(caret, caret);
     });
   }, [prompt, setPrompt]);
+
+  const submitProject = async () => {
+    const name = newProjectName.trim();
+    if (!name || busyId === "project:create") {
+      return;
+    }
+    if (await onCreateProject(name)) {
+      setNewProjectName("");
+    }
+  };
 
   const capabilityContent = (
     <div className="server-agent-capability-popover">
@@ -1643,32 +1884,88 @@ function ServerAgentMessages({
   return (
     <div className="server-agent-message-grid">
       <aside className="server-agent-conversations">
-        <div className="panel-heading">
-          <div className="section-title"><ClockCircleOutlined /> {t("Conversation history")}</div>
-          <Tooltip title={t("New conversation")}>
-            <Button size="small" type="primary" icon={<PlusOutlined />} disabled={disabled} loading={busyId === "conversation:create"} onClick={() => void onCreateConversation()} />
+        <div className="server-agent-project-toolbar">
+          <div className="section-title"><FolderOpenOutlined /> {t("Projects")}</div>
+          <Space size={4}>
+            <Tooltip title={t("Refresh")}>
+              <Button
+                data-testid="server-agent-project-refresh"
+                size="small"
+                type="text"
+                icon={<ReloadOutlined />}
+                disabled={disabled}
+                aria-label={t("Refresh")}
+                onClick={() => void onRefresh()}
+              />
+            </Tooltip>
+            <Tooltip title={t("New conversation")}>
+              <Button
+                data-testid="server-agent-new-conversation"
+                size="small"
+                type="primary"
+                icon={<PlusOutlined />}
+                disabled={disabled}
+                loading={busyId === "conversation:create"}
+                aria-label={t("New conversation")}
+                onClick={() => void onCreateConversation()}
+              />
+            </Tooltip>
+          </Space>
+        </div>
+        <div className="server-agent-project-create" data-testid="server-agent-project-list">
+          <Input
+            size="small"
+            value={newProjectName}
+            placeholder={t("New project")}
+            disabled={disabled || busyId === "project:create"}
+            onChange={(event) => setNewProjectName(event.target.value)}
+            onPressEnter={() => void submitProject()}
+          />
+          <Tooltip title={t("Create")}>
+            <Button
+              data-testid="server-agent-project-create"
+              size="small"
+              type="primary"
+              icon={<PlusOutlined />}
+              loading={busyId === "project:create"}
+              disabled={disabled || !newProjectName.trim()}
+              aria-label={t("Create")}
+              onClick={() => void submitProject()}
+            />
           </Tooltip>
         </div>
-        <div className="server-agent-conversation-list">
-          {conversations.map((conversation) => (
-            <div className={`server-agent-conversation ${conversation.id === activeConversation?.id ? "is-active" : ""}`} key={conversation.id}>
-              <button type="button" onClick={() => void onSelectConversation(conversation)}>
-                <strong>{servstationConversationTitle(conversation, t("New conversation"))}</strong>
-                <small>{formatDateTime(conversation.lastMessageAt || conversation.updatedAt)}</small>
-              </button>
-              <Popconfirm title={t("Delete conversation?")} onConfirm={() => void onDeleteConversation(conversation)}>
-                <Button size="small" danger icon={<DeleteOutlined />} loading={busyId === `conversation:${conversation.id}`} />
-              </Popconfirm>
-            </div>
+        <div className="server-agent-project-list">
+          {projectGroups.map((group) => (
+            <ServerAgentProjectGroup
+              key={group.key || "unfiled"}
+              group={group}
+              activeConversationId={activeConversation?.id || ""}
+              activeProjectId={activeProjectId}
+              draftConversation={draftConversation}
+              disabled={disabled}
+              busyId={busyId}
+              onSelectConversation={onSelectConversation}
+              onUpdateProject={onUpdateProject}
+              onDeleteProject={onDeleteProject}
+              onOpenProjectResources={onOpenProjectResources}
+              onStartProjectConversation={onStartProjectConversation}
+              t={t}
+            />
           ))}
-          {!conversations.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("No conversations yet")} /> : null}
         </div>
       </aside>
       <section className="server-agent-chat">
         <div className="server-agent-chat-title">
           <div className="server-agent-chat-title-copy">
             <div className="chat-banner-label">{t("Messages")}</div>
-            <strong>{activeConversation ? servstationConversationTitle(activeConversation, t("New conversation")) : t("No conversation yet")}</strong>
+            <strong>
+              {draftConversation
+                ? activeProject?.name || t("Unfiled")
+                : activeConversation
+                  ? servstationConversationTitle(activeConversation, t("New conversation"))
+                  : t("No conversation yet")}
+            </strong>
+            {activeProject ? <small>{t("Project")}: {activeProject.name}</small> : null}
           </div>
           <div className="server-agent-chat-actions">
             <Popover
@@ -1741,6 +2038,190 @@ function ServerAgentMessages({
         </div>
       </section>
     </div>
+  );
+}
+
+function ServerAgentProjectGroup({
+  group,
+  activeConversationId,
+  activeProjectId,
+  draftConversation,
+  disabled,
+  busyId,
+  onSelectConversation,
+  onUpdateProject,
+  onDeleteProject,
+  onOpenProjectResources,
+  onStartProjectConversation,
+  t
+}: {
+  group: ServstationConversationGroup;
+  activeConversationId: string;
+  activeProjectId: string;
+  draftConversation: boolean;
+  disabled: boolean;
+  busyId: string;
+  onSelectConversation: (conversation: ServstationConversation) => Promise<void>;
+  onUpdateProject: (project: ServstationProject, name: string) => Promise<boolean>;
+  onDeleteProject: (project: ServstationProject) => Promise<void>;
+  onOpenProjectResources: (project: ServstationProject) => Promise<void>;
+  onStartProjectConversation: (project: ServstationProject) => void;
+  t: Translator;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+  const project = group.project;
+  const projectId = project?.id || "";
+  const title = project?.name || t("Unfiled");
+  const projectActive = activeProjectId === projectId;
+
+  const submitRename = async () => {
+    const name = renameValue.trim();
+    if (!project || !name || busyId === `project:rename:${project.id}`) {
+      return;
+    }
+    if (await onUpdateProject(project, name)) {
+      setRenaming(false);
+      setRenameValue("");
+    }
+  };
+
+  return (
+    <section className={`server-agent-project-group ${projectActive ? "is-active" : ""} ${draftConversation && projectActive ? "is-draft" : ""}`}>
+      <div className="server-agent-project-heading">
+        <Tooltip title={t(collapsed ? "Expand project" : "Collapse project")}>
+          <Button
+            className="server-agent-project-toggle"
+            size="small"
+            type="text"
+            icon={collapsed ? <RightOutlined /> : <DownOutlined />}
+            aria-label={t(collapsed ? "Expand project" : "Collapse project")}
+            aria-expanded={!collapsed}
+            onClick={() => setCollapsed((value) => !value)}
+          />
+        </Tooltip>
+        {renaming && project ? (
+          <div className="server-agent-project-rename">
+            <Input
+              data-testid={`server-agent-project-rename-input-${project.id}`}
+              size="small"
+              value={renameValue}
+              autoFocus
+              disabled={busyId === `project:rename:${project.id}`}
+              onChange={(event) => setRenameValue(event.target.value)}
+              onPressEnter={() => void submitRename()}
+            />
+            <Tooltip title={t("Save")}>
+              <Button
+                size="small"
+                type="text"
+                icon={<SaveOutlined />}
+                loading={busyId === `project:rename:${project.id}`}
+                disabled={!renameValue.trim()}
+                aria-label={t("Save")}
+                onClick={() => void submitRename()}
+              />
+            </Tooltip>
+            <Tooltip title={t("Cancel")}>
+              <Button
+                size="small"
+                type="text"
+                icon={<CloseCircleOutlined />}
+                disabled={busyId === `project:rename:${project.id}`}
+                aria-label={t("Cancel")}
+                onClick={() => {
+                  setRenaming(false);
+                  setRenameValue("");
+                }}
+              />
+            </Tooltip>
+          </div>
+        ) : (
+          <div className="server-agent-project-name">
+            {collapsed ? <FolderOutlined /> : <FolderOpenOutlined />}
+            <strong title={title}>{title}</strong>
+            <span>{group.conversations.length}</span>
+          </div>
+        )}
+        {project && !renaming ? (
+          <div className="server-agent-project-actions">
+            <Tooltip title={t("Project resources")}>
+              <Button
+                data-testid={`server-agent-project-resources-${project.id}`}
+                size="small"
+                type="text"
+                icon={<DatabaseOutlined />}
+                disabled={disabled}
+                aria-label={t("Project resources")}
+                onClick={() => void onOpenProjectResources(project)}
+              />
+            </Tooltip>
+            <Tooltip title={t("Rename project")}>
+              <Button
+                data-testid={`server-agent-project-rename-${project.id}`}
+                size="small"
+                type="text"
+                icon={<EditOutlined />}
+                disabled={disabled}
+                aria-label={t("Rename project")}
+                onClick={() => {
+                  setRenaming(true);
+                  setRenameValue(project.name);
+                }}
+              />
+            </Tooltip>
+            <Tooltip title={t("New project conversation")}>
+              <Button
+                data-testid={`server-agent-project-new-conversation-${project.id}`}
+                size="small"
+                type="text"
+                icon={<PlusOutlined />}
+                disabled={disabled}
+                aria-label={t("New project conversation")}
+                onClick={() => onStartProjectConversation(project)}
+              />
+            </Tooltip>
+            <Popconfirm title={t("Delete project?")} onConfirm={() => void onDeleteProject(project)}>
+              <Button
+                data-testid={`server-agent-project-delete-${project.id}`}
+                size="small"
+                type="text"
+                danger
+                icon={<DeleteOutlined />}
+                loading={busyId === `project:delete:${project.id}`}
+                disabled={disabled}
+                aria-label={t("Delete project?")}
+              />
+            </Popconfirm>
+          </div>
+        ) : null}
+      </div>
+      {project && !collapsed ? (
+        <div className="server-agent-project-meta">
+          <span>{formatDateTime(project.updatedAt)}</span>
+          <span>{t("Resource count")}: {project.resourceCount || 0}</span>
+        </div>
+      ) : null}
+      {collapsed ? null : (
+        <div className="server-agent-project-conversations">
+          {group.conversations.map((conversation) => (
+            <div
+              className={`server-agent-project-conversation ${conversation.id === activeConversationId ? "is-active" : ""}`}
+              key={conversation.id}
+            >
+              <button type="button" onClick={() => void onSelectConversation(conversation)}>
+                <strong>{servstationConversationTitle(conversation, t("New conversation"))}</strong>
+                <small>{formatDateTime(conversation.lastMessageAt || conversation.updatedAt)}</small>
+              </button>
+            </div>
+          ))}
+          {!group.conversations.length ? (
+            <div className="server-agent-project-empty">{t("No conversations in this project")}</div>
+          ) : null}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -2646,6 +3127,22 @@ function formatBytesFromBase64(base64: string): string {
     return `${(bytes / 1024).toFixed(1)} KB`;
   }
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "0 B";
+  }
+  if (bytes < 1024) {
+    return `${Math.round(bytes)} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  if (bytes < 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
 type ServerAgentMailTab = "messages" | "accounts";
