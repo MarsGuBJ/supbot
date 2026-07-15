@@ -18,6 +18,6 @@ export { ProjectManager, pathIsInside as pathIsInsideProject, projectSandboxRoot
 export { RemoteBridgeManager } from "./remoteBridgeManager";
 export { ServstationAgentClient } from "./servstationAgentClient";
 export { ServstationA2AProvider } from "./servstationA2AProvider";
-export { ServstationReverseBridgeClient } from "./servstationReverseBridgeClient";
+export { ServstationReverseBridgeClient, buildReverseWorkspaceSnapshot } from "./servstationReverseBridgeClient";
 export { identityContextFromAccessToken, oidcTokenSetFromTokenResponse } from "./servstationOidc";
 export { WorktreeManager, ensureGitWorktreeReady } from "./worktreeManager";

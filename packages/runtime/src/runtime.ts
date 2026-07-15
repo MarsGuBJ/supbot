@@ -287,6 +287,13 @@ export class SupbotRuntime extends EventEmitter {
       sendReadOnlyPromptAndWait: (input) => this.sendRemotePromptAndWait(input),
       getSnapshot: () => this.snapshot(),
       loadTranscript: (conversationId) => this.loadTranscript(conversationId),
+      createScheduledJob: (input) => this.createScheduledJob(input),
+      updateScheduledJob: (id, input) => this.updateScheduledJob(id, input),
+      deleteScheduledJob: (id) => this.deleteScheduledJob(id),
+      startAutopilotDataRun: (input) => this.startDataRun(input),
+      pauseAutopilotRun: (id) => this.pauseAutopilotRun(id),
+      resumeAutopilotRun: (id) => this.resumeAutopilotRun(id),
+      cancelAutopilotRun: (id) => this.cancelAutopilotRun(id),
       randomId,
       nowIso
     });

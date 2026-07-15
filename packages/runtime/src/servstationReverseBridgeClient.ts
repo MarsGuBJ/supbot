@@ -1,6 +1,10 @@
 import type {
+  AutopilotRun,
+  AutopilotStartDataRunInput,
   IdentityContext,
   RuntimeSnapshot,
+  ScheduledJob,
+  ScheduledJobInput,
   ServstationA2AConfig,
   ServstationA2AConfigUpdate,
   ServstationA2AReverseConfig,
@@ -16,11 +20,20 @@ interface ReverseBridgeHost {
   sendReadOnlyPromptAndWait(input: ReversePromptInput): Promise<ReversePromptResult>;
   getSnapshot(): RuntimeSnapshot;
   loadTranscript(conversationId: string): Promise<TranscriptLoadResult>;
+  createScheduledJob(input: ScheduledJobInput): Promise<ScheduledJob>;
+  updateScheduledJob(id: string, input: Partial<ScheduledJobInput>): Promise<ScheduledJob>;
+  deleteScheduledJob(id: string): Promise<void>;
+  startAutopilotDataRun(input: AutopilotStartDataRunInput): Promise<AutopilotRun>;
+  pauseAutopilotRun(id: string): Promise<AutopilotRun>;
+  resumeAutopilotRun(id: string): Promise<AutopilotRun>;
+  cancelAutopilotRun(id: string): Promise<AutopilotRun>;
   randomId(prefix: string): string;
   nowIso(): string;
 }
 
 export const SERVSTATION_PROJECT_AWARE_CAPABILITY = "conversation.projectAware";
+export const SERVSTATION_SCHEDULE_MANAGE_CAPABILITY = "schedule.manage";
+export const SERVSTATION_AUTOPILOT_MANAGE_CAPABILITY = "autopilot.manage";
 
 export interface ReversePromptInput {
   prompt: string;
@@ -81,6 +94,28 @@ interface ReverseInvocationEvent {
 interface ReverseRequestEvent {
   requestId?: string;
   conversationId?: string;
+  action?: string;
+  payload?: unknown;
+}
+
+export interface ReverseWorkspaceSnapshot {
+  status: RuntimeSnapshot["status"];
+  scheduledJobs: ScheduledJob[];
+  autopilotRuns: Array<Pick<AutopilotRun,
+    "id" | "projectId" | "title" | "goal" | "status" | "currentStage" | "taskIds" | "artifactIds" |
+    "error" | "createdAt" | "updatedAt" | "startedAt" | "finishedAt"
+  >>;
+  autopilotTasks: Array<Pick<RuntimeSnapshot["autopilotTasks"][number],
+    "id" | "runId" | "projectId" | "stage" | "staffAgent" | "title" | "status" | "attempts" |
+    "maxAttempts" | "artifactIds" | "error" | "startedAt" | "finishedAt" | "createdAt" | "updatedAt"
+  >>;
+  autopilotEvents: Array<Pick<RuntimeSnapshot["autopilotEvents"][number],
+    "id" | "runId" | "projectId" | "taskId" | "level" | "message" | "createdAt"
+  >>;
+  dataArtifacts: Array<Pick<RuntimeSnapshot["dataArtifacts"][number],
+    "id" | "projectId" | "runId" | "taskId" | "kind" | "stage" | "name" | "size" | "lineCount" | "createdAt"
+  >>;
+  fetchedAt: string;
 }
 
 interface SseEvent {
@@ -202,7 +237,12 @@ export class ServstationReverseBridgeClient {
           body: JSON.stringify({
             clientInstanceId,
             displayName: "HBClient Desktop",
-            capabilities: ["prompt.readOnly", SERVSTATION_PROJECT_AWARE_CAPABILITY],
+            capabilities: [
+              "prompt.readOnly",
+              SERVSTATION_PROJECT_AWARE_CAPABILITY,
+              SERVSTATION_SCHEDULE_MANAGE_CAPABILITY,
+              SERVSTATION_AUTOPILOT_MANAGE_CAPABILITY
+            ],
             hbclientVersion: "0.1.0"
           })
         }
@@ -313,6 +353,14 @@ export class ServstationReverseBridgeClient {
       }
       if (event.event === "transcript_request") {
         void this.handleTranscriptRequest(baseUrl, agentInstanceId, peerId, event, signal);
+        continue;
+      }
+      if (event.event === "workspace_snapshot_request") {
+        void this.handleWorkspaceSnapshotRequest(baseUrl, agentInstanceId, peerId, event, signal);
+        continue;
+      }
+      if (event.event === "workspace_action") {
+        void this.handleWorkspaceAction(baseUrl, agentInstanceId, peerId, event, signal);
       }
     }
     if (!signal.aborted) {
@@ -426,6 +474,97 @@ export class ServstationReverseBridgeClient {
         signal,
         body: JSON.stringify({ status: "failed", error: (error as Error).message })
       }).catch(() => undefined);
+    }
+  }
+
+  private async handleWorkspaceSnapshotRequest(
+    baseUrl: string,
+    agentInstanceId: string,
+    peerId: string,
+    event: SseEvent,
+    signal: AbortSignal
+  ): Promise<void> {
+    const payload = safeJson(event.data) as ReverseRequestEvent;
+    const requestId = requiredString(payload.requestId || event.id, "requestId");
+    try {
+      await this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "ack"), {
+        method: "POST",
+        signal,
+        body: JSON.stringify({ requestId })
+      });
+      const workspace = buildReverseWorkspaceSnapshot(this.host.getSnapshot(), this.host.nowIso());
+      await this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "result"), {
+        method: "POST",
+        signal,
+        body: JSON.stringify({ status: "completed", result: workspace })
+      });
+    } catch (error) {
+      await this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "result"), {
+        method: "POST",
+        signal,
+        body: JSON.stringify({ status: "failed", error: (error as Error).message })
+      }).catch(() => undefined);
+    }
+  }
+
+  private async handleWorkspaceAction(
+    baseUrl: string,
+    agentInstanceId: string,
+    peerId: string,
+    event: SseEvent,
+    signal: AbortSignal
+  ): Promise<void> {
+    const request = safeJson(event.data) as ReverseRequestEvent;
+    const requestId = requiredString(request.requestId || event.id, "requestId");
+    try {
+      const action = requiredString(request.action, "workspace action");
+      const payload = objectValue(request.payload);
+      await this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "ack"), {
+        method: "POST",
+        signal,
+        body: JSON.stringify({ requestId })
+      });
+      const result = await this.executeWorkspaceAction(action, payload);
+      await this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "result"), {
+        method: "POST",
+        signal,
+        body: JSON.stringify({ status: "completed", result })
+      });
+    } catch (error) {
+      await this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "result"), {
+        method: "POST",
+        signal,
+        body: JSON.stringify({ status: "failed", error: (error as Error).message })
+      }).catch(() => undefined);
+    }
+  }
+
+  private async executeWorkspaceAction(action: string, payload: Record<string, unknown>): Promise<unknown> {
+    switch (action) {
+      case "schedule.create":
+        return this.host.createScheduledJob(scheduledJobInput(payload));
+      case "schedule.update":
+        return this.host.updateScheduledJob(requiredString(payload.id, "scheduled job id"), {
+          enabled: requiredBoolean(payload.enabled, "enabled")
+        });
+      case "schedule.delete":
+        await this.host.deleteScheduledJob(requiredString(payload.id, "scheduled job id"));
+        return { status: "ok" };
+      case "autopilot.start":
+        return this.host.startAutopilotDataRun({
+          projectId: requiredString(payload.projectId, "project id"),
+          goal: requiredString(payload.goal, "autopilot goal"),
+          title: optionalString(payload.title),
+          dataSources: []
+        });
+      case "autopilot.pause":
+        return this.host.pauseAutopilotRun(requiredString(payload.id, "autopilot run id"));
+      case "autopilot.resume":
+        return this.host.resumeAutopilotRun(requiredString(payload.id, "autopilot run id"));
+      case "autopilot.cancel":
+        return this.host.cancelAutopilotRun(requiredString(payload.id, "autopilot run id"));
+      default:
+        throw new Error(`Unsupported workspace action: ${action}`);
     }
   }
 
@@ -563,6 +702,122 @@ function requiredString(value: unknown, label: string): string {
     throw new Error(`${label} is required.`);
   }
   return value.trim();
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function requiredBoolean(value: unknown, label: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new Error(`${label} is required.`);
+  }
+  return value;
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function scheduledJobInput(payload: Record<string, unknown>): ScheduledJobInput {
+  const scheduleKind = requiredString(payload.scheduleKind, "schedule kind");
+  if (scheduleKind !== "once" && scheduleKind !== "daily" && scheduleKind !== "cron") {
+    throw new Error(`Unsupported schedule kind: ${scheduleKind}`);
+  }
+  const runAt = optionalString(payload.runAt);
+  const cronExpr = optionalString(payload.cronExpr);
+  if ((scheduleKind === "once" || scheduleKind === "daily") && !runAt) {
+    throw new Error("runAt is required.");
+  }
+  if (runAt && Number.isNaN(Date.parse(runAt))) {
+    throw new Error("runAt must be a valid ISO timestamp.");
+  }
+  if (scheduleKind === "cron" && !cronExpr) {
+    throw new Error("cronExpr is required.");
+  }
+  return {
+    projectId: optionalString(payload.projectId),
+    title: requiredString(payload.title, "scheduled job title"),
+    prompt: requiredString(payload.prompt, "scheduled job prompt"),
+    scheduleKind,
+    runAt,
+    cronExpr,
+    enabled: typeof payload.enabled === "boolean" ? payload.enabled : true
+  };
+}
+
+export function buildReverseWorkspaceSnapshot(snapshot: RuntimeSnapshot, fetchedAt: string): ReverseWorkspaceSnapshot {
+  return {
+    status: snapshot.status,
+    scheduledJobs: snapshot.scheduledJobs.map((job) => ({
+      id: job.id,
+      projectId: job.projectId,
+      title: job.title,
+      prompt: job.prompt,
+      scheduleKind: job.scheduleKind,
+      runAt: job.runAt,
+      cronExpr: job.cronExpr,
+      enabled: job.enabled,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
+      lastRunAt: job.lastRunAt,
+      nextRunAt: job.nextRunAt
+    })),
+    autopilotRuns: snapshot.autopilotRuns.map((run) => ({
+      id: run.id,
+      projectId: run.projectId,
+      title: run.title,
+      goal: run.goal,
+      status: run.status,
+      currentStage: run.currentStage,
+      taskIds: run.taskIds,
+      artifactIds: run.artifactIds,
+      error: run.error,
+      createdAt: run.createdAt,
+      updatedAt: run.updatedAt,
+      startedAt: run.startedAt,
+      finishedAt: run.finishedAt
+    })),
+    autopilotTasks: snapshot.autopilotTasks.map((task) => ({
+      id: task.id,
+      runId: task.runId,
+      projectId: task.projectId,
+      stage: task.stage,
+      staffAgent: task.staffAgent,
+      title: task.title,
+      status: task.status,
+      attempts: task.attempts,
+      maxAttempts: task.maxAttempts,
+      artifactIds: task.artifactIds,
+      error: task.error,
+      startedAt: task.startedAt,
+      finishedAt: task.finishedAt,
+      createdAt: task.createdAt,
+      updatedAt: task.updatedAt
+    })),
+    autopilotEvents: snapshot.autopilotEvents.map((event) => ({
+      id: event.id,
+      runId: event.runId,
+      projectId: event.projectId,
+      taskId: event.taskId,
+      level: event.level,
+      message: event.message,
+      createdAt: event.createdAt
+    })),
+    dataArtifacts: snapshot.dataArtifacts.map((artifact) => ({
+      id: artifact.id,
+      projectId: artifact.projectId,
+      runId: artifact.runId,
+      taskId: artifact.taskId,
+      kind: artifact.kind,
+      stage: artifact.stage,
+      name: artifact.name,
+      size: artifact.size,
+      lineCount: artifact.lineCount,
+      createdAt: artifact.createdAt
+    })),
+    fetchedAt
+  };
 }
 
 function normalizeTimeout(value: unknown): number {

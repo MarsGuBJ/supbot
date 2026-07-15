@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, test } from "vitest";
-import { JsonFileStorage, MemoryManager, OpenAIChatCompletionsAdapter, normalizeChatCompletionsUrl, resolveMentionedSubagent, SupbotRuntime, ToolExecutor, ToolRegistry, TranscriptStore } from "../src";
+import { JsonFileStorage, MemoryManager, OpenAIChatCompletionsAdapter, buildReverseWorkspaceSnapshot, normalizeChatCompletionsUrl, resolveMentionedSubagent, SupbotRuntime, ToolExecutor, ToolRegistry, TranscriptStore } from "../src";
 import { queryLoop } from "../src/queryLoop";
 import { normalizeMarketApiUrl } from "../src/toolMarket";
 import { defaultModelConfig } from "@supbot/shared";
@@ -3291,6 +3291,66 @@ describe("SupbotRuntime", () => {
     }
   });
 
+  test("builds a path-safe Servstation workspace snapshot", async () => {
+    const runtime = await createRuntime();
+    const project = await runtime.createProjectFromName({ name: "Workspace Project" });
+    await runtime.createScheduledJob({
+      projectId: project.id,
+      title: "Daily summary",
+      prompt: "Summarize the project",
+      scheduleKind: "daily",
+      runAt: "2026-07-16T01:00:00.000Z",
+      enabled: true
+    });
+    const snapshot = runtime.snapshot();
+    const workspace = buildReverseWorkspaceSnapshot({
+      ...snapshot,
+      autopilotRuns: [{
+        id: "run-safe-1",
+        projectId: project.id,
+        projectRoot: "C:\\secret\\project",
+        title: "Safe run",
+        goal: "Verify projection",
+        status: "paused",
+        writePolicy: {
+          mode: "projectSandbox",
+          allowedWriteRoots: ["C:\\secret\\project"],
+          allowNetwork: false,
+          allowMcp: false,
+          maxRuntimeMinutes: 10,
+          maxTasks: 5,
+          maxRetries: 1
+        },
+        dataSources: [],
+        taskIds: [],
+        artifactIds: ["artifact-safe-1"],
+        checkpointIds: [],
+        evidence: ["C:\\secret\\project\\evidence.txt"],
+        createdAt: "2026-07-15T00:00:00.000Z",
+        updatedAt: "2026-07-15T00:00:00.000Z"
+      }],
+      dataArtifacts: [{
+        id: "artifact-safe-1",
+        projectId: project.id,
+        runId: "run-safe-1",
+        kind: "report",
+        stage: "report",
+        name: "summary.md",
+        path: "C:\\secret\\project\\summary.md",
+        source: "C:\\secret\\project\\input.txt",
+        size: 42,
+        createdAt: "2026-07-15T00:00:00.000Z"
+      }]
+    }, "2026-07-15T00:00:01.000Z");
+
+    expect(workspace.scheduledJobs).toHaveLength(1);
+    expect(workspace.autopilotRuns[0]).not.toHaveProperty("projectRoot");
+    expect(workspace.dataArtifacts[0]).not.toHaveProperty("path");
+    expect(workspace.dataArtifacts[0]).not.toHaveProperty("source");
+    expect(workspace).not.toHaveProperty("memory");
+    expect(JSON.stringify(workspace)).not.toContain("C:\\secret");
+  });
+
   test("connects to Servstation reverse SSE and returns read-only prompt results", async () => {
     const runtime = await createRuntime();
     let eventStream: import("node:http").ServerResponse | undefined;
@@ -3325,7 +3385,12 @@ describe("SupbotRuntime", () => {
         if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-reverse-1/a2a-peers/reverse-connections") {
           expect(request.headers["x-tenant-id"]).toBe("tenant-rev");
           const parsed = JSON.parse(body) as Record<string, unknown>;
-          expect(parsed.capabilities).toEqual(["prompt.readOnly", "conversation.projectAware"]);
+          expect(parsed.capabilities).toEqual([
+            "prompt.readOnly",
+            "conversation.projectAware",
+            "schedule.manage",
+            "autopilot.manage"
+          ]);
           expect(parsed.displayName).toBe("HBClient Desktop");
           expect(parsed.hbclientVersion).toBe("0.1.0");
           response.end(JSON.stringify({
@@ -3465,13 +3530,88 @@ describe("SupbotRuntime", () => {
           activeMessages: expect.any(Array)
         }
       });
+
+      const sendWorkspaceEvent = async (requestId: string, event: string, data: Record<string, unknown>) => {
+        eventStream!.write([
+          `id: ${requestId}`,
+          `event: ${event}`,
+          `data: ${JSON.stringify({ requestId, ...data })}`,
+          "",
+          ""
+        ].join("\n"));
+        const path = `/api/v1/agent/agent-reverse-1/a2a-peers/peer-reverse-1/requests/${requestId}/result`;
+        await waitForCondition(`${event} result`, () => Boolean(requestResults[path]));
+        return requestResults[path];
+      };
+
+      const workspaceResult = await sendWorkspaceEvent("workspace-req-1", "workspace_snapshot_request", {});
+      expect(workspaceResult).toMatchObject({
+        status: "completed",
+        result: {
+          scheduledJobs: [],
+          autopilotRuns: [],
+          fetchedAt: expect.any(String)
+        }
+      });
+      expect(workspaceResult.result).not.toHaveProperty("memory");
+
+      const scheduleCreated = await sendWorkspaceEvent("workspace-action-1", "workspace_action", {
+        action: "schedule.create",
+        payload: {
+          projectId: reverseProject.id,
+          title: "Remote plan",
+          prompt: "Run from client-web",
+          scheduleKind: "daily",
+          runAt: "2026-07-16T01:00:00.000Z",
+          enabled: true
+        }
+      });
+      expect(scheduleCreated).toMatchObject({ status: "completed", result: { title: "Remote plan", enabled: true } });
+      const scheduleId = (scheduleCreated.result as { id: string }).id;
+
+      const scheduleUpdated = await sendWorkspaceEvent("workspace-action-2", "workspace_action", {
+        action: "schedule.update",
+        payload: { id: scheduleId, enabled: false }
+      });
+      expect(scheduleUpdated).toMatchObject({ status: "completed", result: { id: scheduleId, enabled: false } });
+
+      await sendWorkspaceEvent("workspace-action-3", "workspace_action", {
+        action: "schedule.delete",
+        payload: { id: scheduleId }
+      });
+      expect(runtime.snapshot().scheduledJobs).toHaveLength(0);
+
+      const autopilotStarted = await sendWorkspaceEvent("workspace-action-4", "workspace_action", {
+        action: "autopilot.start",
+        payload: { projectId: reverseProject.id, title: "Remote run", goal: "Return a short verification" }
+      });
+      expect(autopilotStarted).toMatchObject({ status: "completed", result: { title: "Remote run" } });
+      const runId = (autopilotStarted.result as { id: string }).id;
+
+      const autopilotPaused = await sendWorkspaceEvent("workspace-action-5", "workspace_action", {
+        action: "autopilot.pause",
+        payload: { id: runId }
+      });
+      expect(autopilotPaused).toMatchObject({ status: "completed", result: { id: runId, status: "paused" } });
+
+      const autopilotResumed = await sendWorkspaceEvent("workspace-action-6", "workspace_action", {
+        action: "autopilot.resume",
+        payload: { id: runId }
+      });
+      expect(autopilotResumed).toMatchObject({ status: "completed", result: { id: runId } });
+
+      const autopilotCanceled = await sendWorkspaceEvent("workspace-action-7", "workspace_action", {
+        action: "autopilot.cancel",
+        payload: { id: runId }
+      });
+      expect(autopilotCanceled).toMatchObject({ status: "completed", result: { id: runId, status: "canceled" } });
     } finally {
       closeStream?.();
       await runtime.disconnectServstationReverseBridge();
       await mock.close();
       await new Promise<void>((resolve, reject) => servstation.close((error) => error ? reject(error) : resolve()));
     }
-  });
+  }, 15_000);
 
   test("recovers Servstation reverse registration when the persisted peer is returned after an audit JSON failure", async () => {
     const runtime = await createRuntime();
