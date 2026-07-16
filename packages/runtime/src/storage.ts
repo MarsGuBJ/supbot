@@ -172,9 +172,14 @@ const defaultSubagents: SubagentConfig[] = [
   }
 ];
 
-const defaultBotstationA2A = {
+const legacyLocalBotstationA2A = {
   baseUrl: "http://localhost:8081",
-  issuerUrl: "http://localhost:8092",
+  issuerUrl: "http://localhost:8092"
+};
+
+const defaultBotstationA2A = {
+  baseUrl: "http://101.227.67.76",
+  issuerUrl: "http://101.227.67.76:8092",
   clientId: "botstation-agent-client-web",
   scope: "openid profile email",
   redirectUri: "http://localhost:8800/oauth2/callback",
@@ -888,7 +893,12 @@ function shouldUseLocalBotstationDefault(rawValue: string, normalizedValue: stri
   }
   try {
     const url = new URL(rawValue);
-    return url.hostname === "zstupu.com" || url.hostname.endsWith(".zstupu.com");
+    return (
+      normalizedValue === legacyLocalBotstationA2A.baseUrl ||
+      normalizedValue === legacyLocalBotstationA2A.issuerUrl ||
+      url.hostname === "zstupu.com" ||
+      url.hostname.endsWith(".zstupu.com")
+    );
   } catch {
     return true;
   }

@@ -124,6 +124,11 @@ button {
   white-space: nowrap;
 }
 
+.hbclient-update-badge {
+  display: inline-flex;
+  align-items: center;
+}
+
 .hbclient-update-icon {
   width: 32px;
   min-width: 32px;
@@ -272,9 +277,27 @@ button {
   background: rgba(254, 253, 252, 0.88);
 }
 
+.server-agent-connect-topbar {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
 .server-agent-button {
   min-height: 40px;
   font-weight: 800;
+}
+
+.server-agent-connect-topbar .server-agent-button {
+  min-height: 28px;
+  max-width: 178px;
+  overflow: hidden;
+}
+
+.server-agent-connect-topbar .server-agent-button > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .server-agent-button.is-connected {

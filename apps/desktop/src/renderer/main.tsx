@@ -178,8 +178,8 @@ type Translator = (key: string, vars?: Record<string, string | number>) => strin
 type SelectionContextMenu = { x: number; y: number; text: string };
 type PromptContextMenu = { x: number; y: number; selectionStart: number; selectionEnd: number; selectedText: string };
 const defaultToolMarketApiUrl = "https://i-shu.com";
-const defaultBotstationBaseUrl = "http://localhost:8081";
-const defaultBotstationIssuerUrl = "http://localhost:8092";
+const defaultBotstationBaseUrl = "http://101.227.67.76";
+const defaultBotstationIssuerUrl = "http://101.227.67.76:8092";
 const defaultBotstationClientId = "botstation-agent-client-web";
 const defaultBotstationScope = "openid profile email";
 const defaultBotstationRedirectUri = "http://localhost:8800/oauth2/callback";
@@ -253,11 +253,9 @@ function App() {
   const [userDataPath, setUserDataPath] = useState("");
   const [updateState, setUpdateState] = useState<HBClientUpdateState>({ status: "idle", currentVersion: "" });
   const [messageApi, contextHolder] = message.useMessage();
-  const [modalApi, modalContextHolder] = Modal.useModal();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const messageStackRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
-  const promptedUpdateVersionsRef = useRef(new Set<string>());
   const t = useCallback((key: string, vars?: Record<string, string | number>) => translate(language, key, vars), [language]);
   const slashCommandList = useMemo(() => buildSlashCommands(t), [t]);
 
@@ -294,33 +292,21 @@ function App() {
     setActiveConversationId((current) => current || next.conversations[0]?.id || "");
   }, []);
 
-  const checkHBClientUpdate = useCallback(async () => {
+  const startHBClientUpdate = useCallback(async () => {
     try {
-      const next = await window.supbot.checkHBClientUpdate();
-      setUpdateState(next);
-      if (next.status === "not_available" || next.status === "idle") {
-        messageApi.info(language === "zh" ? "当前已是最新版本" : "HBClient is up to date");
+      if (updateState.status === "downloaded") {
+        setUpdateState(await window.supbot.installHBClientUpdate());
+        return;
+      }
+      const downloaded = await window.supbot.downloadHBClientUpdate();
+      setUpdateState(downloaded);
+      if (downloaded.status === "downloaded") {
+        setUpdateState(await window.supbot.installHBClientUpdate());
       }
     } catch (error) {
       messageApi.error((error as Error).message);
     }
-  }, [language, messageApi]);
-
-  const downloadHBClientUpdate = useCallback(async () => {
-    try {
-      setUpdateState(await window.supbot.downloadHBClientUpdate());
-    } catch (error) {
-      messageApi.error((error as Error).message);
-    }
-  }, [messageApi]);
-
-  const installHBClientUpdate = useCallback(async () => {
-    try {
-      setUpdateState(await window.supbot.installHBClientUpdate());
-    } catch (error) {
-      messageApi.error((error as Error).message);
-    }
-  }, [messageApi]);
+  }, [messageApi, updateState.status]);
 
   useEffect(() => {
     void refresh();
@@ -385,24 +371,6 @@ function App() {
       unsubscribe();
     };
   }, []);
-
-  useEffect(() => {
-    const version = updateState.availableVersion;
-    if (updateState.status !== "available" || !version || promptedUpdateVersionsRef.current.has(version)) {
-      return;
-    }
-    promptedUpdateVersionsRef.current.add(version);
-    modalApi.confirm({
-      title: language === "zh" ? `发现 HBClient ${version}` : `HBClient ${version} is available`,
-      content: language === "zh"
-        ? `当前版本 ${updateState.currentVersion}。点击升级后将下载安装包，完成后由你确认重启安装。`
-        : `Current version: ${updateState.currentVersion}. Download the update now and restart when ready.`,
-      okText: language === "zh" ? "立即升级" : "Upgrade",
-      cancelText: language === "zh" ? "稍后" : "Later",
-      centered: true,
-      onOk: downloadHBClientUpdate
-    });
-  }, [downloadHBClientUpdate, language, modalApi, updateState.availableVersion, updateState.currentVersion, updateState.status]);
 
   useEffect(() => {
     if (view !== "chat") {
@@ -644,7 +612,6 @@ function App() {
   return (
     <ConfigProvider theme={theme} locale={language === "zh" ? zhCN : enUS}>
       {contextHolder}
-      {modalContextHolder}
       <main className="workspace-shell">
         <Topbar
           snapshot={snapshot}
@@ -658,9 +625,7 @@ function App() {
           setLeftCollapsed={setLeftCollapsed}
           setRightCollapsed={setRightCollapsed}
           updateState={updateState}
-          checkUpdate={checkHBClientUpdate}
-          downloadUpdate={downloadHBClientUpdate}
-          installUpdate={installHBClientUpdate}
+          startUpdate={startHBClientUpdate}
         />
         {view === "chat" ? (
           <section className={`workspace-grid ${leftCollapsed ? "left-collapsed" : ""} ${rightCollapsed ? "right-collapsed" : ""}`}>
@@ -795,9 +760,7 @@ function Topbar({
   setLeftCollapsed,
   setRightCollapsed,
   updateState,
-  checkUpdate,
-  downloadUpdate,
-  installUpdate
+  startUpdate
 }: {
   snapshot: RuntimeSnapshot;
   view: WorkspaceView;
@@ -810,9 +773,7 @@ function Topbar({
   setLeftCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   setRightCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   updateState: HBClientUpdateState;
-  checkUpdate: () => void | Promise<void>;
-  downloadUpdate: () => void | Promise<void>;
-  installUpdate: () => void | Promise<void>;
+  startUpdate: () => void | Promise<void>;
 }) {
   return (
     <header className="topbar">
@@ -837,10 +798,9 @@ function Topbar({
         <HBClientUpdateButton
           state={updateState}
           language={language}
-          checkUpdate={checkUpdate}
-          downloadUpdate={downloadUpdate}
-          installUpdate={installUpdate}
+          startUpdate={startUpdate}
         />
+        <ServerAgentConnectionButton snapshot={snapshot} refresh={refresh} t={(key, vars) => translate(language, key, vars)} compact />
         <Segmented
           size="small"
           value={language}
@@ -854,9 +814,6 @@ function Topbar({
           <span className="status-dot" />
           {snapshot.status === "running" ? translate(language, "Running") : translate(language, "Ready")}
         </div>
-        <Tooltip title={translate(language, "Refresh")}>
-          <Button icon={<ReloadOutlined />} onClick={refresh} />
-        </Tooltip>
         {view === "chat" ? (
           <>
             <Tooltip title={translate(language, "Toggle left panel")}>
@@ -875,69 +832,59 @@ function Topbar({
 function HBClientUpdateButton({
   state,
   language,
-  checkUpdate,
-  downloadUpdate,
-  installUpdate
+  startUpdate
 }: {
   state: HBClientUpdateState;
   language: Language;
-  checkUpdate: () => void | Promise<void>;
-  downloadUpdate: () => void | Promise<void>;
-  installUpdate: () => void | Promise<void>;
+  startUpdate: () => void | Promise<void>;
 }) {
   const chinese = language === "zh";
-  if (state.status === "available") {
-    const label = chinese ? `升级到 v${state.availableVersion}` : `Upgrade to v${state.availableVersion}`;
-    return (
-      <Tooltip title={label}>
-        <Button className="hbclient-update-button" type="primary" size="small" icon={<DownloadOutlined />} onClick={() => void downloadUpdate()}>
-          {label}
-        </Button>
-      </Tooltip>
+  if (!["available", "downloading", "downloaded", "installing"].includes(state.status)) {
+    return null;
+  }
+
+  const withUpdateBadge = (button: React.ReactNode) => (
+    <Tooltip title="有新版本">
+      <Badge className="hbclient-update-badge" dot color="#ef4444" offset={[-2, 2]}>
+        {button}
+      </Badge>
+    </Tooltip>
+  );
+
+  if (state.status === "available" || state.status === "downloaded") {
+    const version = state.availableVersion ? " v" + state.availableVersion : "";
+    const label = state.status === "downloaded"
+      ? (chinese ? "安装更新" + version : "Install update" + version)
+      : (chinese ? "升级" + version : "Upgrade" + version);
+    return withUpdateBadge(
+      <Button className="hbclient-update-button" type="primary" size="small" icon={<DownloadOutlined />} onClick={() => void startUpdate()}>
+        {label}
+      </Button>
     );
   }
+
   if (state.status === "downloading") {
     const percent = Math.round(state.progress?.percent || 0);
     const progressTitle = state.progress
-      ? `${formatUpdateBytes(state.progress.transferred)} / ${formatUpdateBytes(state.progress.total)} · ${formatUpdateBytes(state.progress.bytesPerSecond)}/s`
-      : (chinese ? "正在下载安装包" : "Downloading update");
+      ? formatUpdateBytes(state.progress.transferred) + " / " + formatUpdateBytes(state.progress.total) + " · " + formatUpdateBytes(state.progress.bytesPerSecond) + "/s"
+      : (chinese ? "正在下载更新" : "Downloading update");
     return (
       <Tooltip title={progressTitle}>
-        <Button className="hbclient-update-button" size="small" loading disabled>
-          {percent}%
-        </Button>
+        <Badge className="hbclient-update-badge" dot color="#ef4444" offset={[-2, 2]}>
+          <Button className="hbclient-update-button" size="small" loading disabled>
+            {percent}%
+          </Button>
+        </Badge>
       </Tooltip>
     );
   }
-  if (state.status === "downloaded") {
-    const label = chinese ? "重启并安装" : "Restart and install";
-    return (
-      <Tooltip title={label}>
-        <Button className="hbclient-update-button" type="primary" size="small" icon={<SyncOutlined />} onClick={() => void installUpdate()}>
-          {label}
-        </Button>
-      </Tooltip>
-    );
-  }
-  const checking = state.status === "checking";
-  const installing = state.status === "installing";
-  const title = installing
-    ? (chinese ? "正在启动安装程序" : "Starting installer")
-    : (chinese ? "检查 HBClient 更新" : "Check for HBClient updates");
-  return (
-    <Tooltip title={title}>
-      <Button
-        className="hbclient-update-icon"
-        size="small"
-        aria-label={title}
-        icon={<SyncOutlined spin={checking || installing} />}
-        disabled={checking || installing}
-        onClick={() => void checkUpdate()}
-      />
-    </Tooltip>
+
+  return withUpdateBadge(
+    <Button className="hbclient-update-button" size="small" icon={<SyncOutlined spin />} disabled>
+      {chinese ? "安装中" : "Installing"}
+    </Button>
   );
 }
-
 function formatUpdateBytes(value: number): string {
   if (!Number.isFinite(value) || value <= 0) {
     return "0 B";
@@ -1020,7 +967,6 @@ function LeftPanel({
             />
           </section>
         </div>
-        <ServerAgentConnectionButton snapshot={snapshot} refresh={refresh} t={t} />
       </aside>
       <Modal
         open={newConversationOpen}
@@ -1055,11 +1001,13 @@ function LeftPanel({
 function ServerAgentConnectionButton({
   snapshot,
   refresh,
-  t
+  t,
+  compact = false
 }: {
   snapshot: RuntimeSnapshot;
   refresh: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
+  compact?: boolean;
 }) {
   const [messageApi, contextHolder] = message.useMessage();
   const [busy, setBusy] = useState(false);
@@ -1091,10 +1039,11 @@ function ServerAgentConnectionButton({
   };
 
   return (
-    <section className="server-agent-connect">
+    <section className={compact ? "server-agent-connect-topbar" : "server-agent-connect"}>
       {contextHolder}
       <Button
-        block
+        block={!compact}
+        size={compact ? "small" : undefined}
         type={isConnected ? "default" : "primary"}
         className={`server-agent-button ${isConnected ? "is-connected" : ""}`}
         icon={isConnected ? <CheckCircleOutlined /> : <ApiOutlined />}
