@@ -15,10 +15,10 @@
   "scripts": {
     "build": "npm run build -w @supbot/shared && npm run build -w @supbot/runtime && npm run build -w @supbot/ui && npm run build -w supbot",
     "dev": "npm run build -w @supbot/shared && npm run build -w @supbot/runtime && npm run dev -w supbot",
-    "test": "npm run test -w @supbot/runtime",
+    "test": "npm run test -w @supbot/runtime && npm run test -w supbot",
     "benchmark:autopilot": "npm run build -w @supbot/shared && npm run build -w @supbot/runtime && npm run benchmark:autopilot:run",
     "benchmark:autopilot:run": "node scripts/autopilot-benchmark.cjs",
-    "verify": "npm run build && npm run benchmark:autopilot:run && npm run test -w @supbot/runtime && npm run test:dev-port -w supbot && npm run smoke:electron",
+    "verify": "npm run build && npm run benchmark:autopilot:run && npm run test -w @supbot/runtime && npm run test -w supbot && npm run test:dev-port -w supbot && npm run smoke:electron",
     "verify:release": "npm audit --registry=https://registry.npmjs.org && npm run verify && npm run dist:win",
     "smoke:electron": "node scripts/electron-smoke.cjs",
     "pack:linux": "npm run build && npm pack -w supbot",

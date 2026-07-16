@@ -40,6 +40,7 @@ import type {
   ServstationSendDirectMessageInput,
   ServstationSendPromptInput,
   SubagentConfig,
+  SupbotUpdateState,
   SupbotEvent,
   ToolMarketConfigUpdate,
   ToolMarketQuery
@@ -47,6 +48,15 @@ import type {
 
 const api = {
   snapshot: () => ipcRenderer.invoke("snapshot"),
+  getSupbotUpdateState: () => ipcRenderer.invoke("supbot:update:getState"),
+  checkSupbotUpdate: () => ipcRenderer.invoke("supbot:update:check"),
+  downloadSupbotUpdate: () => ipcRenderer.invoke("supbot:update:download"),
+  installSupbotUpdate: () => ipcRenderer.invoke("supbot:update:install"),
+  onSupbotUpdate: (listener: (state: SupbotUpdateState) => void) => {
+    const wrapped = (_event: unknown, state: SupbotUpdateState) => listener(state);
+    ipcRenderer.on("supbot:updateState", wrapped);
+    return () => ipcRenderer.off("supbot:updateState", wrapped);
+  },
   createConversation: (title?: string) => ipcRenderer.invoke("conversation:create", title),
   deleteConversation: (id: string) => ipcRenderer.invoke("conversation:delete", id),
   sendPrompt: (input: SendPromptInput) => ipcRenderer.invoke("prompt:send", input),

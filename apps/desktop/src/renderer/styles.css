@@ -98,14 +98,30 @@ button {
   gap: 12px;
 }
 
-.topbar-actions,
-.panel-heading,
-.activity-head,
-.chat-banner {
-  justify-content: space-between;
+.topbar-actions, 
+.panel-heading, 
+.activity-head, 
+.chat-banner { 
+  justify-content: space-between; 
+} 
+
+.supbot-update-button {
+  min-width: 44px;
+  max-width: 190px;
+  white-space: nowrap;
 }
 
-.brand-mark {
+.supbot-update-button .ant-btn-icon + span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.supbot-update-button .ant-progress {
+  margin-left: 2px;
+  flex: 0 0 auto;
+}
+ 
+.brand-mark { 
   width: 72px;
   height: 72px;
   display: grid;

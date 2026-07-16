@@ -21,6 +21,7 @@
     "dev": "npm run build:main && node scripts/dev-electron.cjs",
     "dev:probe": "node scripts/dev-electron.cjs --probe",
     "test:dev-port": "node scripts/dev-port-smoke.cjs",
+    "test": "vitest run src/main/updateManager.test.ts",
     "start": "electron .",
     "dist:win": "electron-builder --win nsis",
     "dist:linux": "electron-builder --linux AppImage deb"
@@ -30,6 +31,7 @@
     "@supbot/runtime": "file:../../packages/runtime",
     "@supbot/shared": "file:../../packages/shared",
     "antd": "^5.26.0",
+    "electron-updater": "^6.8.9",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -59,6 +61,13 @@
     "extraMetadata": {
       "main": "dist/main/index.js"
     },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://zstupu.com/api/v1/supbot/updates/stable/win32-x64",
+        "useMultipleRangeRequest": false
+      }
+    ],
     "win": {
       "target": [
         "nsis"

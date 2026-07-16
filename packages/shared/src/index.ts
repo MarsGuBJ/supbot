@@ -1307,12 +1307,38 @@ export interface ProjectCreateInput {
   name?: string;
 }
 
-export interface ProjectUpdateInput {
-  name?: string;
-  status?: ProjectStatus;
+export interface ProjectUpdateInput { 
+  name?: string; 
+  status?: ProjectStatus; 
+} 
+
+export type SupbotUpdateStatus =
+  | "idle"
+  | "checking"
+  | "available"
+  | "not_available"
+  | "downloading"
+  | "downloaded"
+  | "installing"
+  | "error";
+
+export interface SupbotUpdateProgress {
+  percent: number;
+  bytesPerSecond: number;
+  transferred: number;
+  total: number;
 }
 
-export type DataSourceKind = "localFiles" | "folderScan" | "httpApi" | "webUrl" | "mcpTool" | "shellCommand";
+export interface SupbotUpdateState {
+  status: SupbotUpdateStatus;
+  currentVersion: string;
+  availableVersion?: string;
+  progress?: SupbotUpdateProgress;
+  error?: string;
+  checkedAt?: string;
+}
+ 
+export type DataSourceKind = "localFiles" | "folderScan" | "httpApi" | "webUrl" | "mcpTool" | "shellCommand"; 
 
 export interface DataSourceSpec {
   id: string;

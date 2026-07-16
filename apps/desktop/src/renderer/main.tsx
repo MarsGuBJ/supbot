@@ -124,11 +124,12 @@ import type {
   ServstationMessageAttachmentUpload,
   ServstationMessageDetail,
   ServstationMessageFolder,
-  ServstationMessageListItem,
-  ServstationScheduledJob,
-  ServstationSessionJob,
-  SubagentConfig,
-  ToolCallRecord,
+  ServstationMessageListItem, 
+  ServstationScheduledJob, 
+  ServstationSessionJob, 
+  SubagentConfig, 
+  SupbotUpdateState, 
+  ToolCallRecord, 
   ToolMarketCatalogItem,
   ToolMarketConfigUpdate,
   ToolMarketProductType,
@@ -194,12 +195,15 @@ function App() {
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [transcriptResult, setTranscriptResult] = useState<TranscriptLoadResult | null>(null);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
-  const [focusConfigTab, setFocusConfigTab] = useState("model");
-  const [userDataPath, setUserDataPath] = useState("");
-  const [messageApi, contextHolder] = message.useMessage();
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const messageStackRef = useRef<HTMLDivElement | null>(null);
-  const shouldStickToBottomRef = useRef(true);
+  const [focusConfigTab, setFocusConfigTab] = useState("model"); 
+  const [userDataPath, setUserDataPath] = useState(""); 
+  const [messageApi, contextHolder] = message.useMessage(); 
+  const [modalApi, modalContextHolder] = Modal.useModal();
+  const [updateState, setUpdateState] = useState<SupbotUpdateState | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null); 
+  const messageStackRef = useRef<HTMLDivElement | null>(null); 
+  const shouldStickToBottomRef = useRef(true); 
+  const promptedUpdateVersionRef = useRef(""); 
   const t = useCallback((key: string, vars?: Record<string, string | number>) => translate(language, key, vars), [language]);
   const slashCommandList = useMemo(() => buildSlashCommands(t), [t]);
 
@@ -236,9 +240,9 @@ function App() {
     setActiveConversationId((current) => current || next.conversations[0]?.id || "");
   }, []);
 
-  useEffect(() => {
-    void refresh();
-    void window.supbot.userDataPath().then(setUserDataPath);
+  useEffect(() => { 
+    void refresh(); 
+    void window.supbot.userDataPath().then(setUserDataPath); 
     return window.supbot.onEvent((event) => {
       if (event.type === "snapshot") {
         setSnapshot(event.snapshot);
@@ -282,11 +286,56 @@ function App() {
       }
       if (event.type === "error") {
         message.error(event.message);
+      } 
+    }); 
+  }, [refresh]); 
+
+  const startSupbotUpdate = useCallback(async () => {
+    try {
+      const current = await window.supbot.getSupbotUpdateState();
+      if (current.status === "downloaded") {
+        await window.supbot.installSupbotUpdate();
+        return;
       }
-    });
-  }, [refresh]);
+      if (current.status === "available" || (current.status === "error" && current.availableVersion)) {
+        await window.supbot.downloadSupbotUpdate();
+        return;
+      }
+      const checked = await window.supbot.checkSupbotUpdate();
+      if (checked.status === "available") {
+        await window.supbot.downloadSupbotUpdate();
+      } else if (checked.status === "not_available") {
+        messageApi.info(t("Supbot is up to date."));
+      }
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    }
+  }, [messageApi, t]);
 
   useEffect(() => {
+    void window.supbot.getSupbotUpdateState().then(setUpdateState).catch(() => undefined);
+    return window.supbot.onSupbotUpdate((state) => {
+      setUpdateState(state);
+      if (state.status === "available" && state.availableVersion && promptedUpdateVersionRef.current !== state.availableVersion) {
+        promptedUpdateVersionRef.current = state.availableVersion;
+        modalApi.confirm({
+          title: t("Supbot update {version} is available", { version: state.availableVersion }),
+          content: t("Current version: {version}", { version: state.currentVersion }),
+          okText: t("Upgrade now"),
+          cancelText: t("Later"),
+          onOk: () => startSupbotUpdate()
+        });
+      }
+      if (state.status === "downloaded") {
+        messageApi.success(t("Supbot update is ready to install."));
+      }
+      if (state.status === "error" && state.error) {
+        messageApi.error(state.error);
+      }
+    });
+  }, [messageApi, modalApi, startSupbotUpdate, t]);
+ 
+  useEffect(() => { 
     if (view !== "chat") {
       return;
     }
@@ -476,10 +525,11 @@ function App() {
   }
 
   return (
-    <ConfigProvider theme={theme} locale={language === "zh" ? zhCN : enUS}>
-      {contextHolder}
-      <main className="workspace-shell">
-        <Topbar
+    <ConfigProvider theme={theme} locale={language === "zh" ? zhCN : enUS}> 
+      {contextHolder} 
+      {modalContextHolder}
+      <main className="workspace-shell"> 
+        <Topbar 
           snapshot={snapshot}
           view={view}
           setView={setView}
@@ -487,10 +537,12 @@ function App() {
           language={language}
           setLanguage={setLanguage}
           leftCollapsed={leftCollapsed}
-          rightCollapsed={rightCollapsed}
-          setLeftCollapsed={setLeftCollapsed}
-          setRightCollapsed={setRightCollapsed}
-        />
+          rightCollapsed={rightCollapsed} 
+          setLeftCollapsed={setLeftCollapsed} 
+          setRightCollapsed={setRightCollapsed} 
+          updateState={updateState} 
+          startUpdate={startSupbotUpdate} 
+        /> 
         {view === "chat" ? (
           <section className={`workspace-grid ${leftCollapsed ? "left-collapsed" : ""} ${rightCollapsed ? "right-collapsed" : ""}`}>
             <LeftPanel
@@ -609,24 +661,28 @@ function Topbar({
   view,
   setView,
   refresh,
-  language,
-  setLanguage,
-  leftCollapsed,
-  rightCollapsed,
-  setLeftCollapsed,
-  setRightCollapsed
-}: {
-  snapshot: RuntimeSnapshot;
-  view: WorkspaceView;
+  language, 
+  setLanguage, 
+  leftCollapsed, 
+  rightCollapsed, 
+  setLeftCollapsed, 
+  setRightCollapsed,
+  updateState,
+  startUpdate
+}: { 
+  snapshot: RuntimeSnapshot; 
+  view: WorkspaceView; 
   setView: (view: WorkspaceView) => void;
   refresh: () => void;
   language: Language;
   setLanguage: (language: Language) => void;
   leftCollapsed: boolean;
-  rightCollapsed: boolean;
-  setLeftCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
-  setRightCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
-}) {
+  rightCollapsed: boolean; 
+  setLeftCollapsed: React.Dispatch<React.SetStateAction<boolean>>; 
+  setRightCollapsed: React.Dispatch<React.SetStateAction<boolean>>; 
+  updateState: SupbotUpdateState | null;
+  startUpdate: () => Promise<void>;
+}) { 
   return (
     <header className="topbar">
       <div className="identity">
@@ -661,10 +717,11 @@ function Topbar({
           <span className="status-dot" />
           {snapshot.status === "running" ? translate(language, "Running") : translate(language, "Ready")}
         </div>
-        <Tooltip title={translate(language, "Refresh")}>
-          <Button icon={<ReloadOutlined />} onClick={refresh} />
-        </Tooltip>
-        {view === "chat" ? (
+        <Tooltip title={translate(language, "Refresh")}> 
+          <Button icon={<ReloadOutlined />} onClick={refresh} /> 
+        </Tooltip> 
+        <SupbotUpdateButton state={updateState} language={language} onClick={startUpdate} />
+        {view === "chat" ? ( 
           <>
             <Tooltip title={translate(language, "Toggle left panel")}>
               <Button icon={leftCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />} onClick={() => setLeftCollapsed((value) => !value)} />
@@ -676,10 +733,72 @@ function Topbar({
         ) : null}
       </div>
     </header>
+  ); 
+} 
+
+function SupbotUpdateButton({
+  state,
+  language,
+  onClick
+}: {
+  state: SupbotUpdateState | null;
+  language: Language;
+  onClick: () => Promise<void>;
+}) {
+  if (!state || state.status === "idle" || state.status === "not_available") {
+    return null;
+  }
+  const busy = state.status === "checking" || state.status === "downloading" || state.status === "installing";
+  const downloaded = state.status === "downloaded";
+  const label = state.status === "checking"
+    ? translate(language, "Checking update")
+    : state.status === "downloading"
+      ? translate(language, "Downloading update")
+      : state.status === "installing"
+        ? translate(language, "Installing update")
+        : downloaded
+          ? translate(language, "Install update")
+          : state.availableVersion
+            ? translate(language, "Upgrade {version}", { version: state.availableVersion })
+            : translate(language, "Check update");
+  const tooltip = state.status === "downloading" && state.progress
+    ? `${Math.round(state.progress.percent)}% - ${formatUpdateBytes(state.progress.transferred)} / ${formatUpdateBytes(state.progress.total)}`
+    : downloaded
+      ? translate(language, "Restart Supbot to install the update")
+      : state.error || label;
+  return (
+    <Tooltip title={tooltip}>
+      <Button
+        className="supbot-update-button"
+        type={downloaded || state.status === "available" ? "primary" : "default"}
+        icon={busy ? <SyncOutlined spin /> : <DownloadOutlined />}
+        loading={state.status === "checking"}
+        onClick={() => void onClick()}
+        disabled={state.status === "installing"}
+      >
+        <span>{label}</span>
+        {state.status === "downloading" && state.progress ? (
+          <Progress type="circle" size={18} percent={Math.round(state.progress.percent)} showInfo={false} />
+        ) : null}
+      </Button>
+    </Tooltip>
   );
 }
 
-function LeftPanel({
+function formatUpdateBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0 B";
+  }
+  if (value < 1024) {
+    return `${Math.round(value)} B`;
+  }
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} KB`;
+  }
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+ 
+function LeftPanel({ 
   snapshot,
   activeConversationId,
   setActiveConversationId,

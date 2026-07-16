@@ -2,13 +2,15 @@ import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell, type WebConten
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { hostname, userInfo } from "node:os";
 import { isAbsolute, join, normalize, relative, resolve } from "node:path";
-import { JsonFileStorage, SupbotRuntime, ensureRuntimeDirs, identityContextFromAccessToken, oidcTokenSetFromTokenResponse, type RuntimeState, type StorageAdapter } from "@supbot/runtime";
-import type { AutopilotStartDataRunInput, CapabilityUpdateInput, DataSourceSpec, IdentityContext, McpConfigTransfer, McpServerInput, McpServerUpdate, MemoryAddInput, MemoryImportInput, MemoryRecallFeedbackInput, MemoryReplayRecallInput, MemorySearchQuery, MemoryUpdateInput, ModelConfigUpdate, PermissionMode, PermissionRule, PersonalityConfig, ProjectCreateInput, ProjectUpdateInput, RemoteBridgeConfig, ScheduledJobInput, SendPromptInput, ServstationA2AConfigUpdate, ServstationA2AOidcLoginInput, ServstationA2AOidcLoginResult, ServstationAutopilotStartInput, ServstationAutopilotStatusUpdate, ServstationClientSnapshotQuery, ServstationFlowEngineApprovalDecisionInput, ServstationFlowEngineLaunchInput, ServstationMailAccountDraft, ServstationMessageAttachmentUpload, ServstationMessageFolder, ServstationMessageAccountRef, ServstationScheduledJobInput, ServstationSendAgentMessageInput, ServstationSendDirectMessageInput, ServstationSendPromptInput, SubagentConfig, ToolMarketConfigUpdate, ToolMarketQuery } from "@supbot/shared";
-import type { AutopilotApprovalDecisionInput, AutopilotStartInput } from "@supbot/shared";
-
-let mainWindow: BrowserWindow | null = null;
-let runtime: SupbotRuntime | null = null;
-const servstationMessageEventSubscriptions = new Map<string, AbortController>();
+import { JsonFileStorage, SupbotRuntime, ensureRuntimeDirs, identityContextFromAccessToken, oidcTokenSetFromTokenResponse, type RuntimeState, type StorageAdapter } from "@supbot/runtime"; 
+import type { AutopilotStartDataRunInput, CapabilityUpdateInput, DataSourceSpec, IdentityContext, McpConfigTransfer, McpServerInput, McpServerUpdate, MemoryAddInput, MemoryImportInput, MemoryRecallFeedbackInput, MemoryReplayRecallInput, MemorySearchQuery, MemoryUpdateInput, ModelConfigUpdate, PermissionMode, PermissionRule, PersonalityConfig, ProjectCreateInput, ProjectUpdateInput, RemoteBridgeConfig, ScheduledJobInput, SendPromptInput, ServstationA2AConfigUpdate, ServstationA2AOidcLoginInput, ServstationA2AOidcLoginResult, ServstationAutopilotStartInput, ServstationAutopilotStatusUpdate, ServstationClientSnapshotQuery, ServstationFlowEngineApprovalDecisionInput, ServstationFlowEngineLaunchInput, ServstationMailAccountDraft, ServstationMessageAttachmentUpload, ServstationMessageFolder, ServstationMessageAccountRef, ServstationScheduledJobInput, ServstationSendAgentMessageInput, ServstationSendDirectMessageInput, ServstationSendPromptInput, SubagentConfig, ToolMarketConfigUpdate, ToolMarketQuery } from "@supbot/shared"; 
+import type { AutopilotApprovalDecisionInput, AutopilotStartInput } from "@supbot/shared"; 
+import { SupbotUpdateManager } from "./updateManager"; 
+ 
+let mainWindow: BrowserWindow | null = null; 
+let runtime: SupbotRuntime | null = null; 
+let updateManager: SupbotUpdateManager | null = null; 
+const servstationMessageEventSubscriptions = new Map<string, AbortController>(); 
 const isDev = !app.isPackaged;
 const allowedDevServerOrigin = "http://127.0.0.1:5173";
 const appIconPath = join(__dirname, "../../build/supbot-icon.ico");
@@ -188,14 +190,35 @@ function safeUserName(): string {
   }
 }
 
-function getRuntime(): SupbotRuntime {
-  if (!runtime) {
-    throw new Error("Supbot runtime is not ready.");
-  }
-  return runtime;
-}
+function getRuntime(): SupbotRuntime { 
+  if (!runtime) { 
+    throw new Error("Supbot runtime is not ready."); 
+  } 
+  return runtime; 
+} 
 
-interface OidcDiscoveryDocument {
+async function supbotUpdateFeedContext(forceRefresh: boolean): Promise<{ baseUrl: string; accessToken?: string }> {
+  const service = getRuntime();
+  const [config, identity] = await Promise.all([
+    service.servstationA2AConfig(),
+    service.identityContext()
+  ]);
+  const baseUrl = normalizeOidcUrl(
+    config.baseUrl || identity?.servstationUrl || process.env.SUPBOT_SERVSTATION_BASE_URL || "https://zstupu.com",
+    "Servstation base URL"
+  );
+  let accessToken: string | undefined;
+  try {
+    accessToken = await service.servstationA2AAccessToken(undefined, forceRefresh);
+  } catch (error) {
+    if (forceRefresh) {
+      throw error;
+    }
+  }
+  return { baseUrl, accessToken };
+}
+ 
+interface OidcDiscoveryDocument { 
   authorization_endpoint?: string;
   token_endpoint?: string;
 }
@@ -452,10 +475,15 @@ async function createWindow(): Promise<void> {
       webSecurity: true,
       allowRunningInsecureContent: false
     }
+  }); 
+  hardenWebContents(mainWindow.webContents); 
+  updateManager?.stop();
+  updateManager = new SupbotUpdateManager({
+    getFeedContext: supbotUpdateFeedContext,
+    emitState: (state) => mainWindow?.webContents.send("supbot:updateState", state)
   });
-  hardenWebContents(mainWindow.webContents);
-
-  const devServerUrl = process.env.SUPBOT_DEV_SERVER_URL;
+ 
+  const devServerUrl = process.env.SUPBOT_DEV_SERVER_URL; 
   if (devServerUrl) {
     if (!isDev) {
       throw new Error("SUPBOT_DEV_SERVER_URL is disabled in packaged production builds.");
@@ -466,18 +494,25 @@ async function createWindow(): Promise<void> {
     await mainWindow.loadURL(devServerUrl);
     mainWindow.webContents.openDevTools({ mode: "detach" });
   } else {
-    installProductionCsp(mainWindow.webContents);
-    await mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
-  }
+    installProductionCsp(mainWindow.webContents); 
+    await mainWindow.loadFile(join(__dirname, "../renderer/index.html")); 
+  } 
+  updateManager.start();
+ 
+  mainWindow.on("closed", () => { 
+    updateManager?.stop();
+    updateManager = null;
+    mainWindow = null; 
+  }); 
+} 
 
-  mainWindow.on("closed", () => {
-    mainWindow = null;
-  });
-}
-
-function registerIpc(): void {
-  ipcMain.handle("snapshot", () => getRuntime().snapshot());
-  ipcMain.handle("conversation:create", (_event, title?: string) => getRuntime().createConversation(optionalString(title, "title")));
+function registerIpc(): void { 
+  ipcMain.handle("snapshot", () => getRuntime().snapshot()); 
+  ipcMain.handle("supbot:update:getState", () => updateManager?.getState() || { status: "idle", currentVersion: app.getVersion() });
+  ipcMain.handle("supbot:update:check", () => updateManager?.check(true) || { status: "idle", currentVersion: app.getVersion() });
+  ipcMain.handle("supbot:update:download", () => updateManager?.download() || { status: "idle", currentVersion: app.getVersion() });
+  ipcMain.handle("supbot:update:install", () => updateManager?.install() || { status: "idle", currentVersion: app.getVersion() });
+  ipcMain.handle("conversation:create", (_event, title?: string) => getRuntime().createConversation(optionalString(title, "title"))); 
   ipcMain.handle("conversation:delete", (_event, id: string) => getRuntime().deleteConversation(requiredString(id, "conversation id")));
   ipcMain.handle("prompt:send", (_event, input: SendPromptInput) => getRuntime().sendPrompt(validateSendPromptInput(input)));
   ipcMain.handle("job:cancel", (_event, id: string) => getRuntime().cancelJob(requiredString(id, "job id")));
@@ -1375,6 +1410,7 @@ app.on("window-all-closed", () => {
   }
 });
 
-app.on("before-quit", () => {
-  void runtime?.shutdown();
+app.on("before-quit", () => { 
+  updateManager?.stop();
+  void runtime?.shutdown(); 
 });

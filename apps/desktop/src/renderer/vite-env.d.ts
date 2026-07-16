@@ -83,10 +83,11 @@ import type {
   ServstationSendAgentMessageInput,
   ServstationSendDirectMessageInput,
   ServstationSendPromptInput,
-  ServstationSendPromptResult,
-  ServstationSessionJob,
-  SubagentConfig,
-  SupbotEvent,
+  ServstationSendPromptResult, 
+  ServstationSessionJob, 
+  SubagentConfig, 
+  SupbotUpdateState, 
+  SupbotEvent, 
   ToolMarketCatalogItem,
   ToolMarketConfig,
   ToolMarketConfigUpdate,
@@ -97,9 +98,14 @@ import type {
 
 declare global {
   interface Window {
-    supbot: {
-      snapshot(): Promise<RuntimeSnapshot>;
-      createConversation(title?: string): Promise<Conversation>;
+    supbot: { 
+      snapshot(): Promise<RuntimeSnapshot>; 
+      getSupbotUpdateState(): Promise<SupbotUpdateState>;
+      checkSupbotUpdate(): Promise<SupbotUpdateState>;
+      downloadSupbotUpdate(): Promise<SupbotUpdateState>;
+      installSupbotUpdate(): Promise<SupbotUpdateState>;
+      onSupbotUpdate(listener: (state: SupbotUpdateState) => void): () => void;
+      createConversation(title?: string): Promise<Conversation>; 
       deleteConversation(id: string): Promise<void>;
       sendPrompt(input: SendPromptInput): Promise<SendPromptResult>;
       cancelJob(id: string): Promise<void>;
