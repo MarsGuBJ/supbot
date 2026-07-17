@@ -47,6 +47,7 @@ describe("HBClientUpdateManager", () => {
     updaterMock.checkForUpdates.mockReset();
     updaterMock.downloadUpdate.mockReset();
     updaterMock.quitAndInstall.mockReset();
+    updaterMock.disableDifferentialDownload = true;
     updaterMock.requestHeaders = {};
     delete process.env.HBCLIENT_UPDATE_FEED_URL;
   });
@@ -70,10 +71,12 @@ describe("HBClientUpdateManager", () => {
     });
 
     await manager.check(true);
+    expect(updaterMock.disableDifferentialDownload).toBe(false);
     expect(manager.getState()).toMatchObject({ status: "available", currentVersion: "1.0.0", availableVersion: "1.1.0" });
     expect(updaterMock.setFeedURL).toHaveBeenCalledWith({
       provider: "generic",
-      url: "https://botstation.example/api/v1/hbclient/updates/stable/win32-x64"
+      url: "https://botstation.example/api/v1/hbclient/updates/stable/win32-x64",
+      useMultipleRangeRequest: false
     });
     expect(updaterMock.requestHeaders).toEqual({ Authorization: "Bearer token-1" });
 
@@ -108,6 +111,21 @@ describe("HBClientUpdateManager", () => {
     expect(getFeedContext).toHaveBeenNthCalledWith(2, true);
     expect(updaterMock.requestHeaders).toEqual({ Authorization: "Bearer fresh" });
     expect(manager.getState().status).toBe("not_available");
+  });
+
+  it("checks a public update feed without an access token", async () => {
+    const getFeedContext = vi.fn().mockResolvedValue({ baseUrl: "https://botstation.example" });
+    const manager = new HBClientUpdateManager({ getFeedContext, emitState: vi.fn() });
+    updaterMock.checkForUpdates.mockImplementation(async () => {
+      updaterMock.emit("update-available", { version: "1.1.0" });
+      return {};
+    });
+
+    await manager.check(false);
+
+    expect(getFeedContext).toHaveBeenCalledWith(false);
+    expect(updaterMock.requestHeaders).toEqual({});
+    expect(manager.getState()).toMatchObject({ status: "available", availableVersion: "1.1.0" });
   });
 
   it("maps a missing manifest to no update", async () => {

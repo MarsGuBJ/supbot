@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, test } from "vitest";
-import { JsonFileStorage, MemoryManager, OpenAIChatCompletionsAdapter, buildReverseWorkspaceSnapshot, normalizeChatCompletionsUrl, resolveMentionedSubagent, SupbotRuntime, ToolExecutor, ToolRegistry, TranscriptStore } from "../src";
+import { createInitialState, JsonFileStorage, MemoryManager, OpenAIChatCompletionsAdapter, buildReverseWorkspaceSnapshot, normalizeChatCompletionsUrl, resolveMentionedSubagent, SupbotRuntime, ToolExecutor, ToolRegistry, TranscriptStore } from "../src";
 import { queryLoop } from "../src/queryLoop";
 import { normalizeMarketApiUrl } from "../src/toolMarket";
 import { defaultModelConfig } from "@supbot/shared";
@@ -946,6 +946,58 @@ describe("SupbotRuntime", () => {
     await expect(readFile(receiptPath, "utf8")).rejects.toThrow();
   });
 
+  test("restores installed tool market skill capabilities from bundled receipts", async () => {
+    const rootDir = await createGitRoot();
+    const dataDir = await mkdtemp(join(tmpdir(), "supbot-test-"));
+    tempDirs.push(dataDir);
+    const skillDir = join(dataDir, "skills", "seed-skill");
+    await mkdir(skillDir, { recursive: true });
+    const capability = {
+      id: "market.skill.seed-skill",
+      name: "Seed Skill",
+      kind: "skill",
+      description: "Bundled seed skill.",
+      enabled: true
+    };
+    const manifest = {
+      version: 1,
+      installedAt: "2026-01-01T00:00:00.000Z",
+      localKind: "skill",
+      localPath: skillDir,
+      product: {
+        id: "seed-skill",
+        name: "Seed Skill",
+        type: "skill",
+        origin: "remote",
+        description: "Bundled seed skill.",
+        tags: ["seed"],
+        free: true,
+        purchased: true
+      },
+      deployment: {
+        kind: "skill",
+        capability,
+        commandTemplates: [],
+        files: [{ path: "SKILL.md", encoding: "utf8" }]
+      }
+    };
+    await writeFile(join(skillDir, "SKILL.md"), "# Seed Skill\n\nUse this bundled test skill.\n", "utf8");
+    await writeFile(join(skillDir, "supbot-local-tool.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    const receiptDir = join(dataDir, "tool-market", "remote", "seed-skill");
+    await mkdir(receiptDir, { recursive: true });
+    await writeFile(join(receiptDir, "supbot-market-install.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+
+    const runtime = new SupbotRuntime(new JsonFileStorage(dataDir), { rootDir });
+    await runtime.init();
+    expect(runtime.snapshot().capabilities.find((item) => item.id === capability.id)).toMatchObject(capability);
+    expect((await runtime.listToolMarket({ query: "Seed" })).find((item) => item.id === "seed-skill")?.installed).toBe(true);
+
+    await runtime.deleteCapability(capability.id);
+    const restarted = new SupbotRuntime(new JsonFileStorage(dataDir), { rootDir });
+    await restarted.init();
+    expect(restarted.snapshot().capabilities.some((item) => item.id === capability.id)).toBe(false);
+  });
+
   test("edits and deletes capabilities", async () => {
     const runtime = await createRuntime();
     const updated = await runtime.updateCapability("tool.scheduler", {
@@ -984,6 +1036,25 @@ describe("SupbotRuntime", () => {
     const restarted = new SupbotRuntime(new JsonFileStorage(dir), { rootDir });
     await restarted.init();
     expect(restarted.snapshot().capabilities.some((item) => item.id === "tool.scheduler")).toBe(false);
+  });
+
+  test("migrates the bare Botstation host to the public agent client port", async () => {
+    const rootDir = await createGitRoot();
+    const dir = await mkdtemp(join(tmpdir(), "supbot-test-"));
+    tempDirs.push(dir);
+    const storage = new JsonFileStorage(dir);
+    const state = createInitialState();
+    state.servstationA2AConfig = {
+      ...state.servstationA2AConfig,
+      baseUrl: "http://101.227.67.76"
+    };
+    await storage.save(state);
+
+    const runtime = new SupbotRuntime(storage, { rootDir });
+    await runtime.init();
+    const config = runtime.snapshot().servstationA2A.config;
+    expect(config.baseUrl).toBe("http://101.227.67.76:8800");
+    expect(config.oidc?.issuerUrl).toBe("http://101.227.67.76:8092");
   });
 
   test("installs market skills and plugins into native local folders", async () => {
@@ -3392,7 +3463,7 @@ describe("SupbotRuntime", () => {
             "autopilot.manage"
           ]);
           expect(parsed.displayName).toBe("HBClient Desktop");
-          expect(parsed.hbclientVersion).toBe("0.1.0");
+          expect(parsed.hbclientVersion).toBe("0.1.2");
           response.end(JSON.stringify({
             peer: { id: "peer-reverse-1" },
             streamUrl: "/api/v1/agent/agent-reverse-1/a2a-peers/peer-reverse-1/events",
@@ -3758,7 +3829,6 @@ describe("SupbotRuntime", () => {
         requestId: "req-1",
         clientId: "agent-client-web-dev",
         jobType: "interactive",
-        conversationId: "conv-1",
         runtimeSessionId: "runtime-1",
         payload: { prompt: "existing prompt" },
         status: "completed",
@@ -3767,6 +3837,21 @@ describe("SupbotRuntime", () => {
         createdAt: "2026-01-01T00:00:01.000Z",
         finishedAt: "2026-01-01T00:00:02.000Z"
       }]
+    };
+    const mismatchedConversationJob = {
+      id: "job-other",
+      agentInstanceId: "agent-client-1",
+      requestId: "req-other",
+      clientId: "agent-client-web-dev",
+      jobType: "interactive",
+      conversationId: "conv-other",
+      runtimeSessionId: "runtime-other",
+      payload: { prompt: "other prompt" },
+      status: "completed",
+      queuePosition: 0,
+      result: { assistantText: "other answer" },
+      createdAt: "2026-01-01T00:00:01.000Z",
+      finishedAt: "2026-01-01T00:00:02.000Z"
     };
     const scheduledJobs = [{
       id: "schedule-1",
@@ -3987,6 +4072,26 @@ describe("SupbotRuntime", () => {
           response.end(JSON.stringify({ conversations }));
           return;
         }
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/conversations/conv-1") {
+          response.end(JSON.stringify({
+            ...conversations[0],
+            messages: [
+              {
+                id: "message-user-1",
+                role: "user",
+                text: "historical prompt",
+                createdAt: "2026-01-01T00:00:01.000Z"
+              },
+              {
+                id: "message-agent-1",
+                role: "assistant",
+                content: "historical answer",
+                createdAt: "2026-01-01T00:00:02.000Z"
+              }
+            ]
+          }));
+          return;
+        }
         if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-client-1/conversations") {
           const conversation = {
             id: "conv-new",
@@ -4004,8 +4109,19 @@ describe("SupbotRuntime", () => {
           response.end(JSON.stringify(conversation));
           return;
         }
+        if (request.method === "DELETE" && url.pathname === "/api/v1/agent/agent-client-1/conversations/conv-new") {
+          const index = conversations.findIndex((conversation) => conversation.id === "conv-new");
+          if (index >= 0) {
+            conversations.splice(index, 1);
+          }
+          response.end(JSON.stringify({ deletedConversationId: "conv-new", deletedJobIds: ["job-new"] }));
+          return;
+        }
         if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/jobs") {
-          response.end(JSON.stringify({ jobs: jobsByConversation[url.searchParams.get("conversationId") || ""] || [] }));
+          const conversationId = url.searchParams.get("conversationId") || "";
+          response.end(JSON.stringify({
+            jobs: [...(jobsByConversation[conversationId] || []), mismatchedConversationJob]
+          }));
           return;
         }
         if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-client-1/jobs") {
@@ -4297,7 +4413,31 @@ describe("SupbotRuntime", () => {
       expect(snapshot.projects[0]).toMatchObject({ id: "project-1", name: "Project One", resourceCount: 1 });
       expect(snapshot.conversations).toHaveLength(1);
       expect(snapshot.conversations[0]).toMatchObject({ projectId: "project-1", projectName: "Project One" });
-      expect(snapshot.jobs[0]).toMatchObject({ id: "job-1", status: "completed" });
+      expect(snapshot.jobs).toHaveLength(1);
+      expect(snapshot.jobs[0]).toMatchObject({ id: "job-1", conversationId: "conv-1", status: "completed" });
+      expect((snapshot.conversations[0] as typeof snapshot.conversations[number] & { messages?: unknown[] }).messages).toEqual([
+        {
+          id: "message-user-1",
+          role: "user",
+          text: "historical prompt",
+          createdAt: "2026-01-01T00:00:01.000Z"
+        },
+        {
+          id: "message-agent-1",
+          role: "agent",
+          text: "historical answer",
+          createdAt: "2026-01-01T00:00:02.000Z"
+        }
+      ]);
+      const historicalJobs = jobsByConversation["conv-1"];
+      jobsByConversation["conv-1"] = [];
+      const transcriptOnlySnapshot = await runtime.getServstationClientSnapshot({ conversationId: "conv-1" });
+      expect(transcriptOnlySnapshot.jobs).toEqual([]);
+      expect(transcriptOnlySnapshot.conversations[0].messages?.map((message) => message.text)).toEqual([
+        "historical prompt",
+        "historical answer"
+      ]);
+      jobsByConversation["conv-1"] = historicalJobs;
       expect(snapshot.scheduledJobs[0]).toMatchObject({ id: "schedule-1" });
       expect(snapshot.autopilotRun).toMatchObject({ id: "run-1", phase: "executing", stepCount: 1, maxSteps: 20 });
       expect(snapshot.autopilotEvents[0]?.id).toBe("evt-1");
@@ -4332,6 +4472,8 @@ describe("SupbotRuntime", () => {
         mimeType: "text/plain",
         contentBase64: Buffer.from("hello remote").toString("base64")
       });
+      await runtime.deleteServstationConversation("conv-new");
+      expect(requests.some((item) => item.method === "DELETE" && item.path === "/api/v1/agent/agent-client-1/conversations/conv-new")).toBe(true);
 
       expect(await runtime.createServstationProject("Project Two")).toMatchObject({ id: "project-new", name: "Project Two" });
       expect(await runtime.updateServstationProject("project-1", "Project Renamed")).toMatchObject({ id: "project-1", name: "Project Renamed" });

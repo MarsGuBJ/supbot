@@ -1,6 +1,6 @@
 {
   "name": "hbclient-workspace",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "private": true,
   "description": "HBClient local desktop agent workspace.",
   "config": {

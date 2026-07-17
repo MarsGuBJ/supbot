@@ -12,6 +12,7 @@ import type {
   ServstationClientSnapshot,
   ServstationClientSnapshotQuery,
   ServstationConversation,
+  ServstationConversationMessage,
   ServstationDeleteProjectResourceResponse,
   ServstationDeleteProjectResponse,
   ServstationFlowEngineApprovalDecisionInput,
@@ -227,17 +228,22 @@ export class ServstationAgentClient {
     const activeConversationId = query.conversationId && conversations.some((item) => item.id === query.conversationId)
       ? query.conversationId
       : conversations[0]?.id;
-    const [jobs, autopilotEvents, autopilotSteps] = await Promise.all([
+    const selectedConversation = conversations.find((conversation) => conversation.id === activeConversationId);
+    const [jobs, hydratedConversation, autopilotEvents, autopilotSteps] = await Promise.all([
       activeConversationId ? this.listJobs(agentInstanceId, activeConversationId, signal) : Promise.resolve([]),
+      selectedConversation ? this.fetchConversation(agentInstanceId, selectedConversation, signal) : Promise.resolve(undefined),
       currentAutopilot?.id ? this.fetchAutopilotEvents(agentInstanceId, currentAutopilot.id, signal) : Promise.resolve([]),
       currentAutopilot?.id ? this.fetchAutopilotStepsForAgent(agentInstanceId, currentAutopilot.id, signal) : Promise.resolve([])
     ]);
+    const hydratedConversations = hydratedConversation
+      ? conversations.map((conversation) => conversation.id === hydratedConversation.id ? hydratedConversation : conversation)
+      : conversations;
     return {
       ...baseSnapshot,
       agentInstanceId,
       activeConversationId,
       projects,
-      conversations,
+      conversations: hydratedConversations,
       jobs,
       scheduledJobs,
       services: capabilities.services,
@@ -308,7 +314,7 @@ export class ServstationAgentClient {
 
   async deleteConversation(conversationId: string, signal?: AbortSignal): Promise<void> {
     const agentInstanceId = await this.ensureConnectedAgent(signal);
-    await this.request(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/conversations?conversationId=${encodeURIComponent(conversationId)}`, {
+    await this.request(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/conversations/${encodeURIComponent(conversationId)}`, {
       method: "DELETE",
       signal
     });
@@ -813,6 +819,28 @@ export class ServstationAgentClient {
     return Array.isArray(response.conversations) ? response.conversations : [];
   }
 
+  private async fetchConversation(
+    agentInstanceId: string,
+    fallback: ServstationConversation,
+    signal?: AbortSignal
+  ): Promise<ServstationConversation | undefined> {
+    try {
+      const response = await this.request<unknown>(
+        `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/conversations/${encodeURIComponent(fallback.id)}`,
+        { method: "GET", signal }
+      );
+      return {
+        ...fallback,
+        messages: normalizeConversationMessages(response, fallback.id)
+      };
+    } catch (error) {
+      if (signal?.aborted) {
+        throw error;
+      }
+      return fallback;
+    }
+  }
+
   private async listProjects(agentInstanceId: string, signal?: AbortSignal): Promise<ServstationProject[]> {
     const response = await this.request<ProjectsResponse>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/projects`, {
       method: "GET",
@@ -881,7 +909,15 @@ export class ServstationAgentClient {
       method: "GET",
       signal
     });
-    return Array.isArray(response.jobs) ? response.jobs : [];
+    return Array.isArray(response.jobs)
+      ? response.jobs.flatMap((job) => {
+          const returnedConversationId = job.conversationId?.trim();
+          if (returnedConversationId && returnedConversationId !== conversationId) {
+            return [];
+          }
+          return [{ ...job, conversationId }];
+        })
+      : [];
   }
 
   private async listScheduledJobs(agentInstanceId: string, signal?: AbortSignal): Promise<ServstationScheduledJob[]> {
@@ -1152,6 +1188,66 @@ function fallbackConversation(agentInstanceId: string, conversationId: string, j
     createdAt: job.createdAt || now,
     updatedAt: job.createdAt || now
   };
+}
+
+function normalizeConversationMessages(response: unknown, conversationId: string): ServstationConversationMessage[] {
+  const root = objectRecord(response);
+  const transcript = objectRecord(root?.transcript) || objectRecord(root?.result) || root;
+  if (!transcript) {
+    return [];
+  }
+  const values = Array.isArray(transcript.activeMessages)
+    ? transcript.activeMessages
+    : Array.isArray(transcript.messages)
+      ? transcript.messages
+      : Array.isArray(transcript.entries)
+        ? transcript.entries
+        : [];
+  return values.flatMap((value, index) => {
+    const entry = objectRecord(value);
+    const message = entry?.type === "message" ? objectRecord(entry.message) : entry;
+    const text = stringValue(message?.text) || stringValue(message?.content) || stringValue(message?.assistantText);
+    const role = normalizeConversationMessageRole(stringValue(message?.role));
+    if (!message || !text || !role) {
+      return [];
+    }
+    return [{
+      id: stringValue(message.id) || `${conversationId}-message-${index + 1}`,
+      role,
+      text,
+      ...(message.payload !== undefined ? { payload: message.payload } : {}),
+      ...(stringValue(message.status) ? { status: stringValue(message.status) } : {}),
+      ...(stringValue(message.jobId) ? { jobId: stringValue(message.jobId) } : {}),
+      createdAt: normalizeMessageTimestamp(message.createdAt ?? message.timestamp)
+    } satisfies ServstationConversationMessage];
+  });
+}
+
+function objectRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeConversationMessageRole(role: string): ServstationConversationMessage["role"] | undefined {
+  if (role === "user") {
+    return "user";
+  }
+  return role === "agent" || role === "assistant" ? "agent" : undefined;
+}
+
+function normalizeMessageTimestamp(value: unknown): string {
+  if (typeof value === "string" && value.trim()) {
+    return value;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return new Date(value).toISOString();
+  }
+  return new Date(0).toISOString();
 }
 
 function toScheduledTaskInput(input: Partial<ServstationScheduledJobInput>): Record<string, unknown> {

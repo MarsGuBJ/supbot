@@ -177,8 +177,12 @@ const legacyLocalBotstationA2A = {
   issuerUrl: "http://localhost:8092"
 };
 
+const legacyRemoteBotstationA2A = {
+  baseUrl: "http://101.227.67.76"
+};
+
 const defaultBotstationA2A = {
-  baseUrl: "http://101.227.67.76",
+  baseUrl: "http://101.227.67.76:8800",
   issuerUrl: "http://101.227.67.76:8092",
   clientId: "botstation-agent-client-web",
   scope: "openid profile email",
@@ -896,6 +900,7 @@ function shouldUseLocalBotstationDefault(rawValue: string, normalizedValue: stri
     return (
       normalizedValue === legacyLocalBotstationA2A.baseUrl ||
       normalizedValue === legacyLocalBotstationA2A.issuerUrl ||
+      normalizedValue === legacyRemoteBotstationA2A.baseUrl ||
       url.hostname === "zstupu.com" ||
       url.hostname.endsWith(".zstupu.com")
     );

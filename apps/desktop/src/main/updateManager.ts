@@ -6,7 +6,7 @@ const defaultCheckIntervalMs = 30 * 60 * 1000;
 
 interface UpdateFeedContext {
   baseUrl: string;
-  accessToken: string;
+  accessToken?: string;
 }
 
 interface HBClientUpdateManagerOptions {
@@ -28,7 +28,7 @@ export class HBClientUpdateManager {
     autoUpdater.autoRunAppAfterInstall = true;
     autoUpdater.allowDowngrade = false;
     autoUpdater.allowPrerelease = false;
-    autoUpdater.disableDifferentialDownload = true;
+    autoUpdater.disableDifferentialDownload = false;
     if (!app.isPackaged && process.env.HBCLIENT_ENABLE_DEV_UPDATES === "1") {
       autoUpdater.forceDevUpdateConfig = true;
     }
@@ -169,8 +169,8 @@ export class HBClientUpdateManager {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const context = await this.options.getFeedContext(attempt > 0);
       const configuredUrl = process.env.HBCLIENT_UPDATE_FEED_URL?.trim() || `${context.baseUrl.replace(/\/$/, "")}/api/v1/hbclient/updates/stable/win32-x64`;
-      autoUpdater.setFeedURL({ provider: "generic", url: configuredUrl });
-      autoUpdater.requestHeaders = { Authorization: `Bearer ${context.accessToken}` };
+      autoUpdater.setFeedURL({ provider: "generic", url: configuredUrl, useMultipleRangeRequest: false });
+      autoUpdater.requestHeaders = context.accessToken ? { Authorization: `Bearer ${context.accessToken}` } : {};
       try {
         return await action();
       } catch (error) {

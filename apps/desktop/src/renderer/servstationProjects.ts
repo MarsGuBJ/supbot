@@ -1,4 +1,9 @@
-import type { ServstationConversation, ServstationProject } from "@supbot/shared";
+import type {
+  ServstationConversation,
+  ServstationConversationMessage,
+  ServstationProject,
+  ServstationSessionJob
+} from "@supbot/shared";
 
 export interface ServstationConversationGroup {
   key: string;
@@ -44,4 +49,24 @@ export function servstationPromptTarget(
     return { conversationId };
   }
   return projectId ? { projectId } : {};
+}
+
+export function servstationJobsForConversation(
+  jobs: ServstationSessionJob[],
+  conversationId?: string
+): ServstationSessionJob[] {
+  if (!conversationId) {
+    return [];
+  }
+  return jobs.filter((job) => job.conversationId === conversationId);
+}
+
+export function servstationMessagesForConversation(
+  conversations: ServstationConversation[],
+  conversationId?: string
+): ServstationConversationMessage[] {
+  if (!conversationId) {
+    return [];
+  }
+  return conversations.find((conversation) => conversation.id === conversationId)?.messages || [];
 }

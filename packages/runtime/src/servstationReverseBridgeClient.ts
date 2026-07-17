@@ -243,7 +243,7 @@ export class ServstationReverseBridgeClient {
               SERVSTATION_SCHEDULE_MANAGE_CAPABILITY,
               SERVSTATION_AUTOPILOT_MANAGE_CAPABILITY
             ],
-            hbclientVersion: "0.1.0"
+            hbclientVersion: "0.1.2"
           })
         }
       );

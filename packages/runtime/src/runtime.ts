@@ -316,6 +316,7 @@ export class SupbotRuntime extends EventEmitter {
   async init(): Promise<RuntimeSnapshot> {
     this.state = await this.storage.load();
     await this.reconcileLocalPackages();
+    await this.reconcileToolMarketCapabilities();
     await this.storage.save(this.state);
     this.mcpManager.setServers(this.state.mcpServers);
     this.worktreeManager.setWorktrees(this.state.worktrees);
@@ -3081,6 +3082,33 @@ export class SupbotRuntime extends EventEmitter {
     this.state.mcpServers = [...nonLocalServers, ...localServers];
     this.mcpManager.setServers(this.state.mcpServers);
     this.upsertMcpCapability();
+  }
+
+  private async reconcileToolMarketCapabilities(): Promise<void> {
+    const installed = await this.listInstalledToolMarketProducts();
+    if (!installed.length) {
+      return;
+    }
+    const existingCapabilities = new Map(this.state.capabilities.map((capability) => [capability.id, capability]));
+    const deletedCapabilityIds = new Set(this.state.deletedCapabilityIds);
+    const installedCapabilities = new Map<string, CapabilityDefinition>();
+    for (const product of installed) {
+      const capability = product.localDeployment?.capability || product.capability;
+      if (!capability || deletedCapabilityIds.has(capability.id)) {
+        continue;
+      }
+      installedCapabilities.set(capability.id, {
+        ...capability,
+        enabled: existingCapabilities.get(capability.id)?.enabled ?? capability.enabled ?? true
+      });
+    }
+    if (!installedCapabilities.size) {
+      return;
+    }
+    this.state.capabilities = [
+      ...this.state.capabilities.filter((capability) => !installedCapabilities.has(capability.id)),
+      ...installedCapabilities.values()
+    ];
   }
 
   private async requestToolPermission(permission: PendingToolPermission): Promise<"approved" | "denied"> {

@@ -582,6 +582,17 @@ export interface ServstationConversation {
   lastMessageAt?: string | null;
   createdAt: string;
   updatedAt: string;
+  messages?: ServstationConversationMessage[];
+}
+
+export interface ServstationConversationMessage {
+  id: string;
+  role: "user" | "agent";
+  text: string;
+  payload?: unknown;
+  status?: string;
+  jobId?: string;
+  createdAt: string;
 }
 
 export interface ServstationSessionJob {

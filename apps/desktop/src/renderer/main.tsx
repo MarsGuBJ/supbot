@@ -167,6 +167,8 @@ import {
 } from "./servstationCapabilities";
 import {
   groupServstationConversations,
+  servstationJobsForConversation,
+  servstationMessagesForConversation,
   servstationPromptTarget,
   type ServstationConversationGroup
 } from "./servstationProjects";
@@ -178,7 +180,7 @@ type Translator = (key: string, vars?: Record<string, string | number>) => strin
 type SelectionContextMenu = { x: number; y: number; text: string };
 type PromptContextMenu = { x: number; y: number; selectionStart: number; selectionEnd: number; selectedText: string };
 const defaultToolMarketApiUrl = "https://i-shu.com";
-const defaultBotstationBaseUrl = "http://101.227.67.76";
+const defaultBotstationBaseUrl = "http://101.227.67.76:8800";
 const defaultBotstationIssuerUrl = "http://101.227.67.76:8092";
 const defaultBotstationClientId = "botstation-agent-client-web";
 const defaultBotstationScope = "openid profile email";
@@ -253,9 +255,11 @@ function App() {
   const [userDataPath, setUserDataPath] = useState("");
   const [updateState, setUpdateState] = useState<HBClientUpdateState>({ status: "idle", currentVersion: "" });
   const [messageApi, contextHolder] = message.useMessage();
+  const [modalApi, modalContextHolder] = Modal.useModal();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const messageStackRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
+  const promptedUpdateRef = useRef("");
   const t = useCallback((key: string, vars?: Record<string, string | number>) => translate(language, key, vars), [language]);
   const slashCommandList = useMemo(() => buildSlashCommands(t), [t]);
 
@@ -371,6 +375,37 @@ function App() {
       unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (updateState.status !== "available") {
+      return;
+    }
+    const promptKey = `${updateState.status}:${updateState.availableVersion || "unknown"}`;
+    if (promptedUpdateRef.current === promptKey) {
+      return;
+    }
+    promptedUpdateRef.current = promptKey;
+    const chinese = language === "zh";
+    const version = updateState.availableVersion ? ` v${updateState.availableVersion}` : "";
+    const currentVersion = updateState.currentVersion ? ` v${updateState.currentVersion}` : "";
+    modalApi.confirm({
+      title: chinese ? `发现 HBClient 新版本${version}` : `HBClient update${version} is available`,
+      content: chinese
+        ? `当前版本${currentVersion || "未知"}。是否立即升级？`
+        : `Current version${currentVersion || " unknown"}. Upgrade now?`,
+      okText: chinese ? "立即升级" : "Upgrade now",
+      cancelText: chinese ? "稍后" : "Later",
+      icon: <DownloadOutlined />,
+      onOk: () => startHBClientUpdate()
+    });
+  }, [
+    language,
+    modalApi,
+    startHBClientUpdate,
+    updateState.availableVersion,
+    updateState.currentVersion,
+    updateState.status
+  ]);
 
   useEffect(() => {
     if (view !== "chat") {
@@ -601,6 +636,8 @@ function App() {
   if (!snapshot) {
     return (
       <ConfigProvider theme={theme}>
+        {contextHolder}
+        {modalContextHolder}
         <div className="boot-screen">
           <div className="brand-mark"><RobotOutlined /></div>
           <Typography.Title level={3}>{t("Starting HBClient")}</Typography.Title>
@@ -612,6 +649,7 @@ function App() {
   return (
     <ConfigProvider theme={theme} locale={language === "zh" ? zhCN : enUS}>
       {contextHolder}
+      {modalContextHolder}
       <main className="workspace-shell">
         <Topbar
           snapshot={snapshot}
@@ -1121,6 +1159,8 @@ function ServerAgentWorkspace({
   const [projectResources, setProjectResources] = useState<ServstationProjectResource[]>([]);
   const [autopilotPrompt, setAutopilotPrompt] = useState("");
   const [flowPendingCount, setFlowPendingCount] = useState(0);
+  const remoteRequestRef = useRef(0);
+  const selectedConversationRef = useRef("");
   const [messageApi, contextHolder] = message.useMessage();
   const reverseStatus = snapshot.servstationA2A.config.reverse?.status || "disconnected";
   const connected = reverseStatus === "connected";
@@ -1129,35 +1169,54 @@ function ServerAgentWorkspace({
     : remote?.conversations.find((item) => item.id === activeConversationId) || remote?.conversations[0];
   const activeProjectId = draftConversation ? draftProjectId : activeConversation?.projectId || "";
   const activeProject = remote?.projects.find((project) => project.id === activeProjectId);
+  const activeConversationJobs = useMemo(
+    () => draftConversation ? [] : servstationJobsForConversation(remote?.jobs || [], activeConversation?.id),
+    [activeConversation?.id, draftConversation, remote?.jobs]
+  );
+  const activeConversationMessages = useMemo(
+    () => draftConversation ? [] : servstationMessagesForConversation(remote?.conversations || [], activeConversation?.id),
+    [activeConversation?.id, draftConversation, remote?.conversations]
+  );
   const messages = useMemo(
-    () => draftConversation ? [] : servstationMessagesFromJobs(remote?.jobs || []),
-    [draftConversation, remote?.jobs]
+    () => servstationMessagesFromTranscript(activeConversationMessages, activeConversationJobs),
+    [activeConversationJobs, activeConversationMessages]
   );
   const runningJob = useMemo(
-    () => draftConversation ? undefined : [...(remote?.jobs || [])].reverse().find((job) => !servstationJobIsTerminal(job)),
-    [draftConversation, remote?.jobs]
+    () => [...activeConversationJobs].reverse().find((job) => !servstationJobIsTerminal(job)),
+    [activeConversationJobs]
   );
   const autopilotRunId = remote?.autopilotRun?.id || "";
   const autopilotActive = servstationAutopilotIsActive(remote?.autopilotRun);
   const hasRunningJob = Boolean(runningJob);
 
   const loadRemote = useCallback(async (conversationId?: string, silent = false, preserveDraft = false) => {
+    const requestedConversationId = conversationId || "";
+    if (requestedConversationId !== selectedConversationRef.current) {
+      return;
+    }
+    const requestId = ++remoteRequestRef.current;
     if (!silent) {
       setLoading(true);
     }
     try {
       const next = await window.supbot.getServstationClientSnapshot({ conversationId });
+      if (requestId !== remoteRequestRef.current || requestedConversationId !== selectedConversationRef.current) {
+        return;
+      }
       setRemote(next);
       if (!preserveDraft) {
         const selected = next.activeConversationId || next.conversations[0]?.id || "";
+        selectedConversationRef.current = selected;
         setActiveConversationId(selected);
         setDraftConversation(false);
         setDraftProjectId("");
       }
     } catch (error) {
-      messageApi.error((error as Error).message);
+      if (requestId === remoteRequestRef.current) {
+        messageApi.error((error as Error).message);
+      }
     } finally {
-      if (!silent) {
+      if (!silent && requestId === remoteRequestRef.current) {
         setLoading(false);
       }
     }
@@ -1218,6 +1277,7 @@ function ServerAgentWorkspace({
   };
 
   const selectConversation = async (conversation: ServstationConversation) => {
+    selectedConversationRef.current = conversation.id;
     setDraftConversation(false);
     setDraftProjectId("");
     setActiveConversationId(conversation.id);
@@ -1227,9 +1287,12 @@ function ServerAgentWorkspace({
   const createConversation = async () => {
     setBusyId("conversation:create");
     try {
+      remoteRequestRef.current += 1;
+      selectedConversationRef.current = "";
       setDraftConversation(false);
       setDraftProjectId("");
       const conversation = await window.supbot.createServstationConversation();
+      selectedConversationRef.current = conversation.id;
       await loadRemote(conversation.id);
     } catch (error) {
       messageApi.error((error as Error).message);
@@ -1239,6 +1302,8 @@ function ServerAgentWorkspace({
   };
 
   const startProjectConversation = (project: ServstationProject) => {
+    remoteRequestRef.current += 1;
+    selectedConversationRef.current = "";
     setDraftConversation(true);
     setDraftProjectId(project.id);
     setActiveConversationId("");
@@ -1369,6 +1434,8 @@ function ServerAgentWorkspace({
         prompt: text,
         attachments
       });
+      remoteRequestRef.current += 1;
+      selectedConversationRef.current = result.conversation.id;
       setRemote(result.snapshot);
       setActiveConversationId(result.conversation.id);
       setDraftConversation(false);
@@ -2364,7 +2431,11 @@ function ServerAgentProjectGroup({
               className={`server-agent-project-conversation ${conversation.id === activeConversationId ? "is-active" : ""}`}
               key={conversation.id}
             >
-              <button type="button" onClick={() => void onSelectConversation(conversation)}>
+              <button
+                type="button"
+                data-conversation-id={conversation.id}
+                onClick={() => void onSelectConversation(conversation)}
+              >
                 <strong>{servstationConversationTitle(conversation, t("New conversation"))}</strong>
                 <small>{formatDateTime(conversation.lastMessageAt || conversation.updatedAt)}</small>
               </button>
@@ -4281,6 +4352,33 @@ function stringField(record: Record<string, unknown> | undefined, key: string): 
 function numberField(record: Record<string, unknown> | undefined, key: string): number | undefined {
   const value = record?.[key];
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function servstationMessagesFromTranscript(
+  transcript: NonNullable<ServstationConversation["messages"]>,
+  jobs: ServstationSessionJob[]
+): ServstationChatMessage[] {
+  if (!transcript.length) {
+    return servstationMessagesFromJobs(jobs);
+  }
+  const representedJobIds = new Set(transcript.map((message) => message.jobId).filter(Boolean));
+  const runningJobs = jobs.filter((job) => !servstationJobIsTerminal(job) && !representedJobIds.has(job.id));
+  return [
+    ...transcript.map((message) => ({
+      id: message.id,
+      role: message.role,
+      text: message.text,
+      status: message.status,
+      jobId: message.jobId,
+      createdAt: servstationMessageCreatedAtMs(message.createdAt)
+    })),
+    ...servstationMessagesFromJobs(runningJobs)
+  ].sort((left, right) => left.createdAt - right.createdAt);
+}
+
+function servstationMessageCreatedAtMs(value: string): number {
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function generatedFileExtension(file: { name: string; path: string }): string {

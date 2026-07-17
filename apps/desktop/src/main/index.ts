@@ -1,5 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell, type WebContents } from "electron";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { cp, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { hostname, userInfo } from "node:os";
 import { isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { JsonFileStorage, SupbotRuntime, ensureRuntimeDirs, identityContextFromAccessToken, oidcTokenSetFromTokenResponse, type RuntimeState, type StorageAdapter } from "@supbot/runtime";
@@ -13,7 +14,7 @@ const servstationMessageEventSubscriptions = new Map<string, AbortController>();
 const servstationAutopilotEventSubscriptions = new Map<string, AbortController>();
 const isDev = !app.isPackaged;
 const appDisplayName = "HBClient";
-const defaultBotstationBaseUrl = "http://101.227.67.76";
+const defaultBotstationBaseUrl = "http://101.227.67.76:8800";
 const defaultBotstationIssuerUrl = "http://101.227.67.76:8092";
 const defaultBotstationClientId = "botstation-agent-client-web";
 const defaultBotstationScope = "openid profile email";
@@ -32,6 +33,7 @@ async function createRuntime(): Promise<SupbotRuntime> {
   const userDataPath = process.env.HBCLIENT_USER_DATA_DIR || process.env.SUPBOT_USER_DATA_DIR || app.getPath("userData");
   const dataDir = join(userDataPath, "data");
   await ensureRuntimeDirs(dataDir);
+  await seedBundledDefaultData(dataDir);
   const storage = new EncryptedStorage(new JsonFileStorage(dataDir), userDataPath);
   const service = new SupbotRuntime(storage, {
     secretStorageKind: storage.secretStorageKind(),
@@ -43,6 +45,69 @@ async function createRuntime(): Promise<SupbotRuntime> {
     mainWindow?.webContents.send("supbot:event", event);
   });
   return service;
+}
+
+async function seedBundledDefaultData(dataDir: string): Promise<void> {
+  const bundledDataDir = await resolveBundledDefaultDataDir();
+  if (!bundledDataDir) {
+    return;
+  }
+  const markerPath = join(dataDir, "default-data-seed.json");
+  if (await pathExists(markerPath)) {
+    return;
+  }
+  for (const folder of ["skills", "tool-market"]) {
+    const source = join(bundledDataDir, folder);
+    if (await pathExists(source)) {
+      await copyMissingTree(source, join(dataDir, folder));
+    }
+  }
+  const manifestRaw = await readFile(join(bundledDataDir, "manifest.json"), "utf8").catch(() => undefined);
+  const marker = {
+    seededAt: new Date().toISOString(),
+    source: bundledDataDir,
+    manifest: manifestRaw ? JSON.parse(manifestRaw) : undefined
+  };
+  await writeFile(markerPath, `${JSON.stringify(marker, null, 2)}\n`, "utf8");
+}
+
+async function resolveBundledDefaultDataDir(): Promise<string | undefined> {
+  const candidates = [
+    join(process.resourcesPath, "default-data"),
+    join(app.getAppPath(), "build", "default-data")
+  ];
+  for (const candidate of candidates) {
+    if (await pathExists(join(candidate, "skills"))) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+async function copyMissingTree(source: string, target: string): Promise<void> {
+  await mkdir(target, { recursive: true });
+  const entries = await readdir(source, { withFileTypes: true });
+  for (const entry of entries) {
+    const sourcePath = join(source, entry.name);
+    const targetPath = join(target, entry.name);
+    if (entry.isDirectory()) {
+      await copyMissingTree(sourcePath, targetPath);
+    } else if (entry.isFile() && !(await pathExists(targetPath))) {
+      await cp(sourcePath, targetPath);
+    }
+  }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
 }
 
 class EncryptedStorage implements StorageAdapter {
@@ -573,13 +638,17 @@ async function createWindow(): Promise<void> {
   });
 }
 
-async function hbClientUpdateFeedContext(forceRefresh: boolean): Promise<{ baseUrl: string; accessToken: string }> {
+async function hbClientUpdateFeedContext(forceRefresh: boolean): Promise<{ baseUrl: string; accessToken?: string }> {
   const service = getRuntime();
   const [config, identity] = await Promise.all([service.servstationA2AConfig(), service.identityContext()]);
   const baseUrl = config.baseUrl || identity?.servstationUrl || process.env.HBCLIENT_BOTSTATION_BASE_URL || defaultBotstationBaseUrl;
-  const accessToken = await service.servstationA2AAccessToken(undefined, forceRefresh);
-  if (!accessToken) {
-    throw new Error("Botstation login is required before checking for HBClient updates.");
+  let accessToken: string | undefined;
+  try {
+    accessToken = await service.servstationA2AAccessToken(undefined, forceRefresh);
+  } catch (error) {
+    if (forceRefresh) {
+      throw error;
+    }
   }
   return { baseUrl: normalizeOidcUrl(baseUrl, "Botstation base URL"), accessToken };
 }
