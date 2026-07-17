@@ -127,6 +127,7 @@ import type {
   ServstationMessageListItem, 
   ServstationScheduledJob, 
   ServstationSessionJob, 
+  ServstationSkillSummary,
   SubagentConfig, 
   SupbotUpdateState, 
   ToolCallRecord, 
@@ -534,6 +535,7 @@ function App() {
           view={view}
           setView={setView}
           refresh={refresh}
+          t={t}
           language={language}
           setLanguage={setLanguage}
           leftCollapsed={leftCollapsed}
@@ -661,6 +663,7 @@ function Topbar({
   view,
   setView,
   refresh,
+  t,
   language, 
   setLanguage, 
   leftCollapsed, 
@@ -674,6 +677,7 @@ function Topbar({
   view: WorkspaceView; 
   setView: (view: WorkspaceView) => void;
   refresh: () => void;
+  t: (key: string, vars?: Record<string, string | number>) => string;
   language: Language;
   setLanguage: (language: Language) => void;
   leftCollapsed: boolean;
@@ -704,6 +708,7 @@ function Topbar({
         ]}
       />
       <div className="topbar-actions">
+        <ServerAgentConnectionButton snapshot={snapshot} refresh={refresh} t={t} placement="topbar" />
         <Segmented
           size="small"
           value={language}
@@ -851,7 +856,6 @@ function LeftPanel({
           />
         </section>
       </div>
-      <ServerAgentConnectionButton snapshot={snapshot} refresh={refresh} t={t} />
     </aside>
   );
 }
@@ -859,11 +863,13 @@ function LeftPanel({
 function ServerAgentConnectionButton({
   snapshot,
   refresh,
-  t
+  t,
+  placement = "panel"
 }: {
   snapshot: RuntimeSnapshot;
   refresh: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
+  placement?: "panel" | "topbar";
 }) {
   const [messageApi, contextHolder] = message.useMessage();
   const [busy, setBusy] = useState(false);
@@ -895,10 +901,11 @@ function ServerAgentConnectionButton({
   };
 
   return (
-    <section className="server-agent-connect">
+    <div className={`server-agent-connect is-${placement}`}>
       {contextHolder}
       <Button
-        block
+        block={placement === "panel"}
+        size={placement === "topbar" ? "small" : undefined}
         type={isConnected ? "default" : "primary"}
         className={`server-agent-button ${isConnected ? "is-connected" : ""}`}
         icon={isConnected ? <CheckCircleOutlined /> : <ApiOutlined />}
@@ -907,7 +914,7 @@ function ServerAgentConnectionButton({
       >
         {isConnected ? t("Server connected") : t("Connect server Agent")}
       </Button>
-    </section>
+    </div>
   );
 }
 
@@ -1029,18 +1036,6 @@ function ServerAgentWorkspace({
     try {
       const conversation = await window.supbot.createServstationConversation();
       await loadRemote(conversation.id);
-    } catch (error) {
-      messageApi.error((error as Error).message);
-    } finally {
-      setBusyId("");
-    }
-  };
-
-  const deleteConversation = async (conversation: ServstationConversation) => {
-    setBusyId(`conversation:${conversation.id}`);
-    try {
-      await window.supbot.deleteServstationConversation(conversation.id);
-      await loadRemote("");
     } catch (error) {
       messageApi.error((error as Error).message);
     } finally {
@@ -1170,19 +1165,6 @@ function ServerAgentWorkspace({
   return (
     <section className="server-agent-workspace">
       {contextHolder}
-      <div className="server-agent-header">
-        <div>
-          <div className="tag-row">
-            <Tag color={connected ? "green" : reverseStatus === "error" ? "red" : "default"}>{t(`reverse:${reverseStatus}`)}</Tag>
-            <Tag>{remote?.baseUrl || snapshot.servstationA2A.config.baseUrl || snapshot.identityContext?.servstationUrl || t("No Servstation URL")}</Tag>
-            {remote?.identity?.userId ? <Tag>{remote.identity.userId}</Tag> : null}
-          </div>
-        </div>
-        <Space wrap>
-          <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void loadRemote(activeConversation?.id)}>{t("Refresh")}</Button>
-          {connected ? null : <Button type="primary" icon={<ApiOutlined />} loading={connecting} onClick={() => void connectRemote()}>{t("Connect server Agent")}</Button>}
-        </Space>
-      </div>
       {!connected ? (
         <Alert
           type={reverseStatus === "error" ? "error" : "warning"}
@@ -1192,6 +1174,17 @@ function ServerAgentWorkspace({
       ) : null}
       <Tabs
         className="server-agent-tabs"
+        tabBarExtraContent={{
+          right: (
+            <Space className="server-agent-tab-actions" wrap size={8}>
+              <Tag color={connected ? "green" : reverseStatus === "error" ? "red" : "default"}>{t(`reverse:${reverseStatus}`)}</Tag>
+              <Tag>{remote?.baseUrl || snapshot.servstationA2A.config.baseUrl || snapshot.identityContext?.servstationUrl || t("No Servstation URL")}</Tag>
+              {remote?.identity?.userId ? <Tag>{remote.identity.userId}</Tag> : null}
+              <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={() => void loadRemote(activeConversation?.id)}>{t("Refresh")}</Button>
+              {connected ? null : <Button size="small" type="primary" icon={<ApiOutlined />} loading={connecting} onClick={() => void connectRemote()}>{t("Connect server Agent")}</Button>}
+            </Space>
+          )
+        }}
         items={[
           {
             key: "messages",
@@ -1203,6 +1196,7 @@ function ServerAgentWorkspace({
                 messages={messages}
                 prompt={prompt}
                 attachments={attachments}
+                connected={connected}
                 disabled={disabled}
                 sending={sending}
                 runningJob={runningJob}
@@ -1211,7 +1205,6 @@ function ServerAgentWorkspace({
                 setAttachments={setAttachments}
                 onSelectConversation={selectConversation}
                 onCreateConversation={createConversation}
-                onDeleteConversation={deleteConversation}
                 onPickAttachments={pickRemoteAttachments}
                 onSend={sendRemotePrompt}
                 onCancelRunning={cancelRunningJob}
@@ -1288,6 +1281,7 @@ function ServerAgentMessages({
   messages,
   prompt,
   attachments,
+  connected,
   disabled,
   sending,
   runningJob,
@@ -1296,7 +1290,6 @@ function ServerAgentMessages({
   setAttachments,
   onSelectConversation,
   onCreateConversation,
-  onDeleteConversation,
   onPickAttachments,
   onSend,
   onCancelRunning,
@@ -1307,6 +1300,7 @@ function ServerAgentMessages({
   messages: ServstationChatMessage[];
   prompt: string;
   attachments: Attachment[];
+  connected: boolean;
   disabled: boolean;
   sending: boolean;
   runningJob?: ServstationSessionJob;
@@ -1315,14 +1309,38 @@ function ServerAgentMessages({
   setAttachments: React.Dispatch<React.SetStateAction<Attachment[]>>;
   onSelectConversation: (conversation: ServstationConversation) => Promise<void>;
   onCreateConversation: () => Promise<void>;
-  onDeleteConversation: (conversation: ServstationConversation) => Promise<void>;
   onPickAttachments: () => Promise<void>;
   onSend: () => Promise<void>;
   onCancelRunning: () => Promise<void>;
   t: Translator;
 }) {
+  const [skillsOpen, setSkillsOpen] = useState(false);
+  const [skills, setSkills] = useState<ServstationSkillSummary[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [skillsError, setSkillsError] = useState("");
+
+  const openSkills = async () => {
+    setSkillsOpen(true);
+    setSkillsLoading(true);
+    setSkillsError("");
+    setSkills([]);
+    try {
+      setSkills(await window.supbot.listServstationSkills());
+    } catch (error) {
+      setSkillsError((error as Error).message);
+    } finally {
+      setSkillsLoading(false);
+    }
+  };
+
+  const selectSkill = (skill: ServstationSkillSummary) => {
+    setPrompt(t("Use skill: {name}", { name: skill.skillName }));
+    setSkillsOpen(false);
+  };
+
   return (
-    <div className="server-agent-message-grid">
+    <>
+      <div className="server-agent-message-grid">
       <aside className="server-agent-conversations">
         <div className="panel-heading">
           <div className="section-title"><ClockCircleOutlined /> {t("Conversation history")}</div>
@@ -1335,12 +1353,8 @@ function ServerAgentMessages({
             <div className={`server-agent-conversation ${conversation.id === activeConversation?.id ? "is-active" : ""}`} key={conversation.id}>
               <button type="button" onClick={() => void onSelectConversation(conversation)}>
                 <strong>{servstationConversationTitle(conversation, t("New conversation"))}</strong>
-                <span>{conversation.jobCount} {t(conversation.jobCount === 1 ? "Task" : "Tasks")}</span>
                 <small>{formatDateTime(conversation.lastMessageAt || conversation.updatedAt)}</small>
               </button>
-              <Popconfirm title={t("Delete conversation?")} onConfirm={() => void onDeleteConversation(conversation)}>
-                <Button size="small" danger icon={<DeleteOutlined />} loading={busyId === `conversation:${conversation.id}`} />
-              </Popconfirm>
             </div>
           ))}
           {!conversations.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("No conversations yet")} /> : null}
@@ -1348,11 +1362,25 @@ function ServerAgentMessages({
       </aside>
       <section className="server-agent-chat">
         <div className="server-agent-chat-title">
-          <div>
-            <div className="chat-banner-label">{t("Messages")}</div>
-            <strong>{activeConversation ? servstationConversationTitle(activeConversation, t("New conversation")) : t("No conversation yet")}</strong>
+          <div className="server-agent-chat-title-main">
+            <div className="server-agent-chat-title-copy">
+              <div className="chat-banner-label">{t("Messages")}</div>
+              <strong>{activeConversation ? servstationConversationTitle(activeConversation, t("New conversation")) : t("No conversation yet")}</strong>
+            </div>
           </div>
-          {runningJob ? <Button danger size="small" icon={<StopOutlined />} loading={busyId === `job:${runningJob.id}`} onClick={() => void onCancelRunning()}>{t("Stop")}</Button> : null}
+          <div className="server-agent-chat-title-actions">
+            <Button
+              className="server-agent-skills-button"
+              size="small"
+              icon={<ToolOutlined />}
+              disabled={!connected}
+              loading={skillsLoading}
+              onClick={() => void openSkills()}
+            >
+              {t("Skills")}
+            </Button>
+            {runningJob ? <Button danger size="small" icon={<StopOutlined />} loading={busyId === `job:${runningJob.id}`} onClick={() => void onCancelRunning()}>{t("Stop")}</Button> : null}
+          </div>
         </div>
         <div className="server-agent-message-stream">
           {messages.map((item) => (
@@ -1407,8 +1435,46 @@ function ServerAgentMessages({
           />
           <Button type="primary" icon={<SendOutlined />} loading={sending} disabled={disabled || !prompt.trim()} onClick={() => void onSend()}>{t("Send")}</Button>
         </div>
-      </section>
-    </div>
+        </section>
+      </div>
+      <Modal
+        className="server-agent-skill-modal"
+        open={skillsOpen}
+        title={<span className="server-agent-skill-modal-title"><ToolOutlined /> {t("Skills")}</span>}
+        footer={null}
+        width={760}
+        onCancel={() => setSkillsOpen(false)}
+      >
+        <Spin spinning={skillsLoading}>
+          {skillsError ? (
+            <Alert type="error" showIcon message={skillsError} />
+          ) : skills.length ? (
+            <div className="server-agent-skill-list">
+              {skills.map((skill) => (
+                <button className="server-agent-skill-item" type="button" key={`${skill.source}:${skill.id}`} onClick={() => selectSkill(skill)}>
+                  <div className="server-agent-skill-item-head">
+                    <div className="server-agent-skill-name">
+                      <strong>{skill.title || skill.skillName}</strong>
+                      <span className="mono">{skill.skillName}</span>
+                    </div>
+                    <Space size={4} wrap>
+                      <Tag>{t(skill.source)}</Tag>
+                      <Tag color={servstationStatusColor(skill.status)}>{t(skill.status)}</Tag>
+                      {skill.modified ? <Tag color="gold">{t("Modified")}</Tag> : null}
+                    </Space>
+                  </div>
+                  {skill.description ? <p>{skill.description}</p> : null}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="server-agent-skill-empty">
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("No skills available")} />
+            </div>
+          )}
+        </Spin>
+      </Modal>
+    </>
   );
 }
 
@@ -5986,25 +6052,17 @@ function RemoteStaffAgentConfigCard({ snapshot, refresh, t }: {
 
   useEffect(() => {
     form.setFieldsValue({
-      enabled: config.enabled,
-      baseUrl: config.baseUrl || snapshot.identityContext?.servstationUrl || "https://zstupu.com",
-      authMode: "oidc",
       staffAgentAccount: config.staffAgentAccount || "",
-      staffAgentPassword: "",
-      clearStaffAgentPassword: false,
-      agentInstanceId: config.agentInstanceId || snapshot.identityContext?.agentInstanceId,
-      oidcIssuerUrl: oidc?.issuerUrl || (config.baseUrl || snapshot.identityContext?.servstationUrl ? `${config.baseUrl || snapshot.identityContext?.servstationUrl}/realms/supmate` : ""),
-      oidcClientId: oidc?.clientId || "agent-client-web-dev",
-      oidcScope: oidc?.scope || "openid profile email offline_access",
-      oidcRedirectUri: oidc?.redirectUri || ""
+      staffAgentPassword: ""
     });
-  }, [config, form, oidc, snapshot.identityContext]);
+  }, [config.staffAgentAccount, form]);
 
   const save = async (values: ServstationA2AConfigUpdate) => {
     setSaving(true);
     try {
       await window.supbot.updateServstationA2AConfig({
-        ...values,
+        staffAgentAccount: values.staffAgentAccount,
+        staffAgentPassword: values.staffAgentPassword,
         enabled: true,
         authMode: "oidc"
       });
@@ -6032,32 +6090,11 @@ function RemoteStaffAgentConfigCard({ snapshot, refresh, t }: {
         </Space>
       </div>
       <Form form={form} layout="vertical" onFinish={(values) => void save(values as ServstationA2AConfigUpdate)}>
-        <Form.Item label={t("Servstation base URL")} name="baseUrl">
-          <Input placeholder="https://zstupu.com" />
-        </Form.Item>
-        <Form.Item label={t("OIDC issuer URL")} name="oidcIssuerUrl">
-          <Input placeholder="https://zstupu.com/realms/supmate" />
-        </Form.Item>
-        <Form.Item label={t("OIDC client id")} name="oidcClientId">
-          <Input placeholder="agent-client-web-dev" />
-        </Form.Item>
-        <Form.Item label={t("OIDC scope")} name="oidcScope">
-          <Input placeholder="openid profile email offline_access" />
-        </Form.Item>
         <Form.Item label={t("Staff-agent account")} name="staffAgentAccount">
           <Input autoComplete="username" />
         </Form.Item>
         <Form.Item label={t("Staff-agent password")} name="staffAgentPassword" extra={config.staffAgentPasswordSaved ? t("Leave blank to keep the existing password.") : t("Required for password login.")}>
           <Input.Password autoComplete="new-password" />
-        </Form.Item>
-        <Form.Item name="clearStaffAgentPassword" valuePropName="checked">
-          <Switch checkedChildren={t("Clear saved password")} unCheckedChildren={t("Keep saved password")} />
-        </Form.Item>
-        <Form.Item label={t("Agent instance id")} name="agentInstanceId">
-          <Input />
-        </Form.Item>
-        <Form.Item label={t("OIDC redirect URI")} name="oidcRedirectUri">
-          <Input />
         </Form.Item>
         <Space wrap>
           <Button type="primary" icon={<SaveOutlined />} htmlType="submit" loading={saving}>{t("Save")}</Button>

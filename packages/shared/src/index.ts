@@ -407,6 +407,20 @@ export interface ServstationConversation {
   updatedAt: string;
 }
 
+export interface ServstationSkillSummary {
+  source: "local" | "service";
+  id: string;
+  skillName: string;
+  title: string;
+  description: string;
+  modified: boolean;
+  status: string;
+  serviceId?: string;
+  serviceVersion?: string;
+  origin?: string;
+  updatedAt?: string;
+}
+
 export interface ServstationSessionJob {
   id: string;
   agentInstanceId: string;

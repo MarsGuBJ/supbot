@@ -111,6 +111,7 @@ import {
   type ServstationSendPromptInput,
   type ServstationSendPromptResult,
   type ServstationSessionJob,
+  type ServstationSkillSummary,
   type SubagentConfig,
   type SupbotEvent,
   type TaskWorktree,
@@ -1049,6 +1050,11 @@ export class SupbotRuntime extends EventEmitter {
   async getServstationClientSnapshot(query: ServstationClientSnapshotQuery = {}): Promise<ServstationClientSnapshot> {
     this.assertLoaded();
     return this.servstationAgentClient.snapshot(query);
+  }
+
+  async listServstationSkills(): Promise<ServstationSkillSummary[]> {
+    this.assertLoaded();
+    return this.servstationAgentClient.listSkills();
   }
 
   async createServstationConversation(title?: string): Promise<ServstationConversation> {

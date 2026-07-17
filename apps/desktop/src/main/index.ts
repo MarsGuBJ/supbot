@@ -12,7 +12,7 @@ let runtime: SupbotRuntime | null = null;
 let updateManager: SupbotUpdateManager | null = null; 
 const servstationMessageEventSubscriptions = new Map<string, AbortController>(); 
 const isDev = !app.isPackaged;
-const allowedDevServerOrigin = "http://127.0.0.1:5173";
+const allowedDevServerHost = "127.0.0.1";
 const appIconPath = join(__dirname, "../../build/supbot-icon.ico");
 const productionCsp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'none'";
 let productionCspInstalled = false;
@@ -451,7 +451,13 @@ function isAllowedAppUrl(rawUrl: string): boolean {
     if (url.protocol === "file:") {
       return !isDev;
     }
-    return isDev && url.origin === allowedDevServerOrigin;
+    return (
+      isDev &&
+      url.protocol === "http:" &&
+      url.hostname === allowedDevServerHost &&
+      url.username === "" &&
+      url.password === ""
+    );
   } catch {
     return false;
   }
@@ -575,6 +581,7 @@ function registerIpc(): void {
   ipcMain.handle("servstationA2A:connectReverse", () => getRuntime().connectServstationReverseBridge());
   ipcMain.handle("servstationA2A:disconnectReverse", () => getRuntime().disconnectServstationReverseBridge());
   ipcMain.handle("servstationClient:snapshot", (_event, input?: ServstationClientSnapshotQuery) => getRuntime().getServstationClientSnapshot(validateServstationClientSnapshotQuery(input)));
+  ipcMain.handle("servstationClient:listSkills", () => getRuntime().listServstationSkills());
   ipcMain.handle("servstationClient:createConversation", (_event, title?: string) => getRuntime().createServstationConversation(optionalString(title, "servstation conversation title")));
   ipcMain.handle("servstationClient:deleteConversation", (_event, id: string) => getRuntime().deleteServstationConversation(requiredString(id, "servstation conversation id")));
   ipcMain.handle("servstationClient:sendPrompt", (_event, input: ServstationSendPromptInput) => getRuntime().sendServstationPrompt(validateServstationSendPromptInput(input)));

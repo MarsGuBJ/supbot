@@ -85,6 +85,7 @@ import type {
   ServstationSendPromptInput,
   ServstationSendPromptResult, 
   ServstationSessionJob, 
+  ServstationSkillSummary,
   SubagentConfig, 
   SupbotUpdateState, 
   SupbotEvent, 
@@ -153,6 +154,7 @@ declare global {
       connectServstationReverseBridge(): Promise<ServstationA2AConfig>;
       disconnectServstationReverseBridge(): Promise<ServstationA2AConfig>;
       getServstationClientSnapshot(query?: ServstationClientSnapshotQuery): Promise<ServstationClientSnapshot>;
+      listServstationSkills(): Promise<ServstationSkillSummary[]>;
       createServstationConversation(title?: string): Promise<ServstationConversation>;
       deleteServstationConversation(id: string): Promise<void>;
       sendServstationPrompt(input: ServstationSendPromptInput): Promise<ServstationSendPromptResult>;

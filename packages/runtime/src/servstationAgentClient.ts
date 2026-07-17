@@ -34,7 +34,8 @@ import type {
   ServstationSendDirectMessageInput,
   ServstationSendPromptInput,
   ServstationSendPromptResult,
-  ServstationSessionJob
+  ServstationSessionJob,
+  ServstationSkillSummary
 } from "@supbot/shared";
 
 interface ServstationAgentClientHost {
@@ -56,6 +57,10 @@ interface JobsResponse {
 
 interface ScheduledJobsResponse {
   scheduledJobs?: ServstationScheduledJob[];
+}
+
+interface EffectiveSkillsResponse {
+  skills?: unknown[];
 }
 
 interface AutopilotRunResponse {
@@ -174,6 +179,22 @@ export class ServstationAgentClient {
       autopilotEvents,
       fetchedAt: this.host.nowIso()
     };
+  }
+
+  async listSkills(signal?: AbortSignal): Promise<ServstationSkillSummary[]> {
+    const agentInstanceId = await this.ensureConnectedAgent(signal);
+    const response = await this.request<EffectiveSkillsResponse>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/skills`, {
+      method: "GET",
+      signal
+    });
+    const summaries: ServstationSkillSummary[] = [];
+    for (const skill of Array.isArray(response.skills) ? response.skills : []) {
+      const summary = toServstationSkillSummary(skill);
+      if (summary) {
+        summaries.push(summary);
+      }
+    }
+    return summaries;
   }
 
   async createConversation(title?: string, signal?: AbortSignal): Promise<ServstationConversation> {
@@ -836,6 +857,37 @@ function errorMessage(value: unknown): string | undefined {
   }
   const record = value as Record<string, unknown>;
   return typeof record.error === "string" ? record.error : typeof record.message === "string" ? record.message : undefined;
+}
+
+function toServstationSkillSummary(value: unknown): ServstationSkillSummary | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const source = record.source === "local" || record.source === "service" ? record.source : undefined;
+  const id = optionalRecordString(record, "id");
+  const skillName = optionalRecordString(record, "skillName");
+  if (!source || !id || !skillName) {
+    return undefined;
+  }
+  return {
+    source,
+    id,
+    skillName,
+    title: optionalRecordString(record, "title") || skillName,
+    description: optionalRecordString(record, "description") || "",
+    modified: record.modified === true,
+    status: optionalRecordString(record, "status") || "published",
+    serviceId: optionalRecordString(record, "serviceId"),
+    serviceVersion: optionalRecordString(record, "serviceVersion"),
+    origin: optionalRecordString(record, "origin"),
+    updatedAt: optionalRecordString(record, "updatedAt")
+  };
+}
+
+function optionalRecordString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function sanitizeMailAccount(account: ServstationMailAccount): ServstationMailAccount {

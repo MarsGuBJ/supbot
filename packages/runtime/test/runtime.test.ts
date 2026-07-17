@@ -3752,6 +3752,32 @@ describe("SupbotRuntime", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:02.000Z"
     }];
+    const effectiveSkills = [{
+      source: "service",
+      id: "svc-risk",
+      agentInstanceId: "agent-client-1",
+      skillName: "risk-review",
+      title: "Risk review",
+      description: "Review operational risk",
+      content: "secret service skill body",
+      modified: false,
+      status: "published",
+      serviceId: "service-risk",
+      serviceVersion: "1.2.0",
+      origin: "tools-market",
+      updatedAt: "2026-01-01T00:00:05.000Z"
+    }, {
+      source: "local",
+      id: "disk:agent-client-1:meeting-notes",
+      agentInstanceId: "agent-client-1",
+      skillName: "meeting-notes",
+      title: "",
+      description: "Capture meeting notes",
+      content: "secret local skill body",
+      modified: true,
+      status: "published",
+      updatedAt: "2026-01-01T00:00:06.000Z"
+    }];
     const jobsByConversation: Record<string, unknown[]> = {
       "conv-1": [{
         id: "job-1",
@@ -3897,6 +3923,10 @@ describe("SupbotRuntime", () => {
           return;
         }
         response.setHeader("Content-Type", "application/json");
+        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/skills") {
+          response.end(JSON.stringify({ skills: effectiveSkills }));
+          return;
+        }
         if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/conversations") {
           response.end(JSON.stringify({ conversations }));
           return;
@@ -4152,6 +4182,7 @@ describe("SupbotRuntime", () => {
       const disconnected = await runtime.getServstationClientSnapshot();
       expect(disconnected.connected).toBe(false);
       expect(disconnected.conversations).toEqual([]);
+      await expect(runtime.listServstationSkills()).rejects.toThrow("Servstation reverse A2A is not connected.");
       await expect(runtime.getServstationFlowEngineSnapshot()).rejects.toThrow("Servstation reverse A2A is not connected.");
       await (runtime as unknown as { updateServstationReverseState(input: Record<string, unknown>): Promise<void> }).updateServstationReverseState({
         enabled: true,
@@ -4169,6 +4200,34 @@ describe("SupbotRuntime", () => {
       expect(snapshot.scheduledJobs[0]).toMatchObject({ id: "schedule-1" });
       expect(snapshot.autopilotRun?.id).toBe("run-1");
       expect(snapshot.autopilotEvents[0]?.id).toBe("evt-1");
+      const skills = await runtime.listServstationSkills();
+      expect(skills).toEqual([{
+        source: "service",
+        id: "svc-risk",
+        skillName: "risk-review",
+        title: "Risk review",
+        description: "Review operational risk",
+        modified: false,
+        status: "published",
+        serviceId: "service-risk",
+        serviceVersion: "1.2.0",
+        origin: "tools-market",
+        updatedAt: "2026-01-01T00:00:05.000Z"
+      }, {
+        source: "local",
+        id: "disk:agent-client-1:meeting-notes",
+        skillName: "meeting-notes",
+        title: "meeting-notes",
+        description: "Capture meeting notes",
+        modified: true,
+        status: "published",
+        serviceId: undefined,
+        serviceVersion: undefined,
+        origin: undefined,
+        updatedAt: "2026-01-01T00:00:06.000Z"
+      }]);
+      expect(JSON.stringify(skills)).not.toContain("secret service skill body");
+      expect(JSON.stringify(skills)).not.toContain("secret local skill body");
 
       const sent = await runtime.sendServstationPrompt({
         prompt: "new remote prompt",
@@ -4272,6 +4331,7 @@ describe("SupbotRuntime", () => {
       expect(requests.some((item) => item.method === "DELETE" && item.path === "/api/v1/agent/agent-client-1/scheduled-jobs?scheduledJobId=schedule-1")).toBe(true);
       expect(requests.some((item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/autopilot-runs")).toBe(true);
       expect(requests.some((item) => item.method === "PATCH" && item.path === "/api/v1/agent/agent-client-1/autopilot-runs/run-1")).toBe(true);
+      expect(requests.some((item) => item.method === "GET" && item.path === "/api/v1/agent/agent-client-1/skills")).toBe(true);
       expect(requests.some((item) => item.method === "GET" && item.path === "/api/v1/flow-engine/workflows/launchable")).toBe(true);
       expect(requests.some((item) => item.method === "GET" && item.path === "/api/v1/flow-engine/tasks/pending")).toBe(true);
       expect(requests.some((item) => item.method === "GET" && item.path === "/api/v1/flow-engine/executions/mine")).toBe(true);
@@ -4290,6 +4350,9 @@ describe("SupbotRuntime", () => {
       expect(authed?.headers["x-department-id"]).toBe("dept-client");
       expect(authed?.headers["x-user-id"]).toBe("user-client");
       expect(authed?.headers["x-role-ids"]).toBe("staff,user");
+      const authedSkills = requests.find((item) => item.method === "GET" && item.path === "/api/v1/agent/agent-client-1/skills");
+      expect(authedSkills?.headers.authorization).toBe("Bearer oidc-client-token");
+      expect(authedSkills?.headers["x-user-id"]).toBe("user-client");
       expect(JSON.stringify(snapshot)).not.toContain("oidc-client-token");
       expect(JSON.stringify(flowSnapshot)).not.toContain("oidc-client-token");
       expect(JSON.stringify(snapshot)).not.toContain("staff-secret");

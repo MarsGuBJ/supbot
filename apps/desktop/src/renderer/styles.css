@@ -258,9 +258,27 @@ button {
   background: rgba(9, 16, 24, 0.7);
 }
 
+.server-agent-connect.is-topbar {
+  border-top: 0;
+  padding: 0;
+  background: transparent;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
 .server-agent-button {
   min-height: 40px;
   font-weight: 800;
+}
+
+.server-agent-connect.is-topbar .server-agent-button {
+  min-height: 30px;
+  max-width: 176px;
+}
+
+.server-agent-connect.is-topbar .server-agent-button span:not(.ant-btn-icon) {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .server-agent-button.is-connected {
@@ -605,6 +623,11 @@ button {
   gap: 10px;
 }
 
+.history-list {
+  gap: 6px;
+  margin-top: 5px;
+}
+
 .history-list.is-embedded {
   height: auto;
   max-height: none;
@@ -613,18 +636,40 @@ button {
 .history-item {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
+  gap: 6px;
+  margin-top: 0;
+  padding: 8px 10px;
 }
 
 .history-item-content {
   width: 100%;
   min-width: 0;
   padding: 0;
+  gap: 2px;
+  line-height: 1.25;
 }
 
 .history-item-content strong,
 .history-item-content span {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.history-item-content strong {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-item-content span {
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tool-approvals {
@@ -2279,8 +2324,8 @@ button {
 .server-agent-workspace {
   min-height: 0;
   height: 100%;
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   gap: 14px;
   padding: 18px;
   overflow: hidden;
@@ -2305,8 +2350,25 @@ button {
 }
 
 .server-agent-tabs {
+  flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+.server-agent-tabs .ant-tabs-nav {
+  flex: 0 0 auto;
+}
+
+.server-agent-tab-actions {
+  justify-content: flex-end;
+  max-width: 100%;
+}
+
+.server-agent-tab-actions .ant-tag {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .server-agent-tabs,
@@ -2354,15 +2416,15 @@ button {
   overflow: auto;
   display: grid;
   align-content: start;
-  gap: 10px;
+  gap: 8px;
 }
 
 .server-agent-conversation {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
-  padding: 10px;
+  padding: 8px 10px;
   border: 1px solid rgba(148, 163, 184, 0.2);
   background: rgba(7, 16, 24, 0.6);
 }
@@ -2373,6 +2435,9 @@ button {
 }
 
 .server-agent-conversation button {
+  display: grid;
+  gap: 2px;
+  width: 100%;
   min-width: 0;
   padding: 0;
   border: 0;
@@ -2386,13 +2451,23 @@ button {
 .server-agent-conversation span,
 .server-agent-conversation small {
   display: block;
+  min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.server-agent-conversation strong {
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .server-agent-conversation span,
 .server-agent-conversation small {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.2;
 }
 
 .server-agent-chat {
@@ -2405,6 +2480,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
   min-height: 58px;
   padding: 12px 14px;
@@ -2412,8 +2488,155 @@ button {
   background: rgba(13, 23, 32, 0.68);
 }
 
+.server-agent-chat-title-main {
+  display: flex;
+  flex: 1 1 300px;
+  align-items: center;
+  min-width: 0;
+}
+
+.server-agent-chat-title-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.server-agent-skills-button {
+  flex: 0 0 auto;
+}
+
+.server-agent-chat-title-copy {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+}
+
 .server-agent-chat-title strong {
   overflow-wrap: anywhere;
+}
+
+.server-agent-chat-title-copy strong {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-agent-skill-modal-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.server-agent-skill-modal .ant-modal-body {
+  max-height: 68vh;
+  overflow: hidden;
+}
+
+.server-agent-skill-modal .ant-spin-container {
+  min-height: 180px;
+}
+
+.server-agent-skill-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 8px;
+  max-height: min(58vh, 540px);
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.server-agent-skill-item {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  padding: 11px 12px;
+  color: inherit;
+  text-align: left;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 6px;
+  background: rgba(7, 16, 24, 0.68);
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease, transform 140ms ease;
+}
+
+.server-agent-skill-item:hover,
+.server-agent-skill-item:focus-visible {
+  border-color: rgba(20, 184, 166, 0.68);
+  background: rgba(20, 184, 166, 0.1);
+  transform: translateY(-1px);
+}
+
+.server-agent-skill-item:focus-visible {
+  outline: 2px solid rgba(45, 212, 191, 0.42);
+  outline-offset: 1px;
+}
+
+.server-agent-skill-item-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.server-agent-skill-name {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.server-agent-skill-name strong,
+.server-agent-skill-name span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-agent-skill-name strong {
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.server-agent-skill-name span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.server-agent-skill-item .ant-space {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+
+.server-agent-skill-item .ant-tag {
+  margin-inline-end: 0;
+}
+
+.server-agent-skill-item p {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.server-agent-skill-empty {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
 }
 
 .server-agent-message-stream {
@@ -2995,6 +3218,22 @@ button {
 
   .server-agent-workspace {
     overflow: auto;
+  }
+
+  .server-agent-skill-list {
+    grid-template-columns: 1fr;
+  }
+
+  .server-agent-chat-title {
+    align-items: stretch;
+  }
+
+  .server-agent-chat-title-main {
+    flex-basis: 100%;
+  }
+
+  .server-agent-chat-title-actions {
+    width: 100%;
   }
 
   .server-agent-header,
