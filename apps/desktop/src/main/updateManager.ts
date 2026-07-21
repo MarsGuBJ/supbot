@@ -14,6 +14,7 @@ interface UpdateFeedContext {
 interface SupbotUpdateManagerOptions {
   getFeedContext: () => Promise<UpdateFeedContext>;
   emitState: (state: SupbotUpdateState) => void;
+  autoInstallAfterDownload?: boolean;
 }
 
 export class SupbotUpdateManager {
@@ -25,6 +26,7 @@ export class SupbotUpdateManager {
   private checkPromise?: Promise<SupbotUpdateState>;
   private downloadVerification?: Promise<void>;
   private disposed = false;
+  private readonly autoInstallAfterDownload: boolean;
   private readonly onCheckingForUpdate = () => this.setState({ status: "checking", error: undefined });
   private readonly onUpdateAvailable = (info: UpdateInfo) => {
     this.availableUpdateInfo = info;
@@ -62,6 +64,9 @@ export class SupbotUpdateManager {
         progress: this.state.progress ? { ...this.state.progress, percent: 100 } : undefined,
         error: undefined
       });
+      if (this.shouldAutoInstallAfterDownload()) {
+        this.install();
+      }
     }).catch((error) => {
       this.onError(error as Error);
       throw error;
@@ -83,6 +88,7 @@ export class SupbotUpdateManager {
   };
 
   constructor(private readonly options: SupbotUpdateManagerOptions) {
+    this.autoInstallAfterDownload = options.autoInstallAfterDownload ?? true;
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = false;
     autoUpdater.autoRunAppAfterInstall = true;
@@ -235,6 +241,10 @@ export class SupbotUpdateManager {
 
   private isEnabled(): boolean {
     return process.platform === "win32" && process.arch === "x64" && (app.isPackaged || process.env.SUPBOT_ENABLE_DEV_UPDATES === "1");
+  }
+
+  private shouldAutoInstallAfterDownload(): boolean {
+    return this.autoInstallAfterDownload && process.platform === "win32";
   }
 
   private setState(patch: Partial<SupbotUpdateState>): void {

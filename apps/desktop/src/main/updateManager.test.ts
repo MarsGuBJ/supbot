@@ -117,15 +117,47 @@ describe("SupbotUpdateManager", () => {
 
     await manager.download();
     expect(manager.getState()).toMatchObject({
-      status: "downloaded",
+      status: "installing",
       availableVersion: "1.1.0",
       progress: { percent: 100, bytesPerSecond: 2048, transferred: 485, total: 1000 }
     });
-    manager.install();
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(updaterMock.quitAndInstall).toHaveBeenCalledWith(false, true);
     expect(states).toContain("downloading");
-    expect(manager.getState().status).toBe("installing");
+    expect(states).toContain("downloaded");
+    expect(states[states.length - 1]).toBe("installing");
+  });
+
+  it("does not auto-install when autoInstallAfterDownload is disabled", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "supbot-update-optout-"));
+    tempDirs.push(dir);
+    const downloadedFile = join(dir, "Supbot-1.3.0.exe");
+    const payload = Buffer.from("opt-out verified payload");
+    await writeFile(downloadedFile, payload);
+    const files = [{ url: "Supbot-1.3.0.exe", sha512: createHash("sha512").update(payload).digest("base64") }];
+    const manager = new SupbotUpdateManager({
+      getFeedContext: vi.fn().mockResolvedValue({ baseUrl: "https://servstation.example" }),
+      emitState: vi.fn(),
+      autoInstallAfterDownload: false
+    });
+    updaterMock.checkForUpdates.mockImplementation(async () => {
+      updaterMock.emit("update-available", { version: "1.3.0", files });
+      return {};
+    });
+    updaterMock.downloadUpdate.mockImplementation(async () => {
+      updaterMock.emit("update-downloaded", { version: "1.3.0", downloadedFile, files });
+      return [];
+    });
+
+    await manager.check(true);
+    await manager.download();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(updaterMock.quitAndInstall).not.toHaveBeenCalled();
+    expect(manager.getState()).toMatchObject({ status: "downloaded", availableVersion: "1.3.0" });
+
+    manager.install();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(updaterMock.quitAndInstall).toHaveBeenCalledWith(false, true);
   });
 
   it("rejects a downloaded update whose SHA-512 digest does not match", async () => {
