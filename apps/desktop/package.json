@@ -1,6 +1,6 @@
 {
   "name": "supbot",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local single-user desktop agent.",
   "engines": {
     "node": ">=22"
@@ -46,7 +46,7 @@
     "@vitejs/plugin-react": "^6.0.2",
     "concurrently": "^9.2.0",
     "cross-env": "^7.0.3",
-    "electron": "^42.4.1",
+    "electron": "42.4.1",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.1",
     "typescript": "^5.8.3",
@@ -81,10 +81,7 @@
         "nsis"
       ],
       "icon": "build/supbot-icon.ico",
-      "requestedExecutionLevel": "asInvoker",
-      "signtoolOptions": {
-        "publisherName": "Supbot"
-      }
+      "requestedExecutionLevel": "asInvoker"
     },
     "nsis": {
       "oneClick": false,

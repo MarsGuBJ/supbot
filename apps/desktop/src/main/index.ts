@@ -277,7 +277,7 @@ function getRuntime(): SupbotRuntime {
   return runtime; 
 } 
 
-async function supbotUpdateFeedContext(forceRefresh: boolean): Promise<{ baseUrl: string; accessToken?: string }> {
+async function supbotUpdateFeedContext(): Promise<{ baseUrl: string }> {
   const service = getRuntime();
   const [config, identity] = await Promise.all([
     service.servstationA2AConfig(),
@@ -287,15 +287,7 @@ async function supbotUpdateFeedContext(forceRefresh: boolean): Promise<{ baseUrl
     config.baseUrl || identity?.servstationUrl || process.env.SUPBOT_SERVSTATION_BASE_URL || "https://zstupu.com",
     "Servstation base URL"
   );
-  let accessToken: string | undefined;
-  try {
-    accessToken = await service.servstationA2AAccessToken(undefined, forceRefresh);
-  } catch (error) {
-    if (forceRefresh) {
-      throw error;
-    }
-  }
-  return { baseUrl, accessToken };
+  return { baseUrl };
 }
  
 interface OidcDiscoveryDocument { 

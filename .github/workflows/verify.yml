@@ -30,6 +30,16 @@ jobs:
       - run: npm run lint
       - run: npm audit --audit-level=high --registry=https://registry.npmjs.org
       - run: npm run verify
+      - name: Build Windows updater artifacts
+        run: npm run dist:win
+      - name: Upload Windows updater artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: supbot-windows-x64-${{ github.sha }}
+          path: |
+            apps/desktop/release/Supbot-*-win-x64.exe
+            apps/desktop/release/Supbot-*-win-x64.exe.blockmap
+          if-no-files-found: error
       - name: Upload Autopilot benchmark report
         if: always()
         uses: actions/upload-artifact@v4

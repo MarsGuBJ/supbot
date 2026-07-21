@@ -88,7 +88,7 @@ describe("SupbotUpdateManager", () => {
     const payload = Buffer.from("verified update payload");
     await writeFile(downloadedFile, payload);
     const files = [{ url: "Supbot-1.1.0.exe", sha512: createHash("sha512").update(payload).digest("base64") }];
-    const getFeedContext = vi.fn().mockResolvedValue({ baseUrl: "https://servstation.example", accessToken: "token-1" });
+    const getFeedContext = vi.fn().mockResolvedValue({ baseUrl: "https://servstation.example" });
     const states: string[] = [];
     const manager = new SupbotUpdateManager({
       getFeedContext,
@@ -113,7 +113,7 @@ describe("SupbotUpdateManager", () => {
       url: "https://servstation.example/api/v1/supbot/updates/stable/win32-x64",
       useMultipleRangeRequest: false
     });
-    expect(updaterMock.requestHeaders).toEqual({ Authorization: "Bearer token-1" });
+    expect(updaterMock.requestHeaders).toEqual({});
 
     await manager.download();
     expect(manager.getState()).toMatchObject({
@@ -152,27 +152,7 @@ describe("SupbotUpdateManager", () => {
     expect(manager.getState()).toMatchObject({ status: "error", error: "Supbot update SHA-512 verification failed." });
   });
 
-  it("refreshes the access token once after a 401", async () => {
-    const getFeedContext = vi
-      .fn()
-      .mockResolvedValueOnce({ baseUrl: "https://servstation.example", accessToken: "expired" })
-      .mockResolvedValueOnce({ baseUrl: "https://servstation.example", accessToken: "fresh" });
-    const manager = new SupbotUpdateManager({ getFeedContext, emitState: vi.fn() });
-    updaterMock.checkForUpdates
-      .mockRejectedValueOnce(Object.assign(new Error("HTTP 401"), { statusCode: 401 }))
-      .mockImplementationOnce(async () => {
-        updaterMock.emit("update-not-available");
-        return {};
-      });
-
-    await manager.check(true);
-    expect(getFeedContext).toHaveBeenNthCalledWith(1, false);
-    expect(getFeedContext).toHaveBeenNthCalledWith(2, true);
-    expect(updaterMock.requestHeaders).toEqual({ Authorization: "Bearer fresh" });
-    expect(manager.getState().status).toBe("not_available");
-  });
-
-  it("checks a public update feed without an access token", async () => {
+  it("checks the public update feed without an access token", async () => {
     const getFeedContext = vi.fn().mockResolvedValue({ baseUrl: "https://servstation.example" });
     const manager = new SupbotUpdateManager({ getFeedContext, emitState: vi.fn() });
     updaterMock.checkForUpdates.mockImplementation(async () => {
@@ -182,14 +162,14 @@ describe("SupbotUpdateManager", () => {
 
     await manager.check(false);
 
-    expect(getFeedContext).toHaveBeenCalledWith(false);
+    expect(getFeedContext).toHaveBeenCalledOnce();
     expect(updaterMock.requestHeaders).toEqual({});
     expect(manager.getState()).toMatchObject({ status: "available", availableVersion: "1.1.0" });
   });
 
   it("maps a missing manifest to no update", async () => {
     const manager = new SupbotUpdateManager({
-      getFeedContext: vi.fn().mockResolvedValue({ baseUrl: "https://servstation.example", accessToken: "token" }),
+      getFeedContext: vi.fn().mockResolvedValue({ baseUrl: "https://servstation.example" }),
       emitState: vi.fn()
     });
     updaterMock.checkForUpdates.mockRejectedValue(Object.assign(new Error("HTTP 404"), { statusCode: 404 }));

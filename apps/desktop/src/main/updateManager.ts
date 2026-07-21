@@ -9,11 +9,10 @@ const defaultCheckIntervalMs = 30 * 60 * 1000;
 
 interface UpdateFeedContext {
   baseUrl: string;
-  accessToken?: string;
 }
 
 interface SupbotUpdateManagerOptions {
-  getFeedContext: (forceRefresh: boolean) => Promise<UpdateFeedContext>;
+  getFeedContext: () => Promise<UpdateFeedContext>;
   emitState: (state: SupbotUpdateState) => void;
 }
 
@@ -157,7 +156,7 @@ export class SupbotUpdateManager {
     this.setState({ status: "downloading", progress: undefined, error: undefined });
     this.downloadVerification = undefined;
     try {
-      await this.withAuthenticatedFeed(() => autoUpdater.downloadUpdate());
+      await this.withFeed(() => autoUpdater.downloadUpdate());
       if (!this.downloadVerification) {
         throw new Error("Supbot update download did not provide verification metadata.");
       }
@@ -182,7 +181,7 @@ export class SupbotUpdateManager {
   private async performCheck(manual: boolean): Promise<SupbotUpdateState> {
     this.setState({ status: "checking", error: undefined });
     try {
-      await this.withAuthenticatedFeed(() => autoUpdater.checkForUpdates());
+      await this.withFeed(() => autoUpdater.checkForUpdates());
       return this.getState();
     } catch (error) {
       if (isMissingUpdateManifest(error)) {
@@ -204,24 +203,14 @@ export class SupbotUpdateManager {
     }
   }
 
-  private async withAuthenticatedFeed<T>(action: () => Promise<T>): Promise<T> {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const context = await this.options.getFeedContext(attempt > 0);
-      const configuredUrl =
-        process.env.SUPBOT_UPDATE_FEED_URL?.trim() ||
-        `${context.baseUrl.replace(/\/$/, "")}/api/v1/supbot/updates/stable/win32-x64`;
-      autoUpdater.setFeedURL({ provider: "generic", url: configuredUrl, useMultipleRangeRequest: false });
-      autoUpdater.requestHeaders = context.accessToken ? { Authorization: `Bearer ${context.accessToken}` } : {};
-      try {
-        return await action();
-      } catch (error) {
-        if (attempt === 0 && isUnauthorized(error)) {
-          continue;
-        }
-        throw error;
-      }
-    }
-    throw new Error("Supbot update authorization failed.");
+  private async withFeed<T>(action: () => Promise<T>): Promise<T> {
+    const context = await this.options.getFeedContext();
+    const configuredUrl =
+      process.env.SUPBOT_UPDATE_FEED_URL?.trim() ||
+      `${context.baseUrl.replace(/\/$/, "")}/api/v1/supbot/updates/stable/win32-x64`;
+    autoUpdater.setFeedURL({ provider: "generic", url: configuredUrl, useMultipleRangeRequest: false });
+    autoUpdater.requestHeaders = {};
+    return action();
   }
 
   private async verifyDownloadedUpdate(info: UpdateDownloadedEvent): Promise<void> {
@@ -291,11 +280,6 @@ function normalizeProgress(progress: { percent: number; bytesPerSecond: number; 
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function isUnauthorized(error: unknown): boolean {
-  const candidate = error as { statusCode?: number; message?: string };
-  return candidate?.statusCode === 401 || /\b401\b/.test(candidate?.message || "");
 }
 
 function isMissingUpdateManifest(error: unknown): boolean {
