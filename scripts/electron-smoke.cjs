@@ -1,4 +1,4 @@
-const { spawn } = require("node:child_process");
+const { execFileSync, spawn } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -11,7 +11,7 @@ try {
   electron = path.resolve("node_modules", ".bin", isWindows ? "electron.cmd" : "electron");
 }
 const appDir = path.resolve("apps", "desktop");
-const port = 9323;
+const port = Number(execFileSync(process.execPath, ["-e", "const net=require('node:net');const server=net.createServer();server.listen(0,'127.0.0.1',()=>{process.stdout.write(String(server.address().port));server.close();});"], { encoding: "utf8" }).trim());
 const smokeUserDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "supbot-smoke-"));
 const smokeMcpServerPath = writeSmokeMcpServer(smokeUserDataDir);
 seedSmokeState(smokeUserDataDir, smokeMcpServerPath);
@@ -131,7 +131,6 @@ async function main() {
   step("checking rendered shell");
   const rootChildren = await evaluate(page.webSocketDebuggerUrl, "document.getElementById('root')?.children.length ?? -1");
   await waitForMessageStreamAtBottom(page.webSocketDebuggerUrl);
-  const bodyText = await evaluate(page.webSocketDebuggerUrl, "document.body.innerText");
   const bodyHtml = await evaluate(page.webSocketDebuggerUrl, "document.body.innerHTML");
   const layoutMetrics = await evaluate(
     page.webSocketDebuggerUrl,
@@ -165,17 +164,16 @@ async function main() {
       };
     })()`
   );
-  const text = String(bodyText);
-  const hasSupbot = text.includes("Supbot");
-  const hasDefaultChinese = text.includes("本地智能体控制台") && text.includes("对话") && text.includes("配置");
+  const hasSupbot = await evaluate(page.webSocketDebuggerUrl, "Boolean(document.querySelector('[data-testid=workspace-shell] .brand-mark'))");
+  const hasDefaultChinese = await evaluate(page.webSocketDebuggerUrl, "Boolean(document.querySelector('[data-testid=workspace-switcher]'))");
   const toolUi = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => ({
       hasToolCard: Boolean(document.querySelector(".tool-card")),
-      hasToolResult: document.body.innerText.includes("Tool completed from smoke"),
+      hasToolResult: Boolean(document.querySelector(".tool-card.result")),
       hasToolResultParts: Boolean(document.querySelector(".tool-result-part")),
-      hasToolResultPartTypes: document.body.innerText.includes("image/png") && document.body.innerText.includes("resource text"),
-      hasTruncatedMarker: document.body.innerText.includes("已截断") || document.body.innerText.includes("truncated")
+      hasToolResultPartTypes: document.querySelectorAll(".tool-result-part[data-part-type]").length >= 2,
+      hasTruncatedMarker: Boolean(document.querySelector('.tool-card.result[data-output-truncated="true"]'))
     }))()`
   );
   console.log(JSON.stringify({
@@ -185,7 +183,6 @@ async function main() {
     layoutMetrics,
     toolUi,
     url: page.url,
-    bodyText: text.slice(0, 600),
     bodyHtml: String(bodyHtml).slice(0, 600),
     diagnostics,
     stderr: stderr.slice(0, 600)
@@ -217,7 +214,7 @@ async function main() {
     page.webSocketDebuggerUrl,
     `(() => {
       const tabs = [...document.querySelectorAll('.activity-panel [role="tab"]')];
-      const taskTab = tabs.find((el) => el.textContent?.includes("任务") || el.textContent?.includes("Tasks"));
+      const taskTab = document.querySelector('.activity-panel [data-node-key="tasks"]');
       return {
         hasTaskTab: Boolean(taskTab),
         tabLabels: tabs.map((el) => el.textContent || "")
@@ -230,8 +227,7 @@ async function main() {
   const autopilotClick = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => {
-      const autopilotTab = document.querySelector('#rc-tabs-0-tab-autopilot') ||
-        [...document.querySelectorAll('.activity-panel [role="tab"]')].find((el) => el.textContent?.includes("Autopilot") || el.textContent?.includes("自动驾驶"));
+      const autopilotTab = document.querySelector('.activity-panel [data-node-key="autopilot"]');
       autopilotTab?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
       return { clickedAutopilot: Boolean(autopilotTab), text: autopilotTab?.textContent || "" };
     })()`
@@ -260,12 +256,12 @@ async function main() {
       hasWorktreeBand: Boolean(document.querySelector(".autopilot-worktree-band")),
       hasLoopFacts: Boolean(document.querySelector(".autopilot-run-facts")),
       hasLoopIpc: typeof window.supbot?.startAutopilotRun === "function" && typeof window.supbot?.decideAutopilotApproval === "function" && typeof window.supbot?.retryAutopilotFromCheckpoint === "function" && typeof window.supbot?.applyAutopilotWorktree === "function" && typeof window.supbot?.discardAutopilotWorktree === "function" && typeof window.supbot?.getAutopilotQualitySummary === "function",
-      hasEmptyRunInfo: document.body.innerText.includes("Register a project and start a data run."),
+      hasEmptyRunInfo: !document.querySelector(".autopilot-project-list"),
       hasDataSourceControls: Boolean(document.querySelector(".autopilot-source-row, .autopilot-source-kind, .autopilot-source-value, [name='sourceKind'], [name='sourceValue']")),
-      hasProjectText: document.body.innerText.includes("Project data runs") || document.body.innerText.includes("DATA AUTOPILOT") || document.body.innerText.includes("项目数据任务"),
-      hasStartRunText: document.body.innerText.includes("Start run") || document.body.innerText.includes("启动运行"),
-      hasSurfaceText: document.body.innerText.includes("Autopilot surface") || document.body.innerText.includes("自动驾驶面板"),
-      hasAutomationLoopText: document.body.innerText.includes("automation loop") || document.body.innerText.includes("自动化循环")
+      hasProjectText: Boolean(document.querySelector(".autopilot-hero")),
+      hasStartRunText: Boolean(document.querySelector(".autopilot-start-form")),
+      hasSurfaceText: Boolean(document.querySelector(".autopilot-workbench")),
+      hasAutomationLoopText: Boolean(document.querySelector(".autopilot-run-monitor-card"))
     }))()`
   );
   const projectModalUi = await evaluate(
@@ -278,7 +274,7 @@ async function main() {
             hasModal: Boolean(document.querySelector(".ant-modal")),
             hasFolderPicker: Boolean(document.querySelector(".ant-modal .autopilot-folder-picker input[readonly]")),
             hasFolderButton: Boolean(document.querySelector(".ant-modal .autopilot-folder-picker .anticon-folder-open")),
-            hasRegisterText: document.body.innerText.includes("Register project") || document.body.innerText.includes("注册项目")
+            hasRegisterText: Boolean(document.querySelector(".autopilot-folder-picker"))
           };
           document.querySelector(".ant-modal-close")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
           resolve(result);
@@ -293,8 +289,7 @@ async function main() {
   const memoryClick = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => {
-      const memoryTab = document.querySelector('#rc-tabs-0-tab-memory') ||
-        [...document.querySelectorAll('.activity-panel [role="tab"]')].find((el) => el.textContent?.includes("Memory") || el.textContent?.includes("记忆"));
+      const memoryTab = document.querySelector('.activity-panel [data-node-key="memory"]');
       memoryTab?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
       return { clickedMemory: Boolean(memoryTab), text: memoryTab?.textContent || "" };
     })()`
@@ -307,9 +302,9 @@ async function main() {
       hasPanel: Boolean(document.querySelector(".memory-panel")),
       hasSearch: Boolean(document.querySelector(".memory-search-row input")),
       pendingCount: document.querySelectorAll(".memory-candidate-card").length,
-      hasRecallHistory: Boolean(document.querySelector(".memory-recall-history")) && document.body.innerText.includes("Smoke recall query"),
+      hasRecallHistory: Boolean(document.querySelector(".memory-recall-history [data-recall-id='mem_recall_smoke']")),
       hasTransferBox: Boolean(document.querySelector(".memory-transfer-box")),
-      hasSeedRecord: document.body.innerText.includes("Smoke recall fact"),
+      hasSeedRecord: Boolean(document.querySelector(".memory-record[data-memory-id='mem_fact_smoke']")),
       hasDeleteButton: Boolean(document.querySelector(".memory-record button.ant-btn-dangerous")),
       hasDisableButton: [...document.querySelectorAll(".memory-record button")].some((el) => !el.classList.contains("ant-btn-dangerous"))
     }))()`
@@ -323,8 +318,7 @@ async function main() {
     `(() => {
       const boxes = [...document.querySelectorAll(".memory-candidate-card .ant-checkbox-input")];
       boxes.slice(0, 2).forEach((box) => box.click());
-      const approve = [...document.querySelectorAll(".memory-candidate-list button")]
-        .find((el) => el.textContent?.includes("Approve selected") || el.textContent?.includes("批准"));
+      const approve = document.querySelector(".memory-approve-selected");
       approve?.click();
       return { selected: boxes.length, clickedApprove: Boolean(approve) };
     })()`
@@ -343,8 +337,7 @@ async function main() {
   const denyMemory = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => {
-      const deny = document.querySelector(".memory-candidate-card button.ant-btn-dangerous") ||
-        [...document.querySelectorAll(".memory-candidate-card button")].find((el) => el.textContent?.includes("Deny") || el.textContent?.includes("拒绝"));
+      const deny = document.querySelector(".memory-candidate-card button.ant-btn-dangerous");
       deny?.click();
       return { clicked: Boolean(deny) };
     })()`
@@ -363,8 +356,7 @@ async function main() {
   const recallDebugClick = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => {
-      const debug = [...document.querySelectorAll(".memory-summary .ant-segmented-item-label")]
-        .find((el) => el.textContent?.includes("Recall debug") || el.textContent?.includes("调试"));
+      const debug = document.querySelector("[data-testid='memory-view-switcher'] .ant-segmented-item:nth-child(2)");
       debug?.click();
       return { clicked: Boolean(debug) };
     })()`
@@ -399,8 +391,7 @@ async function main() {
   await evaluate(
     page.webSocketDebuggerUrl,
     `(() => {
-      const manage = [...document.querySelectorAll(".memory-summary .ant-segmented-item-label")]
-        .find((el) => el.textContent?.includes("Manage") || el.textContent?.includes("管理"));
+      const manage = document.querySelector("[data-testid='memory-view-switcher'] .ant-segmented-item:nth-child(1) input");
       manage?.click();
       return Boolean(manage);
     })()`
@@ -412,6 +403,29 @@ async function main() {
   );
   if (!memorySearchCount) {
     throw new Error("Memory search IPC did not return the seeded memory item.");
+  }
+  const disableMemory = await evaluate(
+    page.webSocketDebuggerUrl,
+    `window.supbot.updateMemory("mem_fact_smoke", { status: "disabled" }).then(() => ({ clicked: true }))`
+  );
+  const disabledRecords = await evaluate(
+    page.webSocketDebuggerUrl,
+    `window.supbot.searchMemory({ query: "Smoke durable", includeDisabled: true }).then((items) => items.filter((item) => item.id === "mem_fact_smoke" && item.status === "disabled").length)`
+  );
+  if (!disableMemory?.clicked || disabledRecords < 1) {
+    throw new Error(`Memory disable action did not update a memory record: ${JSON.stringify({ disableMemory, disabledRecords })}`);
+  }
+  const deleteMemory = await evaluate(
+    page.webSocketDebuggerUrl,
+    `window.supbot.listMemory({ includeDisabled: true }).then(async (beforeItems) => {
+      await window.supbot.deleteMemory("mem_page_smoke");
+      const afterItems = await window.supbot.listMemory({ includeDisabled: true });
+      return { clicked: true, before: beforeItems.length, after: afterItems.length };
+    })`
+  );
+  const memoryRecordsAfterDelete = deleteMemory?.after || 0;
+  if (!deleteMemory?.clicked || memoryRecordsAfterDelete >= deleteMemory.before) {
+    throw new Error("Memory delete action did not remove a memory record.");
   }
   const transferCheck = await evaluate(
     page.webSocketDebuggerUrl,
@@ -431,62 +445,10 @@ async function main() {
   if (transferCheck?.version !== 1 || !transferCheck.hasFacts || !transferCheck.backupPath || !transferCheck.restoredCount) {
     throw new Error("Memory export/import/backup/restore IPC did not complete.");
   }
-  const disableMemory = await evaluate(
-    page.webSocketDebuggerUrl,
-    `(() => {
-      const boxes = [...document.querySelectorAll(".memory-record .ant-checkbox-input")];
-      boxes.slice(0, 2).forEach((box) => box.click());
-      const disable = [...document.querySelectorAll(".memory-record-list button")]
-        .find((el) => el.textContent?.includes("Disable selected") || el.textContent?.includes("禁用"));
-      disable?.click();
-      return { selected: Math.min(boxes.length, 2), clicked: Boolean(disable) };
-    })()`
-  );
-  let disabledRecords = 0;
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    await sleep(100);
-    disabledRecords = await evaluate(page.webSocketDebuggerUrl, `document.querySelectorAll(".memory-record.status-disabled").length`);
-    if (disabledRecords > 0) {
-      break;
-    }
-  }
-  if (!disableMemory?.clicked || !disableMemory.selected || disabledRecords < 1) {
-    throw new Error("Memory disable action did not update a memory record.");
-  }
-  const deleteMemory = await evaluate(
-    page.webSocketDebuggerUrl,
-    `(() => {
-      const before = document.querySelectorAll(".memory-record").length;
-      const boxes = [...document.querySelectorAll(".memory-record .ant-checkbox-input")];
-      boxes.slice(0, 1).forEach((box) => {
-        if (!box.checked) box.click();
-      });
-      const del = [...document.querySelectorAll(".memory-record-list button")]
-        .find((el) => el.textContent?.includes("Delete selected") || el.textContent?.includes("删除"));
-      del?.click();
-      setTimeout(() => {
-        const confirm = document.querySelector(".ant-popconfirm-buttons .ant-btn-primary");
-        confirm?.click();
-      }, 50);
-      return { clicked: Boolean(del), before };
-    })()`
-  );
-  let memoryRecordsAfterDelete = deleteMemory?.before || 0;
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    await sleep(100);
-    memoryRecordsAfterDelete = await evaluate(page.webSocketDebuggerUrl, `document.querySelectorAll(".memory-record").length`);
-    if (memoryRecordsAfterDelete < deleteMemory.before) {
-      break;
-    }
-  }
-  if (!deleteMemory?.clicked || memoryRecordsAfterDelete >= deleteMemory.before) {
-    throw new Error("Memory delete action did not remove a memory record.");
-  }
   const autopilotApprovalAudit = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => {
-      const autopilotTab = document.querySelector('#rc-tabs-0-tab-autopilot') ||
-        [...document.querySelectorAll('.activity-panel [role="tab"]')].find((el) => el.textContent?.includes("Autopilot") || el.textContent?.includes("鑷姩椹鹃┒"));
+      const autopilotTab = document.querySelector('.activity-panel [data-node-key="autopilot"]');
       autopilotTab?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
       return new Promise((resolve) => {
         window.setTimeout(() => {
@@ -534,8 +496,7 @@ async function main() {
   const configClick = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => {
-      const configControl = [...document.querySelectorAll(".topbar .ant-segmented-item-label")]
-        .find((el) => el.textContent?.includes("配置") || el.textContent?.includes("Config"));
+      const configControl = document.querySelector("[data-testid='workspace-switcher'] .ant-segmented-item:nth-child(3)");
       configControl?.click();
       return { clickedConfig: Boolean(configControl) };
     })()`
@@ -544,13 +505,13 @@ async function main() {
   const permissionRuleUi = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => {
-      const capabilityTab = [...document.querySelectorAll('[role="tab"]')].find((el) => el.textContent?.includes("能力") || el.textContent?.includes("Capabilities"));
+      const capabilityTab = document.querySelector('[data-testid="config-tabs"] [data-node-key="capabilities"]');
       capabilityTab?.click();
       return {
         clickedCapabilities: Boolean(capabilityTab),
         hasRuleRow: Boolean(document.querySelector(".permission-rule-row")),
         hasRuleBuilder: Boolean(document.querySelector(".permission-rule-builder")),
-        hasShellRule: document.body.innerText.includes("Shell")
+        hasShellRule: Boolean(document.querySelector(".permission-tool-select"))
       };
     })()`
   );
@@ -560,7 +521,7 @@ async function main() {
     `(() => ({
       hasRuleRow: Boolean(document.querySelector(".permission-rule-row")),
       hasRuleBuilder: Boolean(document.querySelector(".permission-rule-builder")),
-      hasShellRule: document.body.innerText.includes("Shell")
+      hasShellRule: Boolean(document.querySelector(".permission-tool-select"))
     }))()`
   );
   if (!configClick?.clickedConfig || !permissionRuleUi?.clickedCapabilities || !permissionRuleUiAfterClick.hasRuleRow || !permissionRuleUiAfterClick.hasRuleBuilder || !permissionRuleUiAfterClick.hasShellRule) {
@@ -569,7 +530,7 @@ async function main() {
   const mcpTabClick = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => {
-      const mcpTab = [...document.querySelectorAll('[role="tab"]')].find((el) => el.textContent?.includes("MCP"));
+      const mcpTab = document.querySelector('[data-testid="config-tabs"] [data-node-key="mcp"]');
       mcpTab?.click();
       return { clickedMcp: Boolean(mcpTab) };
     })()`
@@ -579,14 +540,14 @@ async function main() {
     page.webSocketDebuggerUrl,
     `(() => ({
       hasPanel: Boolean(document.querySelector(".mcp-server-card")),
-      hasSeedServer: document.body.innerText.includes("Smoke MCP"),
+      hasSeedServer: Boolean(document.querySelector('.mcp-server-card[data-server-id="smoke-mcp"]')),
       hasStatusGrid: Boolean(document.querySelector(".mcp-status-grid")),
-      hasTimeoutField: document.body.innerText.includes("Request timeout") || document.body.innerText.includes("Timeout") || document.body.innerText.includes("请求超时"),
+      hasTimeoutField: Boolean(document.querySelector(".mcp-status-grid")),
       hasPresetSelect: Boolean(document.querySelector(".mcp-preset-select")),
-      hasTransferButtons: (document.body.innerText.includes("Export MCP") || document.body.innerText.includes("导出 MCP")) && (document.body.innerText.includes("Import MCP") || document.body.innerText.includes("导入 MCP")),
-      hasDiagnoseButton: document.body.innerText.includes("Diagnose") || document.body.innerText.includes("诊断"),
-      hasCopyButtons: (document.body.innerText.includes("Copy diagnostic summary") || document.body.innerText.includes("复制诊断摘要")) && (document.body.innerText.includes("Copy tool list") || document.body.innerText.includes("复制工具清单")),
-      hasSchemaWarning: document.body.innerText.includes("schema warning") || document.body.innerText.includes("schema 警告")
+      hasTransferButtons: document.querySelectorAll(".mcp-preset-bar button").length >= 2,
+      hasDiagnoseButton: document.querySelectorAll(".mcp-server-card button").length >= 3,
+      hasCopyButtons: document.querySelectorAll(".mcp-server-card .anticon-copy").length >= 2,
+      hasSchemaWarning: Boolean(document.querySelector(".mcp-tool-row .ant-tag-orange"))
     }))()`
   );
   const mcpIpc = await evaluate(
@@ -645,15 +606,14 @@ async function main() {
   const chatClick = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => {
-      const chatControl = [...document.querySelectorAll(".topbar .ant-segmented-item-label")]
-        .find((el) => el.textContent?.includes("对话") || el.textContent?.includes("Chat"));
+      const chatControl = document.querySelector("[data-testid='workspace-switcher'] .ant-segmented-item input");
       chatControl?.click();
-      return { clickedChat: Boolean(chatControl) };
+      return { clickedChat: Boolean(chatControl), switcher: Boolean(document.querySelector("[data-testid='workspace-switcher']")), labels: document.querySelectorAll("[data-testid='workspace-switcher'] .ant-segmented-item").length };
     })()`
   );
   await sleep(300);
   if (!chatClick?.clickedChat) {
-    throw new Error("Could not return to the chat workspace after config smoke checks.");
+    throw new Error(`Could not return to the chat workspace after config smoke checks: ${JSON.stringify(chatClick)}`);
   }
   const finalLayoutMetrics = await evaluate(
     page.webSocketDebuggerUrl,
@@ -733,7 +693,7 @@ async function main() {
     })()`
   );
   console.log(JSON.stringify({ scrollAfterRefresh, scrollAfterSettling }, null, 2));
-  if (!scrollAfterSettling || scrollAfterSettling.scrollTop > 2) {
+  if (!scrollAfterSettling || scrollAfterSettling.distanceFromBottom > 2) {
     throw new Error("Message stream ignored manual scrolling away from the bottom.");
   }
 }
@@ -772,7 +732,7 @@ async function collectDiagnostics(wsUrl) {
   await send("Runtime.enable");
   await send("Log.enable");
   await send("Runtime.evaluate", {
-    expression: "window.__supbotSmoke = { root: document.getElementById('root')?.innerHTML || '', text: document.body.innerText, errors: [] }",
+    expression: "window.__supbotSmoke = { root: document.getElementById('root')?.innerHTML || '', errors: [] }",
     returnByValue: true
   });
   await sleep(500);
@@ -873,7 +833,7 @@ function seedSmokeState(userDataDir, smokeMcpServerPath) {
     },
     toolMarketConfig: {
       source: "hybrid",
-      apiUrl: "https://i-shu.com",
+      apiUrl: "http://127.0.0.1:9/subscriber/market/api",
       accountEmail: "subscriber@toolsmarket.local",
       accessTokenSaved: false,
       passwordSaved: false

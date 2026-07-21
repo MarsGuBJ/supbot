@@ -1,4 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
 
 const updaterMock = vi.hoisted(() => {
   const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
@@ -13,6 +23,9 @@ const updaterMock = vi.hoisted(() => {
     requestHeaders: {} as Record<string, string>,
     on: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
       listeners.set(event, [...(listeners.get(event) || []), listener]);
+    }),
+    off: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
+      listeners.set(event, (listeners.get(event) || []).filter((candidate) => candidate !== listener));
     }),
     emit(event: string, ...args: unknown[]) {
       for (const listener of listeners.get(event) || []) {
@@ -44,6 +57,7 @@ describe("SupbotUpdateManager", () => {
   beforeEach(() => {
     updaterMock.clearListeners();
     updaterMock.setFeedURL.mockReset();
+    updaterMock.off.mockClear();
     updaterMock.checkForUpdates.mockReset();
     updaterMock.downloadUpdate.mockReset();
     updaterMock.quitAndInstall.mockReset();
@@ -52,7 +66,28 @@ describe("SupbotUpdateManager", () => {
     delete process.env.SUPBOT_UPDATE_FEED_URL;
   });
 
+  it("removes updater listeners when disposed", () => {
+    const emitState = vi.fn();
+    const manager = new SupbotUpdateManager({
+      getFeedContext: vi.fn().mockResolvedValue({ baseUrl: "https://servstation.example" }),
+      emitState
+    });
+
+    manager.dispose();
+    updaterMock.emit("update-available", { version: "2.0.0" });
+
+    expect(updaterMock.off).toHaveBeenCalledTimes(6);
+    expect(emitState).not.toHaveBeenCalled();
+    expect(manager.getState().status).toBe("idle");
+  });
+
   it("checks, downloads, reports progress, and installs an available release", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "supbot-update-"));
+    tempDirs.push(dir);
+    const downloadedFile = join(dir, "Supbot-1.1.0.exe");
+    const payload = Buffer.from("verified update payload");
+    await writeFile(downloadedFile, payload);
+    const files = [{ url: "Supbot-1.1.0.exe", sha512: createHash("sha512").update(payload).digest("base64") }];
     const getFeedContext = vi.fn().mockResolvedValue({ baseUrl: "https://servstation.example", accessToken: "token-1" });
     const states: string[] = [];
     const manager = new SupbotUpdateManager({
@@ -61,12 +96,12 @@ describe("SupbotUpdateManager", () => {
     });
     updaterMock.checkForUpdates.mockImplementation(async () => {
       updaterMock.emit("checking-for-update");
-      updaterMock.emit("update-available", { version: "1.1.0" });
+      updaterMock.emit("update-available", { version: "1.1.0", files });
       return {};
     });
     updaterMock.downloadUpdate.mockImplementation(async () => {
       updaterMock.emit("download-progress", { percent: 48.5, bytesPerSecond: 2048, transferred: 485, total: 1000 });
-      updaterMock.emit("update-downloaded", { version: "1.1.0" });
+      updaterMock.emit("update-downloaded", { version: "1.1.0", downloadedFile, files });
       return [];
     });
 
@@ -91,6 +126,30 @@ describe("SupbotUpdateManager", () => {
     expect(updaterMock.quitAndInstall).toHaveBeenCalledWith(false, true);
     expect(states).toContain("downloading");
     expect(manager.getState().status).toBe("installing");
+  });
+
+  it("rejects a downloaded update whose SHA-512 digest does not match", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "supbot-update-bad-"));
+    tempDirs.push(dir);
+    const downloadedFile = join(dir, "Supbot-1.2.0.exe");
+    await writeFile(downloadedFile, "tampered");
+    const files = [{ url: "Supbot-1.2.0.exe", sha512: createHash("sha512").update("expected").digest("base64") }];
+    const manager = new SupbotUpdateManager({
+      getFeedContext: vi.fn().mockResolvedValue({ baseUrl: "https://servstation.example" }),
+      emitState: vi.fn()
+    });
+    updaterMock.checkForUpdates.mockImplementation(async () => {
+      updaterMock.emit("update-available", { version: "1.2.0", files });
+      return {};
+    });
+    updaterMock.downloadUpdate.mockImplementation(async () => {
+      updaterMock.emit("update-downloaded", { version: "1.2.0", downloadedFile, files });
+      return [downloadedFile];
+    });
+
+    await manager.check(true);
+    await expect(manager.download()).rejects.toThrow("SHA-512 verification failed");
+    expect(manager.getState()).toMatchObject({ status: "error", error: "Supbot update SHA-512 verification failed." });
   });
 
   it("refreshes the access token once after a 401", async () => {

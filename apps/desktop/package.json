@@ -2,6 +2,9 @@
   "name": "supbot",
   "version": "0.1.0",
   "description": "Local single-user desktop agent.",
+  "engines": {
+    "node": ">=22"
+  },
   "author": "Supbot contributors",
   "main": "dist/main/index.js",
   "bin": {
@@ -16,12 +19,13 @@
   ],
   "scripts": {
     "build": "npm run build:renderer && npm run build:main",
+    "typecheck": "tsc -p tsconfig.json",
     "build:renderer": "vite build",
     "build:main": "esbuild src/main/index.ts src/preload/index.ts --bundle --platform=node --target=node22 --format=cjs --outdir=dist --external:electron",
     "dev": "npm run build:main && node scripts/dev-electron.cjs",
     "dev:probe": "node scripts/dev-electron.cjs --probe",
     "test:dev-port": "node scripts/dev-port-smoke.cjs",
-    "test": "vitest run src/main/updateManager.test.ts",
+    "test": "vitest run",
     "start": "electron .",
     "dist:win": "electron-builder --win nsis",
     "dist:linux": "electron-builder --linux AppImage deb"
@@ -30,24 +34,28 @@
     "@ant-design/icons": "^5.5.1",
     "@supbot/runtime": "file:../../packages/runtime",
     "@supbot/shared": "file:../../packages/shared",
+    "@supbot/ui": "file:../../packages/ui",
     "antd": "^5.26.0",
     "electron-updater": "^6.8.9",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
     "@vitejs/plugin-react": "^6.0.2",
     "concurrently": "^9.2.0",
     "cross-env": "^7.0.3",
     "electron": "^42.4.1",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.1",
-    "vite": "^8.0.16"
+    "typescript": "^5.8.3",
+    "vite": "^8.0.16",
+    "vitest": "^4.1.9"
   },
   "build": {
     "appId": "local.supbot.desktop",
     "productName": "Supbot",
-    "electronVersion": "42.4.1",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "copyright": "Copyright © 2026 Supbot contributors",
     "directories": {
@@ -74,7 +82,6 @@
       ],
       "icon": "build/supbot-icon.ico",
       "requestedExecutionLevel": "asInvoker",
-      "verifyUpdateCodeSignature": false,
       "signtoolOptions": {
         "publisherName": "Supbot"
       }

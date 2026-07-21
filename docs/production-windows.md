@@ -7,7 +7,7 @@ Supbot's first production target is a local, single-user Windows desktop app. It
 Run the release gate from a clean working tree:
 
 ```powershell
-npm install
+npm ci
 npm run verify:release
 ```
 

@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
+import { fetchWithRetry } from "./httpClient";
 import type {
   Attachment,
   IdentityContext,
@@ -25,7 +26,6 @@ import type {
   ServstationMessageDetail,
   ServstationMessageEvent,
   ServstationMessageFolder,
-  ServstationMessageListItem,
   ServstationMessageListResponse,
   ServstationMessageUnreadSummary,
   ServstationScheduledJob,
@@ -45,6 +45,7 @@ interface ServstationAgentClientHost {
   updateConfig(input: ServstationA2AConfigUpdate): Promise<ServstationA2AConfig>;
   randomId(prefix: string): string;
   nowIso(): string;
+  isAllowedAttachmentPath(filePath: string): Promise<boolean>;
 }
 
 interface ConversationsResponse {
@@ -224,7 +225,7 @@ export class ServstationAgentClient {
       throw new Error("Servstation conversation id is required.");
     }
     const requestId = input.requestId?.trim() || this.host.randomId("serv_req");
-    const attachments = await toPromptAttachments(input.attachments || []);
+    const attachments = await toPromptAttachments(input.attachments || [], this.host);
     const runtimeOptions = typeof input.allowWebSearch === "boolean"
       ? { allowWebSearch: input.allowWebSearch }
       : undefined;
@@ -595,14 +596,14 @@ export class ServstationAgentClient {
     if (!baseUrl) {
       throw new Error("Servstation base URL is not configured.");
     }
-    const response = await fetch(joinUrl(baseUrl, "/api/v1/messages/events"), {
+    const response = await fetchWithRetry(joinUrl(baseUrl, "/api/v1/messages/events"), {
       method: "GET",
       headers: {
         ...await this.headers(signal),
         Accept: "text/event-stream"
       },
       signal
-    });
+    }, { timeoutMs: 30_000, idleTimeoutMs: 60_000, maxRetries: 2 });
     if (!response.ok || !response.body) {
       const text = await response.text().catch(() => "");
       throw new Error(text || response.statusText || `Servstation message stream failed with HTTP ${response.status}.`);
@@ -757,13 +758,13 @@ export class ServstationAgentClient {
     if (!identity) {
       throw new Error("Servstation identity context is not paired.");
     }
-    const response = await fetch(joinUrl(baseUrl, path), {
+    const response = await fetchWithRetry(joinUrl(baseUrl, path), {
       ...init,
       headers: {
         ...await this.headers(init.signal instanceof AbortSignal ? init.signal : undefined),
         ...(init.headers || {})
       }
-    });
+    }, { timeoutMs: 30_000, idleTimeoutMs: 30_000, maxRetries: 2 });
     const text = await response.text();
     const payload = text.trim() ? safeJson(text) : {};
     if (!response.ok) {
@@ -800,11 +801,20 @@ export function servstationJobIsTerminal(job: Pick<ServstationSessionJob, "statu
   return TERMINAL_JOB_STATUSES.has(job.status);
 }
 
-async function toPromptAttachments(attachments: Attachment[]): Promise<PromptAttachment[]> {
+const maxPromptAttachmentBytes = 25 * 1024 * 1024;
+
+async function toPromptAttachments(attachments: Attachment[], host: Pick<ServstationAgentClientHost, "isAllowedAttachmentPath">): Promise<PromptAttachment[]> {
   const result: PromptAttachment[] = [];
   for (const attachment of attachments) {
     if (!attachment.path) {
       continue;
+    }
+    if (!await host.isAllowedAttachmentPath(attachment.path)) {
+      throw new Error(`Servstation attachment path is not approved: ${attachment.path}`);
+    }
+    const info = await stat(attachment.path);
+    if (!info.isFile() || info.size > maxPromptAttachmentBytes) {
+      throw new Error(`Servstation attachment must be a file no larger than ${maxPromptAttachmentBytes} bytes: ${attachment.path}`);
     }
     const content = await readFile(attachment.path);
     result.push({

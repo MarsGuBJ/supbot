@@ -1,6 +1,9 @@
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { AutopilotWritePolicy, Project, ProjectCreateInput, ProjectUpdateInput } from "@supbot/shared";
+import { pathIsInside } from "./pathUtils";
+
+export { pathIsInside } from "./pathUtils";
 
 interface ProjectManagerHost {
   randomId(prefix: string): string;
@@ -119,9 +122,38 @@ export function resolveProjectWriteTarget(projectRoot: string, target: string, a
   return outputPath;
 }
 
-export function pathIsInside(parent: string, child: string): boolean {
-  const relativePath = relative(resolve(parent), resolve(child));
-  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
+export async function resolveProjectWriteTargetReal(projectRoot: string, target: string, allowedWriteRoots: string[]): Promise<string> {
+  const outputPath = resolveProjectWriteTarget(projectRoot, target, allowedWriteRoots);
+  const canonicalProjectRoot = await realpath(projectRoot);
+  const canonicalOutput = await realpathProspective(outputPath);
+  if (!pathIsInside(canonicalProjectRoot, canonicalOutput)) {
+    throw new Error(`Project write target resolves outside ${canonicalProjectRoot}.`);
+  }
+  const canonicalAllowedRoots = await Promise.all(allowedWriteRoots.map((root) => realpathProspective(resolve(root))));
+  if (!canonicalAllowedRoots.some((allowedRoot) => pathIsInside(canonicalProjectRoot, allowedRoot) && pathIsInside(allowedRoot, canonicalOutput))) {
+    throw new Error("Project write target resolves outside the approved project output folders.");
+  }
+  return outputPath;
+}
+
+async function realpathProspective(target: string): Promise<string> {
+  const tail: string[] = [];
+  let current = resolve(target);
+  while (true) {
+    try {
+      return resolve(await realpath(current), ...tail);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+      const parent = dirname(current);
+      if (parent === current) {
+        throw error;
+      }
+      tail.unshift(basename(current));
+      current = parent;
+    }
+  }
 }
 
 function normalizeAllowedWriteRoots(roots: string[]): string[] {

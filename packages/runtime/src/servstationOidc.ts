@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { fetchWithRetry } from "./httpClient";
 
 import type {
   IdentityContext,
@@ -65,7 +66,7 @@ export async function refreshServstationOidcTokenSet(
     throw new Error("Servstation OIDC refresh token is not saved.");
   }
   const tokenEndpoint = await discoverTokenEndpoint(tokens.issuerUrl, signal);
-  const response = await fetch(tokenEndpoint, {
+  const response = await fetchWithRetry(tokenEndpoint, {
     method: "POST",
     signal,
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -74,7 +75,7 @@ export async function refreshServstationOidcTokenSet(
       client_id: tokens.clientId,
       refresh_token: tokens.refreshToken
     })
-  });
+  }, { timeoutMs: 20_000, idleTimeoutMs: 20_000, maxRetries: 1 });
   const payload = await response.json().catch(() => ({})) as TokenEndpointResponse & { error?: string; error_description?: string };
   if (!response.ok || !payload.access_token) {
     const message = payload.error_description || payload.error || `HTTP ${response.status}`;
@@ -109,9 +110,18 @@ export function oidcTokenSetFromTokenResponse(
   };
 }
 
-export function identityContextFromAccessToken(accessToken: string, base: Partial<IdentityContext> = {}): IdentityContext | undefined {
+export function identityContextFromAccessToken(
+  accessToken: string,
+  base: Partial<IdentityContext> & { issuerUrl?: string; nowMs?: number } = {},
+): IdentityContext | undefined {
   const claims = decodeJwtPayload(accessToken);
   if (!claims) {
+    return undefined;
+  }
+  if (typeof claims.exp === "number" && Number.isFinite(claims.exp) && claims.exp * 1000 <= (base.nowMs ?? Date.now())) {
+    return undefined;
+  }
+  if (base.issuerUrl && typeof claims.iss === "string" && normalizeUrl(claims.iss) !== normalizeUrl(base.issuerUrl)) {
     return undefined;
   }
   const tenantId = firstString(claims.tenantId, claims.tenant_id, base.tenantId);
@@ -140,12 +150,25 @@ export function identityContextFromAccessToken(accessToken: string, base: Partia
 
 async function discoverTokenEndpoint(issuerUrl: string, signal?: AbortSignal): Promise<string> {
   const issuer = normalizeUrl(issuerUrl);
-  const response = await fetch(`${issuer}/.well-known/openid-configuration`, { signal });
+  const response = await fetchWithRetry(`${issuer}/.well-known/openid-configuration`, { signal }, {
+    timeoutMs: 20_000,
+    idleTimeoutMs: 20_000,
+    maxRetries: 1
+  });
   const payload = await response.json().catch(() => ({})) as OidcDiscovery;
   if (!response.ok || !payload.token_endpoint) {
     throw new Error(`Servstation OIDC discovery failed for ${issuer}`);
   }
-  return payload.token_endpoint;
+  return sameOriginEndpoint(payload.token_endpoint, issuer);
+}
+
+function sameOriginEndpoint(endpoint: string, issuer: string): string {
+  const issuerUrl = new URL(issuer);
+  const resolved = new URL(endpoint, issuerUrl);
+  if (resolved.origin !== issuerUrl.origin) {
+    throw new Error("Servstation OIDC token endpoint must use the issuer origin.");
+  }
+  return resolved.toString();
 }
 
 function decodeJwtPayload(token: string): Record<string, unknown> | undefined {

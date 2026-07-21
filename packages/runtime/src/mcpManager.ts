@@ -47,6 +47,10 @@ class McpProtocolError extends Error {
   }
 }
 
+const maxMcpHeaderBytes = 16 * 1024;
+const maxMcpFrameBytes = 4 * 1024 * 1024;
+const maxMcpBufferBytes = maxMcpHeaderBytes + 4 + maxMcpFrameBytes;
+
 interface McpManagerHost {
   randomId(prefix: string): string;
   nowIso(): string;
@@ -69,6 +73,7 @@ interface McpConnection {
 export class McpManager implements ToolProvider {
   private servers: McpServerConfig[] = [];
   private readonly connections = new Map<string, McpConnection>();
+  private readonly connectPromises = new Map<string, Promise<McpServerStatus>>();
   private readonly logs = new Map<string, McpLogRecord[]>();
 
   constructor(private readonly host: McpManagerHost) {}
@@ -78,7 +83,7 @@ export class McpManager implements ToolProvider {
     const ids = new Set(this.servers.map((server) => server.id));
     for (const serverId of [...this.connections.keys()]) {
       if (!ids.has(serverId)) {
-        void this.disconnect(serverId);
+        void this.disconnect(serverId).catch((error) => console.error(`Failed to disconnect removed MCP server ${serverId}`, error));
       }
     }
     for (const server of this.servers) {
@@ -188,14 +193,14 @@ export class McpManager implements ToolProvider {
     try {
       const child = spawn(server.command, server.args, {
         cwd: server.cwd || process.cwd(),
-        env: { ...process.env, ...(server.env || {}) },
+        env: buildMcpSpawnEnv(server.env),
         windowsHide: true,
         stdio: "pipe"
       });
       connection.process = child;
       child.stdout.on("data", (chunk) => this.handleData(connection, chunk));
       child.stderr.on("data", (chunk) => {
-        const text = String(chunk).trim();
+        const text = redactMcpStderr(String(chunk).trim(), server.env);
         if (text) {
           stderrPreview = appendPreview(stderrPreview, text, 2_000);
         }
@@ -276,7 +281,7 @@ export class McpManager implements ToolProvider {
     const connection = this.connectionFor(serverId);
     connection.config = cloneServer(next);
     if (!next.enabled) {
-      void this.disconnect(serverId);
+      void this.disconnect(serverId).catch((error) => console.error(`Failed to disconnect disabled MCP server ${serverId}`, error));
     }
     return cloneServer(next);
   }
@@ -288,6 +293,21 @@ export class McpManager implements ToolProvider {
   }
 
   async connect(serverId: string): Promise<McpServerStatus> {
+    const active = this.connectPromises.get(serverId);
+    if (active) {
+      return active;
+    }
+    let pending: Promise<McpServerStatus>;
+    pending = this.connectOnce(serverId).finally(() => {
+      if (this.connectPromises.get(serverId) === pending) {
+        this.connectPromises.delete(serverId);
+      }
+    });
+    this.connectPromises.set(serverId, pending);
+    return pending;
+  }
+
+  private async connectOnce(serverId: string): Promise<McpServerStatus> {
     const server = this.servers.find((item) => item.id === serverId);
     if (!server) {
       throw new Error(`MCP server not found: ${serverId}`);
@@ -313,7 +333,7 @@ export class McpManager implements ToolProvider {
     try {
       const child = spawn(server.command, server.args, {
         cwd: server.cwd || process.cwd(),
-        env: { ...process.env, ...(server.env || {}) },
+        env: buildMcpSpawnEnv(server.env),
         windowsHide: true,
         stdio: "pipe"
       });
@@ -321,7 +341,7 @@ export class McpManager implements ToolProvider {
       this.setStatus(connection, "connecting", { pid: child.pid });
       child.stdout.on("data", (chunk) => this.handleData(connection, chunk));
       child.stderr.on("data", (chunk) => {
-        const text = String(chunk).trim();
+        const text = redactMcpStderr(String(chunk).trim(), server.env);
         if (text) {
           const preview = appendPreview(connection.status.stderrPreview, text, 2_000);
           this.setStatus(connection, connection.status.state, { stderrPreview: preview });
@@ -347,13 +367,15 @@ export class McpManager implements ToolProvider {
         if (manual) {
           this.pushLog(serverId, "info", message, { code, signal });
         } else {
-          void this.emit(message, serverId, { code, signal }, "warning");
+          void this.emit(message, serverId, { code, signal }, "warning")
+            .catch((error) => console.error(`Failed to emit MCP exit event for ${serverId}`, error));
         }
       });
       child.on("error", (error) => {
         this.rejectPending(connection, error);
         this.setStatus(connection, "error", { lastError: error.message, lastExitReason: error.message, pid: undefined, toolCount: 0 });
-        void this.emit("MCP server failed to start", serverId, { error: error.message }, "error");
+        void this.emit("MCP server failed to start", serverId, { error: error.message }, "error")
+          .catch((emitError) => console.error(`Failed to emit MCP startup error for ${serverId}`, emitError));
       });
 
       const initializeResult = await this.request(connection, "initialize", {
@@ -506,21 +528,34 @@ export class McpManager implements ToolProvider {
   }
 
   private handleData(connection: McpConnection, chunk: Buffer): void {
+    if (connection.buffer.length + chunk.length > maxMcpBufferBytes) {
+      this.failFrame(connection, `MCP input buffer exceeded ${maxMcpBufferBytes} bytes.`);
+      return;
+    }
     connection.buffer = Buffer.concat([connection.buffer, chunk]);
     while (connection.buffer.length) {
       const headerEnd = connection.buffer.indexOf("\r\n\r\n");
       if (headerEnd < 0) {
+        if (connection.buffer.length > maxMcpHeaderBytes) {
+          this.failFrame(connection, `MCP frame header exceeded ${maxMcpHeaderBytes} bytes.`);
+        }
+        return;
+      }
+      if (headerEnd > maxMcpHeaderBytes) {
+        this.failFrame(connection, `MCP frame header exceeded ${maxMcpHeaderBytes} bytes.`);
         return;
       }
       const header = connection.buffer.subarray(0, headerEnd).toString("utf8");
       const match = header.match(/Content-Length:\s*(\d+)/i);
       if (!match) {
-        connection.buffer = Buffer.alloc(0);
-        this.setStatus(connection, "error", { lastError: "Invalid MCP frame header." });
-        this.pushLog(connection.config.id, "error", "Invalid MCP frame header.");
+        this.failFrame(connection, "Invalid MCP frame header.");
         return;
       }
       const length = Number(match[1]);
+      if (!Number.isSafeInteger(length) || length < 0 || length > maxMcpFrameBytes) {
+        this.failFrame(connection, `MCP frame exceeded ${maxMcpFrameBytes} bytes.`);
+        return;
+      }
       const bodyStart = headerEnd + 4;
       if (connection.buffer.length < bodyStart + length) {
         return;
@@ -528,6 +563,17 @@ export class McpManager implements ToolProvider {
       const body = connection.buffer.subarray(bodyStart, bodyStart + length).toString("utf8");
       connection.buffer = connection.buffer.subarray(bodyStart + length);
       this.handleMessage(connection, body);
+    }
+  }
+
+  private failFrame(connection: McpConnection, message: string): void {
+    connection.buffer = Buffer.alloc(0);
+    this.rejectPending(connection, new Error(message));
+    this.setStatus(connection, "error", { lastError: message, toolCount: 0 });
+    this.pushLog(connection.config.id, "error", message);
+    if (connection.process) {
+      connection.manualDisconnect = true;
+      connection.process.kill();
     }
   }
 
@@ -614,6 +660,43 @@ export class McpManager implements ToolProvider {
     }
     await this.host.onEvent?.({ kind: "mcp_server", message, serverId, data });
   }
+}
+
+const inheritedMcpEnvironmentKeys = [
+  "PATH",
+  "PATHEXT",
+  "SystemRoot",
+  "WINDIR",
+  "COMSPEC",
+  "TEMP",
+  "TMP",
+  "HOME",
+  "USERPROFILE",
+  "LOCALAPPDATA",
+  "APPDATA",
+  "ProgramFiles",
+  "ProgramFiles(x86)"
+] as const;
+
+export function buildMcpSpawnEnv(configured: Record<string, string> | undefined, hostEnv = process.env): NodeJS.ProcessEnv {
+  const inherited: NodeJS.ProcessEnv = {};
+  for (const key of inheritedMcpEnvironmentKeys) {
+    const value = hostEnv[key];
+    if (value !== undefined) {
+      inherited[key] = value;
+    }
+  }
+  return { ...inherited, ...(configured || {}) };
+}
+
+export function redactMcpStderr(text: string, configured: Record<string, string> | undefined): string {
+  let redacted = text
+    .replace(/\bBearer\s+[^\s,;]+/gi, "Bearer [REDACTED]")
+    .replace(/\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|authorization)\b(\s*[=:]\s*)([^\s,;]+)/gi, "$1$2[REDACTED]");
+  for (const value of Object.values(configured || {}).filter((item) => item.length >= 4).sort((left, right) => right.length - left.length)) {
+    redacted = redacted.split(value).join("[REDACTED]");
+  }
+  return redacted;
 }
 
 function createDisconnectedConnection(server: McpServerConfig, now: string): McpConnection {

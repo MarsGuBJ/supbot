@@ -211,7 +211,7 @@ declare global {
       saveSubagent(input: SubagentConfig): Promise<SubagentConfig>;
       deleteSubagent(id: string): Promise<void>;
       listToolMarket(query?: ToolMarketQuery): Promise<ToolMarketCatalogItem[]>;
-      installToolMarketProduct(id: string): Promise<ToolMarketCatalogItem>;
+      installToolMarketProduct(id: string, confirmMcpInstall?: boolean): Promise<ToolMarketCatalogItem>;
       uninstallToolMarketProduct(id: string): Promise<ToolMarketCatalogItem>;
       listMcpServers(): Promise<McpServerSnapshot[]>;
       addMcpServer(input: McpServerInput): Promise<McpServerConfig>;

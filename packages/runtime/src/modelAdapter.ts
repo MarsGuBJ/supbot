@@ -1,5 +1,26 @@
 import type { ModelConfig } from "@supbot/shared";
-import { normalizeChatCompletionsUrl, type OpenAiToolDefinition } from "./modelClient";
+import { fetchWithRetry } from "./httpClient";
+
+export interface OpenAiToolDefinition {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: {
+      type: "object";
+      properties: Record<string, unknown>;
+      required?: string[];
+      additionalProperties?: boolean;
+    };
+  };
+}
+
+export function normalizeChatCompletionsUrl(baseUrl: string): string {
+  const trimmed = baseUrl.trim().replace(/\/+$/, "");
+  if (trimmed.endsWith("/chat/completions")) return trimmed;
+  if (trimmed.endsWith("/v1")) return `${trimmed}/chat/completions`;
+  return `${trimmed}/v1/chat/completions`;
+}
 
 export type AdapterMessage =
   | { role: "system"; content: string }
@@ -63,7 +84,7 @@ export class OpenAIChatCompletionsAdapter implements ModelAdapter {
     const url = normalizeChatCompletionsUrl(input.modelConfig.baseUrl);
     const body = chatCompletionsBody(input);
 
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -71,7 +92,7 @@ export class OpenAIChatCompletionsAdapter implements ModelAdapter {
       },
       body: JSON.stringify(body),
       signal: input.signal
-    });
+    }, { timeoutMs: 60_000, idleTimeoutMs: 60_000, maxRetries: 2 });
     if (!response.ok) {
       const responseBody = await response.text().catch(() => "");
       throw new Error(`Model request failed (${response.status}): ${responseBody.slice(0, 500) || response.statusText}`);
@@ -87,7 +108,7 @@ export class OpenAIChatCompletionsAdapter implements ModelAdapter {
     }
 
     const url = normalizeChatCompletionsUrl(input.modelConfig.baseUrl);
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -95,7 +116,7 @@ export class OpenAIChatCompletionsAdapter implements ModelAdapter {
       },
       body: JSON.stringify({ ...chatCompletionsBody(input), stream: true, stream_options: { include_usage: true } }),
       signal: input.signal
-    });
+    }, { timeoutMs: 60_000, idleTimeoutMs: 60_000, maxRetries: 2 });
     if (!response.ok) {
       const responseBody = await response.text().catch(() => "");
       throw new Error(`Model stream failed (${response.status}): ${responseBody.slice(0, 500) || response.statusText}`);

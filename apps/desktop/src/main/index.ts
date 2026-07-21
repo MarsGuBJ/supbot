@@ -1,21 +1,36 @@
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell, type WebContents } from "electron";
+import { app, BrowserWindow, dialog, ipcMain as electronIpcMain, safeStorage, shell, type IpcMainInvokeEvent, type WebContents } from "electron";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { hostname, userInfo } from "node:os";
 import { isAbsolute, join, normalize, relative, resolve } from "node:path";
-import { JsonFileStorage, SupbotRuntime, ensureRuntimeDirs, identityContextFromAccessToken, oidcTokenSetFromTokenResponse, type RuntimeState, type StorageAdapter } from "@supbot/runtime"; 
+import { fileURLToPath } from "node:url";
+import { JsonFileStorage, SupbotRuntime, ensureRuntimeDirs, fetchWithRetry, identityContextFromAccessToken, oidcTokenSetFromTokenResponse, type RuntimeState, type StorageAdapter } from "@supbot/runtime"; 
 import type { AutopilotStartDataRunInput, CapabilityUpdateInput, DataSourceSpec, IdentityContext, McpConfigTransfer, McpServerInput, McpServerUpdate, MemoryAddInput, MemoryImportInput, MemoryRecallFeedbackInput, MemoryReplayRecallInput, MemorySearchQuery, MemoryUpdateInput, ModelConfigUpdate, PermissionMode, PermissionRule, PersonalityConfig, ProjectCreateInput, ProjectUpdateInput, RemoteBridgeConfig, ScheduledJobInput, SendPromptInput, ServstationA2AConfigUpdate, ServstationA2AOidcLoginInput, ServstationA2AOidcLoginResult, ServstationAutopilotStartInput, ServstationAutopilotStatusUpdate, ServstationClientSnapshotQuery, ServstationFlowEngineApprovalDecisionInput, ServstationFlowEngineLaunchInput, ServstationMailAccountDraft, ServstationMessageAttachmentUpload, ServstationMessageFolder, ServstationMessageAccountRef, ServstationScheduledJobInput, ServstationSendAgentMessageInput, ServstationSendDirectMessageInput, ServstationSendPromptInput, SubagentConfig, ToolMarketConfigUpdate, ToolMarketQuery } from "@supbot/shared"; 
 import type { AutopilotApprovalDecisionInput, AutopilotStartInput } from "@supbot/shared"; 
 import { SupbotUpdateManager } from "./updateManager"; 
  
 let mainWindow: BrowserWindow | null = null; 
 let runtime: SupbotRuntime | null = null; 
+let runtimeInitialization: Promise<SupbotRuntime> | null = null;
 let updateManager: SupbotUpdateManager | null = null; 
+let shutdownPromise: Promise<void> | null = null;
+let allowAppQuit = false;
 const servstationMessageEventSubscriptions = new Map<string, AbortController>(); 
 const isDev = !app.isPackaged;
 const allowedDevServerHost = "127.0.0.1";
 const appIconPath = join(__dirname, "../../build/supbot-icon.ico");
+const rendererRootPath = resolve(__dirname, "../renderer");
 const productionCsp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'none'";
 let productionCspInstalled = false;
+
+const ipcMain = {
+  handle(channel: string, listener: Parameters<typeof electronIpcMain.handle>[1]): void {
+    electronIpcMain.handle(channel, (event, ...args) => {
+      assertMainSender(event);
+      return listener(event, ...args);
+    });
+  }
+};
 
 async function createRuntime(): Promise<SupbotRuntime> {
   const userDataPath = process.env.SUPBOT_USER_DATA_DIR || app.getPath("userData");
@@ -34,7 +49,22 @@ async function createRuntime(): Promise<SupbotRuntime> {
   return service;
 }
 
+async function ensureRuntime(): Promise<SupbotRuntime> {
+  if (runtime) {
+    return runtime;
+  }
+  runtimeInitialization ??= createRuntime();
+  try {
+    runtime = await runtimeInitialization;
+    return runtime;
+  } finally {
+    runtimeInitialization = null;
+  }
+}
+
 class EncryptedStorage implements StorageAdapter {
+  private fileKeyPromise?: Promise<Buffer>;
+
   constructor(private readonly inner: JsonFileStorage, private readonly userDataPath: string) {}
 
   getDataDir(): string {
@@ -48,30 +78,30 @@ class EncryptedStorage implements StorageAdapter {
   async load(): Promise<RuntimeState> {
     const state = await this.inner.load();
     if (state.modelSecret) {
-      const decoded = this.decryptSecret(state.modelSecret);
+      const decoded = await this.decryptSecret(state.modelSecret);
       state.modelSecret = decoded.value;
       state.modelConfig.apiKeyStorage = decoded.kind;
       state.modelConfig.apiKeySaved = true;
     }
     if (state.toolMarketSecret) {
-      const decoded = this.decryptSecret(state.toolMarketSecret);
+      const decoded = await this.decryptSecret(state.toolMarketSecret);
       state.toolMarketSecret = decoded.value;
       state.toolMarketConfig.tokenStorage = decoded.kind;
       state.toolMarketConfig.accessTokenSaved = true;
     }
     if (state.toolMarketPasswordSecret) {
-      const decoded = this.decryptSecret(state.toolMarketPasswordSecret);
+      const decoded = await this.decryptSecret(state.toolMarketPasswordSecret);
       state.toolMarketPasswordSecret = decoded.value;
       state.toolMarketConfig.passwordStorage = decoded.kind;
       state.toolMarketConfig.passwordSaved = true;
     }
     if (state.servstationA2ASecret) {
-      const decoded = this.decryptSecret(state.servstationA2ASecret);
+      const decoded = await this.decryptSecret(state.servstationA2ASecret);
       state.servstationA2ASecret = decoded.value;
       state.servstationA2AConfig.bearerTokenSaved = true;
     }
     if (state.servstationA2AOidcSecret) {
-      const decoded = this.decryptSecret(state.servstationA2AOidcSecret);
+      const decoded = await this.decryptSecret(state.servstationA2AOidcSecret);
       state.servstationA2AOidcSecret = decoded.value;
       state.servstationA2AConfig.oidc = {
         ...(state.servstationA2AConfig.oidc || { refreshTokenSaved: false }),
@@ -79,10 +109,15 @@ class EncryptedStorage implements StorageAdapter {
       };
     }
     if (state.servstationA2AStaffAgentPasswordSecret) {
-      const decoded = this.decryptSecret(state.servstationA2AStaffAgentPasswordSecret);
+      const decoded = await this.decryptSecret(state.servstationA2AStaffAgentPasswordSecret);
       state.servstationA2AStaffAgentPasswordSecret = decoded.value;
       state.servstationA2AConfig.staffAgentPasswordSaved = true;
       state.servstationA2AConfig.staffAgentPasswordStorage = decoded.kind;
+    }
+    if (state.remoteBridgeSecret) {
+      const decoded = await this.decryptSecret(state.remoteBridgeSecret);
+      state.remoteBridgeSecret = decoded.value;
+      state.remoteBridgeConfig.tokenSaved = true;
     }
     return state;
   }
@@ -92,36 +127,37 @@ class EncryptedStorage implements StorageAdapter {
       ...state,
       modelConfig: { ...state.modelConfig },
       toolMarketConfig: { ...state.toolMarketConfig },
+      remoteBridgeConfig: { ...state.remoteBridgeConfig },
       servstationA2AConfig: {
         ...state.servstationA2AConfig,
         oidc: state.servstationA2AConfig.oidc ? { ...state.servstationA2AConfig.oidc } : undefined
       }
     };
     if (copy.modelSecret) {
-      const encoded = this.encryptSecret(copy.modelSecret);
+      const encoded = await this.encryptSecret(copy.modelSecret);
       copy.modelSecret = encoded.value;
       copy.modelConfig.apiKeyStorage = encoded.kind;
       copy.modelConfig.apiKeySaved = true;
     }
     if (copy.toolMarketSecret) {
-      const encoded = this.encryptSecret(copy.toolMarketSecret);
+      const encoded = await this.encryptSecret(copy.toolMarketSecret);
       copy.toolMarketSecret = encoded.value;
       copy.toolMarketConfig.tokenStorage = encoded.kind;
       copy.toolMarketConfig.accessTokenSaved = true;
     }
     if (copy.toolMarketPasswordSecret) {
-      const encoded = this.encryptSecret(copy.toolMarketPasswordSecret);
+      const encoded = await this.encryptSecret(copy.toolMarketPasswordSecret);
       copy.toolMarketPasswordSecret = encoded.value;
       copy.toolMarketConfig.passwordStorage = encoded.kind;
       copy.toolMarketConfig.passwordSaved = true;
     }
     if (copy.servstationA2ASecret) {
-      const encoded = this.encryptSecret(copy.servstationA2ASecret);
+      const encoded = await this.encryptSecret(copy.servstationA2ASecret);
       copy.servstationA2ASecret = encoded.value;
       copy.servstationA2AConfig.bearerTokenSaved = true;
     }
     if (copy.servstationA2AOidcSecret) {
-      const encoded = this.encryptSecret(copy.servstationA2AOidcSecret);
+      const encoded = await this.encryptSecret(copy.servstationA2AOidcSecret);
       copy.servstationA2AOidcSecret = encoded.value;
       copy.servstationA2AConfig.oidc = {
         ...(copy.servstationA2AConfig.oidc || { refreshTokenSaved: false }),
@@ -129,15 +165,20 @@ class EncryptedStorage implements StorageAdapter {
       };
     }
     if (copy.servstationA2AStaffAgentPasswordSecret) {
-      const encoded = this.encryptSecret(copy.servstationA2AStaffAgentPasswordSecret);
+      const encoded = await this.encryptSecret(copy.servstationA2AStaffAgentPasswordSecret);
       copy.servstationA2AStaffAgentPasswordSecret = encoded.value;
       copy.servstationA2AConfig.staffAgentPasswordSaved = true;
       copy.servstationA2AConfig.staffAgentPasswordStorage = encoded.kind;
     }
+    if (copy.remoteBridgeSecret) {
+      const encoded = await this.encryptSecret(copy.remoteBridgeSecret);
+      copy.remoteBridgeSecret = encoded.value;
+      copy.remoteBridgeConfig.tokenSaved = true;
+    }
     await this.inner.save(copy);
   }
 
-  private encryptSecret(secret: string): { value: string; kind: "safeStorage" | "file" } {
+  private async encryptSecret(secret: string): Promise<{ value: string; kind: "safeStorage" | "file" }> {
     if (safeStorage.isEncryptionAvailable()) {
       return {
         value: `safe:v1:${Buffer.from(safeStorage.encryptString(secret)).toString("base64")}`,
@@ -145,28 +186,30 @@ class EncryptedStorage implements StorageAdapter {
       };
     }
     const iv = randomBytes(12);
-    const cipher = createCipheriv("aes-256-gcm", this.fileKey(), iv);
+    const cipher = createCipheriv("aes-256-gcm", await this.fileKey(), iv);
     const encrypted = Buffer.concat([cipher.update(secret, "utf8"), cipher.final()]);
     const tag = cipher.getAuthTag();
     return {
-      value: `file:v1:${Buffer.concat([iv, tag, encrypted]).toString("base64")}`,
+      value: `file:v2:${Buffer.concat([iv, tag, encrypted]).toString("base64")}`,
       kind: "file"
     };
   }
 
-  private decryptSecret(secret: string): { value: string; kind: "safeStorage" | "file" } {
+  private async decryptSecret(secret: string): Promise<{ value: string; kind: "safeStorage" | "file" }> {
     if (secret.startsWith("safe:v1:")) {
       return {
         value: safeStorage.decryptString(Buffer.from(secret.slice("safe:v1:".length), "base64")),
         kind: "safeStorage"
       };
     }
-    if (secret.startsWith("file:v1:")) {
-      const payload = Buffer.from(secret.slice("file:v1:".length), "base64");
+    if (secret.startsWith("file:v2:") || secret.startsWith("file:v1:")) {
+      const isLegacy = secret.startsWith("file:v1:");
+      const prefix = isLegacy ? "file:v1:" : "file:v2:";
+      const payload = Buffer.from(secret.slice(prefix.length), "base64");
       const iv = payload.subarray(0, 12);
       const tag = payload.subarray(12, 28);
       const encrypted = payload.subarray(28);
-      const decipher = createDecipheriv("aes-256-gcm", this.fileKey(), iv);
+      const decipher = createDecipheriv("aes-256-gcm", isLegacy ? this.legacyFileKey() : await this.fileKey(), iv);
       decipher.setAuthTag(tag);
       return {
         value: Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8"),
@@ -176,7 +219,44 @@ class EncryptedStorage implements StorageAdapter {
     return { value: secret, kind: "file" };
   }
 
-  private fileKey(): Buffer {
+  private fileKey(): Promise<Buffer> {
+    this.fileKeyPromise ??= this.loadFileKey();
+    return this.fileKeyPromise;
+  }
+
+  private async loadFileKey(): Promise<Buffer> {
+    const saltPath = join(this.userDataPath, "secret-storage.salt");
+    await mkdir(this.userDataPath, { recursive: true });
+    let salt: Buffer;
+    try {
+      salt = await readFile(saltPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+      const generated = randomBytes(32);
+      try {
+        await writeFile(saltPath, generated, { flag: "wx", mode: 0o600 });
+        salt = generated;
+      } catch (writeError) {
+        if ((writeError as NodeJS.ErrnoException).code !== "EEXIST") {
+          throw writeError;
+        }
+        salt = await readFile(saltPath);
+      }
+    }
+    if (salt.length !== 32) {
+      throw new Error("Supbot credential salt is invalid; restore or remove secret-storage.salt before retrying.");
+    }
+    await chmod(saltPath, 0o600).catch(() => undefined);
+    return createHash("sha256")
+      .update("supbot:file:v2:")
+      .update(salt)
+      .update(`:${this.userDataPath}:${hostname()}:${safeUserName()}`)
+      .digest();
+  }
+
+  private legacyFileKey(): Buffer {
     const username = safeUserName();
     return createHash("sha256").update(`supbot:${this.userDataPath}:${hostname()}:${username}`).digest();
   }
@@ -257,7 +337,7 @@ async function loginServstationOidc(input: ServstationA2AOidcLoginInput): Promis
   }
 
   const codeResult = await openOidcLoginWindow(authorizationUrl.toString(), redirectUri, state);
-  const tokenResponse = await fetch(discovery.token_endpoint, {
+  const tokenResponse = await fetchWithRetry(discovery.token_endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -267,7 +347,7 @@ async function loginServstationOidc(input: ServstationA2AOidcLoginInput): Promis
       code: codeResult.code,
       code_verifier: verifier
     })
-  });
+  }, { timeoutMs: 20_000, idleTimeoutMs: 20_000, maxRetries: 1 });
   const tokenPayload = await tokenResponse.json().catch(() => ({})) as Parameters<typeof oidcTokenSetFromTokenResponse>[0] & { error?: string; error_description?: string };
   if (!tokenResponse.ok) {
     const message = typeof tokenPayload.error_description === "string"
@@ -280,6 +360,7 @@ async function loginServstationOidc(input: ServstationA2AOidcLoginInput): Promis
   const tokens = oidcTokenSetFromTokenResponse(tokenPayload, { issuerUrl, clientId });
   const identityContext = identityContextFromAccessToken(tokens.accessToken, {
     ...(currentIdentity || {}),
+    issuerUrl,
     servstationUrl: baseUrl,
     agentInstanceId: currentConfig.agentInstanceId || currentIdentity?.agentInstanceId
   });
@@ -296,10 +377,17 @@ async function loginServstationOidc(input: ServstationA2AOidcLoginInput): Promis
 }
 
 async function discoverOidcDocument(issuerUrl: string): Promise<OidcDiscoveryDocument> {
-  const response = await fetch(`${issuerUrl}/.well-known/openid-configuration`);
+  const response = await fetchWithRetry(`${issuerUrl}/.well-known/openid-configuration`, {}, {
+    timeoutMs: 20_000,
+    idleTimeoutMs: 20_000,
+    maxRetries: 1
+  });
   const payload = await response.json().catch(() => ({})) as OidcDiscoveryDocument;
   if (!response.ok) {
     throw new Error(`Servstation OIDC discovery failed: HTTP ${response.status}`);
+  }
+  if (payload.token_endpoint) {
+    payload.token_endpoint = sameOriginOidcEndpoint(payload.token_endpoint, issuerUrl, "token endpoint");
   }
   return payload;
 }
@@ -403,15 +491,30 @@ function normalizeOidcUrl(value: string, label: string): string {
     if (url.protocol !== "http:" && url.protocol !== "https:") {
       throw new Error(`${label} must use http or https.`);
     }
+    if (url.username || url.password) {
+      throw new Error(`${label} must not include credentials.`);
+    }
+    if (url.protocol === "http:" && !isLocalhost(url.hostname)) {
+      throw new Error(`${label} must use https unless it targets loopback.`);
+    }
     url.username = "";
     url.password = "";
     return url.toString().replace(/\/+$/, "");
   } catch (error) {
-    if (error instanceof Error && error.message.includes("http or https")) {
+    if (error instanceof Error && (error.message.includes("must use") || error.message.includes("must not include"))) {
       throw error;
     }
     throw new Error(`${label} is invalid.`);
   }
+}
+
+function sameOriginOidcEndpoint(endpoint: string, issuerUrl: string, label: string): string {
+  const issuer = new URL(issuerUrl);
+  const resolved = new URL(endpoint, issuer);
+  if (resolved.origin !== issuer.origin) {
+    throw new Error(`Servstation OIDC ${label} must use the issuer origin.`);
+  }
+  return resolved.toString();
 }
 
 function hardenWebContents(webContents: WebContents): void {
@@ -449,7 +552,7 @@ function isAllowedAppUrl(rawUrl: string): boolean {
   try {
     const url = new URL(rawUrl);
     if (url.protocol === "file:") {
-      return !isDev;
+      return pathIsInside(rendererRootPath, fileURLToPath(url));
     }
     return (
       isDev &&
@@ -463,8 +566,20 @@ function isAllowedAppUrl(rawUrl: string): boolean {
   }
 }
 
+function assertMainSender(event: IpcMainInvokeEvent): void {
+  const expected = mainWindow?.webContents;
+  const senderUrl = event.senderFrame?.url || event.sender.getURL();
+  if (!expected || expected.isDestroyed() || event.sender.id !== expected.id || !isAllowedAppUrl(senderUrl)) {
+    throw new Error("Rejected IPC call from an untrusted renderer.");
+  }
+}
+
 async function createWindow(): Promise<void> {
-  runtime = await createRuntime();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    focusMainWindow();
+    return;
+  }
+  await ensureRuntime();
   mainWindow = new BrowserWindow({
     width: 1360,
     height: 880,
@@ -483,8 +598,7 @@ async function createWindow(): Promise<void> {
     }
   }); 
   hardenWebContents(mainWindow.webContents); 
-  updateManager?.stop();
-  updateManager = new SupbotUpdateManager({
+  updateManager ??= new SupbotUpdateManager({
     getFeedContext: supbotUpdateFeedContext,
     emitState: (state) => mainWindow?.webContents.send("supbot:updateState", state)
   });
@@ -506,11 +620,22 @@ async function createWindow(): Promise<void> {
   updateManager.start();
  
   mainWindow.on("closed", () => { 
-    updateManager?.stop();
-    updateManager = null;
     mainWindow = null; 
   }); 
 } 
+
+function focusMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  if (!mainWindow.isVisible()) {
+    mainWindow.show();
+  }
+  mainWindow.focus();
+}
 
 function registerIpc(): void { 
   ipcMain.handle("snapshot", () => getRuntime().snapshot()); 
@@ -663,7 +788,10 @@ function registerIpc(): void {
   ipcMain.handle("subagent:save", (_event, input: SubagentConfig) => getRuntime().saveSubagent(validateSubagentConfig(input)));
   ipcMain.handle("subagent:delete", (_event, id: string) => getRuntime().deleteSubagent(requiredString(id, "subagent id")));
   ipcMain.handle("market:list", (_event, query?: ToolMarketQuery) => getRuntime().listToolMarket(validateToolMarketQuery(query)));
-  ipcMain.handle("market:install", (_event, id: string) => getRuntime().installToolMarketProduct(requiredString(id, "tool market product id")));
+  ipcMain.handle("market:install", (_event, id: string, confirmMcpInstall?: boolean) => getRuntime().installToolMarketProduct(
+    requiredString(id, "tool market product id"),
+    optionalBoolean(confirmMcpInstall, "MCP install confirmation") ?? false
+  ));
   ipcMain.handle("market:uninstall", (_event, id: string) => getRuntime().uninstallToolMarketProduct(requiredString(id, "tool market product id")));
   ipcMain.handle("mcp:listServers", () => getRuntime().listMcpServers());
   ipcMain.handle("mcp:addServer", (_event, input: McpServerInput) => getRuntime().addMcpServer(validateMcpServerInput(input)));
@@ -820,7 +948,7 @@ function validateAttachment(input: unknown) {
 
 function validatePermissionRuleInput(input: Omit<PermissionRule, "id" | "createdAt" | "scope"> & { id?: string }) {
   const value = object(input, "permission rule");
-  const behavior = requiredString(value.behavior, "permission behavior");
+  const behavior = requiredString(value.behavior, "permission behavior") as PermissionRule["behavior"];
   if (behavior !== "allow" && behavior !== "deny" && behavior !== "ask") {
     throw new Error(`Invalid permission behavior: ${behavior}`);
   }
@@ -881,7 +1009,7 @@ function validateServstationA2AConfigUpdate(input: ServstationA2AConfigUpdate): 
     oidcRedirectUri: optionalString(value.oidcRedirectUri, "servstation OIDC redirect URI"),
     reverseEnabled: optionalBoolean(value.reverseEnabled, "servstation reverse A2A enabled"),
     reverseClientInstanceId: optionalString(value.reverseClientInstanceId, "servstation reverse client instance id")
-  });
+  }) as ServstationA2AConfigUpdate;
 }
 
 function validateServstationA2AOidcLoginInput(input: ServstationA2AOidcLoginInput | undefined): ServstationA2AOidcLoginInput {
@@ -896,7 +1024,7 @@ function validateServstationA2AOidcLoginInput(input: ServstationA2AOidcLoginInpu
     scope: optionalString(value.scope, "servstation OIDC scope"),
     redirectUri: optionalString(value.redirectUri, "servstation OIDC redirect URI"),
     loginHint: optionalString(value.loginHint, "servstation OIDC login hint")
-  });
+  }) as ServstationA2AOidcLoginInput;
 }
 
 function validateServstationClientSnapshotQuery(input: ServstationClientSnapshotQuery | undefined): ServstationClientSnapshotQuery {
@@ -917,7 +1045,7 @@ function validateServstationSendPromptInput(input: ServstationSendPromptInput): 
     requestId: optionalString(value.requestId, "servstation request id"),
     attachments: Array.isArray(value.attachments) ? value.attachments.map(validateAttachment) : [],
     allowWebSearch: optionalBoolean(value.allowWebSearch, "servstation web search")
-  });
+  }) as ServstationSendPromptInput;
 }
 
 function validateServstationScheduledJobInput(input: ServstationScheduledJobInput): ServstationScheduledJobInput {
@@ -930,7 +1058,7 @@ function validateServstationScheduledJobInput(input: ServstationScheduledJobInpu
     cronExpr: optionalString(value.cronExpr, "servstation scheduled job cron expression"),
     conversationId: optionalString(value.conversationId, "servstation scheduled job conversation id"),
     enabled: optionalBoolean(value.enabled, "servstation scheduled job enabled")
-  });
+  }) as ServstationScheduledJobInput;
 }
 
 function validateServstationScheduledJobUpdate(input: Partial<ServstationScheduledJobInput>): Partial<ServstationScheduledJobInput> {
@@ -1398,26 +1526,45 @@ export function pathIsInside(parent: string, child: string): boolean {
   return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
 }
 
-app.whenReady().then(async () => {
-  registerIpc();
-  await createWindow();
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      void createWindow();
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", focusMainWindow);
+  app.whenReady().then(async () => {
+    registerIpc();
+    await createWindow();
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        void createWindow();
+      } else {
+        focusMainWindow();
+      }
+    });
+  }).catch((error) => {
+    dialog.showErrorBox("Supbot failed to start", error instanceof Error ? error.message : String(error));
+    app.quit();
+  });
+
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") {
+      app.quit();
     }
   });
-}).catch((error) => {
-  dialog.showErrorBox("Supbot failed to start", error instanceof Error ? error.message : String(error));
-  app.quit();
-});
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
-});
-
-app.on("before-quit", () => { 
-  updateManager?.stop();
-  void runtime?.shutdown(); 
-});
+  app.on("before-quit", (event) => {
+    if (allowAppQuit) {
+      return;
+    }
+    event.preventDefault();
+    shutdownPromise ??= (async () => {
+      updateManager?.dispose();
+      await runtime?.shutdown();
+      allowAppQuit = true;
+      app.quit();
+    })().catch((error) => {
+      console.error("Supbot shutdown failed", error);
+      allowAppQuit = true;
+      app.quit();
+    });
+  });
+}

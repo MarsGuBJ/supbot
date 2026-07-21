@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   type AgentJob,
@@ -230,8 +230,14 @@ export function defaultCapabilityDefinitions(): CapabilityDefinition[] {
 export class JsonFileStorage implements StorageAdapter {
   private readonly statePath: string;
   private writeQueue: Promise<void> = Promise.resolve();
+  private pendingSnapshot?: string;
+  private pendingWaiters: Array<{ resolve(): void; reject(error: unknown): void }> = [];
+  private flushTimer?: ReturnType<typeof setTimeout>;
 
-  constructor(private readonly dataDir: string) {
+  constructor(
+    private readonly dataDir: string,
+    private readonly options: { coalesceMs?: number } = {}
+  ) {
     this.statePath = join(dataDir, "state.json");
   }
 
@@ -241,30 +247,87 @@ export class JsonFileStorage implements StorageAdapter {
 
   async load(): Promise<RuntimeState> {
     await mkdir(this.dataDir, { recursive: true });
+    let raw: string;
     try {
-      const raw = await readFile(this.statePath, "utf8");
-      return normalizeState(JSON.parse(raw) as Partial<RuntimeState>);
+      raw = await readFile(this.statePath, "utf8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         throw error;
       }
       const state = createInitialState();
-      await this.save(state);
+      await this.writeSnapshot(JSON.stringify(state, null, 2));
+      return state;
+    }
+    try {
+      return normalizeState(JSON.parse(raw) as Partial<RuntimeState>);
+    } catch {
+      const backupPath = `${this.statePath}.corrupt-${new Date().toISOString().replace(/[^0-9]/g, "")}-${Math.random().toString(36).slice(2, 8)}`;
+      await rename(this.statePath, backupPath);
+      const state = createInitialState();
+      await this.writeSnapshot(JSON.stringify(state, null, 2));
       return state;
     }
   }
 
-  async save(state: RuntimeState): Promise<void> {
+  save(state: RuntimeState): Promise<void> {
     const snapshot = JSON.stringify(state, null, 2);
-    this.writeQueue = this.writeQueue.then(() => this.writeSnapshot(snapshot));
-    await this.writeQueue;
+    const coalesceMs = this.options.coalesceMs ?? 250;
+    if (coalesceMs <= 0) {
+      return this.enqueueSnapshot(snapshot);
+    }
+    this.pendingSnapshot = snapshot;
+    const pending = new Promise<void>((resolve, reject) => {
+      this.pendingWaiters.push({ resolve, reject });
+    });
+    if (!this.flushTimer) {
+      this.flushTimer = setTimeout(() => {
+        this.flushTimer = undefined;
+        void this.flushPendingSnapshot();
+      }, coalesceMs);
+    }
+    return pending;
+  }
+
+  private async flushPendingSnapshot(): Promise<void> {
+    const snapshot = this.pendingSnapshot;
+    const waiters = this.pendingWaiters.splice(0);
+    this.pendingSnapshot = undefined;
+    if (snapshot === undefined) {
+      for (const waiter of waiters) {
+        waiter.resolve();
+      }
+      return;
+    }
+    try {
+      await this.enqueueSnapshot(snapshot);
+      for (const waiter of waiters) {
+        waiter.resolve();
+      }
+    } catch (error) {
+      for (const waiter of waiters) {
+        waiter.reject(error);
+      }
+    }
+  }
+
+  private enqueueSnapshot(snapshot: string): Promise<void> {
+    const write = this.writeQueue
+      .catch(() => undefined)
+      .then(() => this.writeSnapshot(snapshot));
+    this.writeQueue = write.catch(() => undefined);
+    return write;
   }
 
   private async writeSnapshot(snapshot: string): Promise<void> {
     await mkdir(dirname(this.statePath), { recursive: true });
-    const tempPath = `${this.statePath}.${process.pid}.${Date.now()}.tmp`;
-    await writeFile(tempPath, `${snapshot}\n`, "utf8");
-    await rename(tempPath, this.statePath);
+    const tempPath = `${this.statePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+    try {
+      await writeFile(tempPath, `${snapshot}\n`, { encoding: "utf8", mode: 0o600 });
+      await rename(tempPath, this.statePath);
+      await chmod(this.statePath, 0o600);
+    } finally {
+      await rm(tempPath, { force: true }).catch(() => undefined);
+    }
   }
 }
 

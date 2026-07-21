@@ -2,7 +2,12 @@ import { spawn } from "node:child_process";
 import { access, copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { GeneratedFile } from "@supbot/shared";
-import { resolveProjectWriteTarget } from "./projectManager";
+import { terminateProcessTree } from "./processTree";
+import { resolveProjectWriteTargetReal } from "./projectManager";
+
+const maxReadFileBytes = 1 * 1024 * 1024;
+const maxShellStdoutBytes = 64 * 1024;
+const maxShellStderrBytes = 32 * 1024;
 
 export interface LocalToolResult {
   text: string;
@@ -24,6 +29,10 @@ export interface LocalToolHost {
 }
 
 export async function readLocalFile(filePath: string): Promise<LocalToolResult> {
+  const info = await stat(filePath);
+  if (info.size > maxReadFileBytes) {
+    throw new Error(`ReadFile refused ${filePath}: ${info.size} bytes exceeds the ${maxReadFileBytes} byte limit.`);
+  }
   const content = await readFile(filePath, "utf8");
   return {
     text: `Read ${filePath}\n\n${truncate(content, 24_000)}`
@@ -33,7 +42,7 @@ export async function readLocalFile(filePath: string): Promise<LocalToolResult> 
 export async function writeLocalFile(target: string, content: string, host: LocalToolHost): Promise<LocalToolResult> {
   const outputRoot = host.projectRoot || host.workspacePath || join(host.dataDir, "generated-files");
   const outputPath = host.projectRoot && host.allowedWriteRoots?.length
-    ? resolveProjectWriteTarget(host.projectRoot, target, host.allowedWriteRoots)
+    ? await resolveProjectWriteTargetReal(host.projectRoot, target, host.allowedWriteRoots)
     : resolveLocalWritePath(outputRoot, target);
   if (host.backupRoot && host.projectRoot) {
     await backupExistingFile(host.projectRoot, outputPath, host.backupRoot);
@@ -92,32 +101,52 @@ export async function runShellCommand(command: string, signal: AbortSignal, time
       isWindows ? ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command] : ["-lc", command],
       { windowsHide: true, cwd }
     );
-    let stdout = "";
-    let stderr = "";
-    const timeout = setTimeout(() => {
-      child.kill();
-      reject(new Error(`Shell command timed out after ${Math.round(timeoutMs / 1000)} seconds.`));
-    }, timeoutMs);
-    const onAbort = () => {
-      child.kill();
-      reject(new Error("Shell command canceled."));
+    const stdout = createBoundedOutput(maxShellStdoutBytes);
+    const stderr = createBoundedOutput(maxShellStderrBytes);
+    let settled = false;
+    let terminating = false;
+    const settle = (action: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", onAbort);
+      action();
     };
-    signal.addEventListener("abort", onAbort, { once: true });
+    const terminate = (error: Error) => {
+      if (terminating || settled) {
+        return;
+      }
+      terminating = true;
+      void terminateProcessTree(child).finally(() => settle(() => reject(error)));
+    };
+    const timeout = setTimeout(() => {
+      terminate(new Error(`Shell command timed out after ${Math.round(timeoutMs / 1000)} seconds.`));
+    }, timeoutMs);
+    timeout.unref?.();
+    const onAbort = () => {
+      terminate(new Error("Shell command canceled."));
+    };
+    if (signal.aborted) {
+      onAbort();
+    } else {
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
     child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
+      stdout.append(chunk);
     });
     child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
+      stderr.append(chunk);
     });
     child.on("error", (error) => {
-      clearTimeout(timeout);
-      signal.removeEventListener("abort", onAbort);
-      reject(error);
+      settle(() => reject(error));
     });
     child.on("close", (exitCode) => {
-      clearTimeout(timeout);
-      signal.removeEventListener("abort", onAbort);
-      resolve({ exitCode, stdout, stderr });
+      if (terminating) {
+        return;
+      }
+      settle(() => resolve({ exitCode, stdout: stdout.text(), stderr: stderr.text() }));
     });
   });
 }
@@ -154,4 +183,26 @@ function truncateWithMarker(value: string, maxLength: number): string {
     return value;
   }
   return `${value.slice(0, maxLength)}\n\n[output truncated ${value.length - maxLength} chars]`;
+}
+
+function createBoundedOutput(maxBytes: number): { append(chunk: Buffer): void; text(): string } {
+  const chunks: Buffer[] = [];
+  let keptBytes = 0;
+  let droppedBytes = 0;
+  return {
+    append(chunk) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const remaining = maxBytes - keptBytes;
+      if (remaining > 0) {
+        const kept = buffer.subarray(0, remaining);
+        chunks.push(kept);
+        keptBytes += kept.length;
+      }
+      droppedBytes += Math.max(0, buffer.length - Math.max(0, remaining));
+    },
+    text() {
+      const value = Buffer.concat(chunks, keptBytes).toString("utf8");
+      return droppedBytes ? `${value}\n\n[output truncated ${droppedBytes} bytes]` : value;
+    }
+  };
 }

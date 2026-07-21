@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { mkdir, rm } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { TaskWorktree, WorktreeDiffSummary } from "@supbot/shared";
+import { terminateProcessTree } from "./processTree";
 
 interface WorktreeManagerHost {
   dataDir: string;
@@ -166,7 +167,8 @@ export class WorktreeManager {
   private async cleanupGitWorktree(worktree: TaskWorktree): Promise<void> {
     const root = resolve(join(this.host.dataDir, "worktrees"));
     const target = resolve(worktree.path);
-    if (!target.startsWith(root)) {
+    const targetRelative = relative(root, target);
+    if (targetRelative.startsWith("..") || isAbsolute(targetRelative)) {
       throw new Error(`Refusing to remove worktree outside runtime data dir: ${target}`);
     }
     const rootPath = worktree.rootPath || this.host.rootDir;
@@ -202,23 +204,52 @@ export async function ensureGitWorktreeReady(rootDir: string): Promise<void> {
   await runGit(rootDir, ["rev-parse", "--verify", "HEAD"]);
 }
 
-async function runGit(cwd: string, args: string[], stdin?: string): Promise<{ stdout: string; stderr: string }> {
+export async function runGit(cwd: string, args: string[], stdin?: string, timeoutMs = 30_000, command = "git"): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn("git", args, { cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(command, args, {
+      cwd,
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: "0",
+        GCM_INTERACTIVE: "Never"
+      }
+    });
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    let timedOut = false;
+    const settle = (action: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      action();
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      void terminateProcessTree(child).finally(() => {
+        settle(() => reject(new Error(`git ${args.join(" ")} timed out after ${timeoutMs}ms.`)));
+      });
+    }, Math.max(1, timeoutMs));
+    timer.unref?.();
     child.stdout.on("data", (chunk) => {
       stdout += chunk.toString();
     });
     child.stderr.on("data", (chunk) => {
       stderr += chunk.toString();
     });
-    child.on("error", reject);
+    child.on("error", (error) => settle(() => reject(error)));
     child.on("close", (code) => {
+      if (timedOut) {
+        return;
+      }
       if (code === 0) {
-        resolvePromise({ stdout, stderr });
+        settle(() => resolvePromise({ stdout, stderr }));
       } else {
-        reject(new Error((stderr || stdout || `git ${args.join(" ")} failed with exit code ${code}`).trim()));
+        settle(() => reject(new Error((stderr || stdout || `git ${args.join(" ")} failed with exit code ${code}`).trim())));
       }
     });
     if (stdin) {

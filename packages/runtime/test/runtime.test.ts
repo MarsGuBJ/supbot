@@ -1,21 +1,142 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AddressInfo } from "node:net";
-import { afterEach, describe, expect, test } from "vitest";
-import { autopilotBudgetExceeded, canTransitionAutopilot, createAutopilotBudget, JsonFileStorage, MemoryManager, OpenAIChatCompletionsAdapter, normalizeChatCompletionsUrl, progressFingerprint, resolveAutopilotProfile, resolveMentionedSubagent, SupbotRuntime, ToolExecutor, ToolRegistry, TranscriptStore } from "../src";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { autopilotBudgetExceeded, canTransitionAutopilot, createAutopilotBudget, createInitialState, JsonFileStorage, MemoryManager, OpenAIChatCompletionsAdapter, normalizeChatCompletionsUrl, progressFingerprint, resolveAutopilotProfile, resolveMentionedSubagent, SupbotRuntime, ToolExecutor, ToolRegistry, TranscriptStore } from "../src";
+import type { RuntimeState, StorageAdapter } from "../src";
 import { normalizeMarketApiUrl } from "../src/toolMarket";
 import { defaultModelConfig } from "@supbot/shared";
 
 const tempDirs: string[] = [];
 
+class CountingStorage implements StorageAdapter {
+  private readonly inner: JsonFileStorage;
+  saveCount = 0;
+
+  constructor(private readonly dataDir: string) {
+    this.inner = new JsonFileStorage(dataDir, { coalesceMs: 0 });
+  }
+
+  getDataDir(): string {
+    return this.dataDir;
+  }
+
+  load(): Promise<RuntimeState> {
+    return this.inner.load();
+  }
+
+  save(state: RuntimeState): Promise<void> {
+    this.saveCount += 1;
+    return this.inner.save(state);
+  }
+}
+
+async function seedAutopilotToolApproval(storage: JsonFileStorage, projectDir: string, options: {
+  runId: string;
+  taskId: string;
+  permissionId: string;
+  stage?: "collect" | "review";
+}): Promise<RuntimeState["pendingToolPermissions"][number]> {
+  const state = await storage.load();
+  const now = new Date().toISOString();
+  const stage = options.stage || "collect";
+  const project = {
+    id: `project_${options.runId}`,
+    name: "Tool Approval Recovery",
+    rootPath: projectDir,
+    metadataPath: join(projectDir, ".supbot", "project.json"),
+    status: "active" as const,
+    createdAt: now,
+    updatedAt: now
+  };
+  const permission = {
+    id: options.permissionId,
+    jobId: `${options.runId}:${options.taskId}`,
+    conversationId: `autopilot_${options.runId}`,
+    toolCallId: options.permissionId.replace(/^perm_/, ""),
+    toolName: "Shell",
+    input: { command: "echo recovered" },
+    summary: "Run Shell",
+    createdAt: now
+  };
+  state.projects = [project];
+  state.autopilotRuns = [{
+    schemaVersion: 2,
+    id: options.runId,
+    projectId: project.id,
+    projectRoot: project.rootPath,
+    title: "Recover tool approval",
+    goal: "Continue after a tool approval",
+    profile: "coding",
+    resolvedProfile: "coding",
+    status: "waiting_approval",
+    currentStage: stage,
+    writePolicy: {
+      mode: "projectSandbox",
+      allowedWriteRoots: ["."],
+      allowNetwork: true,
+      allowMcp: true,
+      maxRuntimeMinutes: 120,
+      maxTasks: 16,
+      maxRetries: 1
+    },
+    pendingDecision: {
+      id: permission.id,
+      kind: "tool",
+      title: "Approve Shell",
+      summary: "Autopilot requested Shell.",
+      risk: "medium",
+      impact: ["echo recovered"],
+      taskId: options.taskId,
+      toolName: "Shell",
+      input: permission.input,
+      createdAt: now
+    },
+    dataSources: [],
+    taskIds: [options.taskId],
+    artifactIds: [],
+    checkpointIds: [],
+    evidence: [],
+    createdAt: now,
+    updatedAt: now,
+    startedAt: now
+  }];
+  state.autopilotTasks = [{
+    id: options.taskId,
+    runId: options.runId,
+    projectId: project.id,
+    stage,
+    kind: stage === "review" ? "review" : "collect",
+    dependsOn: [],
+    risk: "medium",
+    allowedTools: ["Shell"],
+    validators: [],
+    staffAgent: stage === "review" ? "analyst" : "collector",
+    title: "Run approved tool",
+    prompt: "Run Shell after approval.",
+    status: "running",
+    attempts: 1,
+    maxAttempts: 2,
+    artifactIds: [],
+    evidence: [],
+    actionFingerprints: [],
+    createdAt: now,
+    updatedAt: now,
+    startedAt: now
+  }];
+  state.pendingToolPermissions = [permission];
+  await storage.save(state);
+  return permission;
+}
+
 async function createRuntime() {
   const rootDir = await createGitRoot();
   const dir = await mkdtemp(join(tmpdir(), "supbot-test-"));
   tempDirs.push(dir);
-  const runtime = new SupbotRuntime(new JsonFileStorage(dir), { rootDir });
+  const runtime = new SupbotRuntime(new JsonFileStorage(dir, { coalesceMs: 0 }), { rootDir });
   await runtime.init();
   return runtime;
 }
@@ -24,7 +145,7 @@ async function createRuntimeWithPaths() {
   const rootDir = await createGitRoot();
   const dir = await mkdtemp(join(tmpdir(), "supbot-test-"));
   tempDirs.push(dir);
-  const runtime = new SupbotRuntime(new JsonFileStorage(dir), { rootDir });
+  const runtime = new SupbotRuntime(new JsonFileStorage(dir, { coalesceMs: 0 }), { rootDir });
   await runtime.init();
   return { runtime, dataDir: dir, rootDir };
 }
@@ -35,7 +156,7 @@ async function createRuntimeWithoutBaseline() {
   await runGit(rootDir, ["init"]);
   const dir = await mkdtemp(join(tmpdir(), "supbot-test-"));
   tempDirs.push(dir);
-  const runtime = new SupbotRuntime(new JsonFileStorage(dir), { rootDir });
+  const runtime = new SupbotRuntime(new JsonFileStorage(dir, { coalesceMs: 0 }), { rootDir });
   await runtime.init();
   return runtime;
 }
@@ -327,7 +448,356 @@ describe("model client helpers", () => {
   });
 });
 
+describe("JsonFileStorage", () => {
+  test("coalesces saves within the write window and persists the latest snapshot", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "supbot-storage-"));
+    tempDirs.push(dataDir);
+    const storage = new JsonFileStorage(dataDir, { coalesceMs: 25 });
+    await storage.load();
+    const writeSpy = vi.spyOn(storage as unknown as { writeSnapshot(snapshot: string): Promise<void> }, "writeSnapshot");
+    const first = { ...createInitialState(), agentName: "first" };
+    const second = { ...createInitialState(), agentName: "second" };
+    const latest = { ...createInitialState(), agentName: "latest" };
+
+    await Promise.all([storage.save(first), storage.save(second), storage.save(latest)]);
+
+    expect(writeSpy).toHaveBeenCalledTimes(1);
+    expect((await storage.load()).agentName).toBe("latest");
+  });
+
+  test("recovers the write queue after a failed snapshot", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "supbot-storage-"));
+    tempDirs.push(dataDir);
+    const storage = new JsonFileStorage(dataDir, { coalesceMs: 0 });
+    await storage.load();
+    const statePath = join(dataDir, "state.json");
+    await rm(statePath, { force: true });
+    await mkdir(statePath);
+
+    await expect(storage.save({ ...createInitialState(), agentName: "blocked" })).rejects.toBeDefined();
+    await rm(statePath, { recursive: true, force: true });
+    await storage.save({ ...createInitialState(), agentName: "recovered" });
+
+    expect((await storage.load()).agentName).toBe("recovered");
+  });
+
+  test("backs up a corrupt state file and starts with a valid initial state", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "supbot-storage-"));
+    tempDirs.push(dataDir);
+    await writeFile(join(dataDir, "state.json"), "{not valid json", "utf8");
+    const storage = new JsonFileStorage(dataDir, { coalesceMs: 0 });
+
+    const state = await storage.load();
+
+    expect(state.agentName).toBe(createInitialState().agentName);
+    const files = await readdir(dataDir);
+    const backup = files.find((file) => file.startsWith("state.json.corrupt-"));
+    expect(backup).toBeDefined();
+    expect(await readFile(join(dataDir, backup!), "utf8")).toBe("{not valid json");
+    expect(JSON.parse(await readFile(join(dataDir, "state.json"), "utf8"))).toMatchObject({ agentName: state.agentName });
+  });
+});
+
 describe("SupbotRuntime", () => {
+  test("catches scheduler background failures without an unhandled rejection", async () => {
+    const runtime = await createRuntime();
+    const unhandled: unknown[] = [];
+    const onUnhandled = (error: unknown) => unhandled.push(error);
+    process.on("unhandledRejection", onUnhandled);
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const scheduledSpy = vi.spyOn(runtime, "runDueScheduledJobs")
+      .mockRejectedValueOnce(new Error("scheduler exploded"))
+      .mockResolvedValue(0);
+    const reported = new Promise<string>((resolve) => {
+      const unsubscribe = runtime.onEvent((event) => {
+        if (event.type === "error" && event.message.includes("scheduler exploded")) {
+          unsubscribe();
+          resolve(event.message);
+        }
+      });
+    });
+
+    try {
+      runtime.startScheduler(60_000);
+      await expect(reported).resolves.toContain("Scheduled job scan failed");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(unhandled).toEqual([]);
+      expect(scheduledSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      runtime.stopScheduler();
+      process.off("unhandledRejection", onUnhandled);
+      consoleSpy.mockRestore();
+      await runtime.shutdown();
+    }
+  });
+
+  test("falls back to patching a terminal Autopilot run when failure transition is invalid", async () => {
+    const rootDir = await createGitRoot();
+    const dataDir = await mkdtemp(join(tmpdir(), "supbot-test-"));
+    tempDirs.push(dataDir);
+    const storage = new JsonFileStorage(dataDir, { coalesceMs: 0 });
+    const state = await storage.load();
+    const now = new Date().toISOString();
+    state.autopilotRuns = [{
+      schemaVersion: 2,
+      id: "run_terminal_failure",
+      projectId: "project_terminal_failure",
+      projectRoot: rootDir,
+      title: "Terminal failure fallback",
+      goal: "Verify terminal failure fallback",
+      status: "completed",
+      currentStage: "report",
+      profile: "coding",
+      resolvedProfile: "coding",
+      writePolicy: {
+        mode: "projectSandbox",
+        allowedWriteRoots: ["."],
+        allowNetwork: true,
+        allowMcp: true,
+        maxRuntimeMinutes: 120,
+        maxTasks: 16,
+        maxRetries: 1
+      },
+      dataSources: [],
+      taskIds: [],
+      artifactIds: [],
+      checkpointIds: [],
+      evidence: [],
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now,
+      finishedAt: now
+    }];
+    await storage.save(state);
+    const runtime = new SupbotRuntime(storage, { rootDir });
+    await runtime.init();
+    const internal = runtime as unknown as {
+      failAutopilotRun(id: string, error: unknown, failedAt?: string): import("@supbot/shared").AutopilotRun;
+    };
+
+    const failed = internal.failAutopilotRun("run_terminal_failure", new Error("late persistence failure"), now);
+
+    expect(failed).toMatchObject({ status: "failed", error: "late persistence failure", finishedAt: now });
+    await runtime.shutdown();
+  });
+
+  test("caches Autopilot metrics by run update and reuses them for quality snapshots", async () => {
+    const rootDir = await createGitRoot();
+    const dataDir = await mkdtemp(join(tmpdir(), "supbot-test-"));
+    tempDirs.push(dataDir);
+    const storage = new JsonFileStorage(dataDir, { coalesceMs: 0 });
+    const state = await storage.load();
+    const now = new Date().toISOString();
+    state.autopilotRuns = [{
+      schemaVersion: 2,
+      id: "run_metrics_cache",
+      projectId: "project_metrics_cache",
+      projectRoot: rootDir,
+      title: "Metrics cache",
+      goal: "Verify metrics caching",
+      status: "paused",
+      currentStage: "verify",
+      profile: "coding",
+      resolvedProfile: "coding",
+      writePolicy: {
+        mode: "projectSandbox",
+        allowedWriteRoots: ["."],
+        allowNetwork: true,
+        allowMcp: true,
+        maxRuntimeMinutes: 120,
+        maxTasks: 16,
+        maxRetries: 1
+      },
+      dataSources: [],
+      taskIds: [],
+      artifactIds: [],
+      checkpointIds: [],
+      evidence: [],
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now
+    }];
+    await storage.save(state);
+    const runtime = new SupbotRuntime(storage, { rootDir });
+    await runtime.init();
+    const calculateSpy = vi.spyOn(
+      runtime as unknown as { calculateAutopilotRunMetrics(id: string): import("@supbot/shared").AutopilotRunMetrics },
+      "calculateAutopilotRunMetrics"
+    );
+
+    const first = runtime.snapshot();
+    expect(calculateSpy).toHaveBeenCalledTimes(1);
+    const second = runtime.snapshot();
+    expect(calculateSpy).toHaveBeenCalledTimes(2);
+    expect(second.autopilotMetrics[0]).toBe(first.autopilotMetrics[0]);
+
+    await runtime.cancelAutopilotRun("run_metrics_cache");
+    const canceled = runtime.snapshot().autopilotMetrics[0];
+    expect(canceled).not.toBe(first.autopilotMetrics[0]);
+    expect(canceled.outcome).toBe("canceled");
+    await runtime.shutdown();
+  });
+
+  test("keeps streaming deltas in memory and persists the completed turn once", async () => {
+    const rootDir = await createGitRoot();
+    const dataDir = await mkdtemp(join(tmpdir(), "supbot-test-"));
+    tempDirs.push(dataDir);
+    const storage = new CountingStorage(dataDir);
+    const runtime = new SupbotRuntime(storage, { rootDir });
+    await runtime.init();
+    const server = createServer((request, response) => {
+      request.resume();
+      request.on("end", () => {
+        response.writeHead(200, {
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "Cache-Control": "no-cache"
+        });
+        for (const delta of ["Streamed ", "assistant ", "reply."]) {
+          response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: delta } }] })}\n\n`);
+        }
+        response.end("data: [DONE]\n\n");
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const deltaSaveCounts: number[] = [];
+    const unsubscribe = runtime.onEvent((event) => {
+      if (event.type === "message_delta") {
+        deltaSaveCounts.push(storage.saveCount);
+      }
+    });
+    try {
+      const address = server.address() as AddressInfo;
+      await runtime.updateModelConfig({
+        providerName: "Streaming mock",
+        baseUrl: `http://127.0.0.1:${address.port}/v1`,
+        model: "mock-model",
+        temperature: 0.1,
+        maxTokens: 1000,
+        apiKey: "test-key"
+      });
+      const result = await runtime.sendPrompt({ prompt: "stream a reply" });
+      await waitForJob(runtime, result.job.id);
+
+      expect(deltaSaveCounts).toHaveLength(3);
+      expect(new Set(deltaSaveCounts).size).toBe(1);
+      expect(runtime.snapshot().runtimeEvents.some((event) => event.kind === "message_delta")).toBe(false);
+
+      const saved = JSON.parse(await readFile(join(dataDir, "state.json"), "utf8")) as RuntimeState;
+      const savedAssistant = saved.conversations
+        .find((conversation) => conversation.id === result.conversation.id)
+        ?.messages.find((message) => message.jobId === result.job.id && message.role === "assistant");
+      expect(savedAssistant).toMatchObject({ text: "Streamed assistant reply.", status: "completed" });
+
+      const transcript = await runtime.loadTranscript(result.conversation.id);
+      expect(transcript.entries.some((entry) => entry.type === "event" && entry.event.kind === "message_delta")).toBe(false);
+      expect(transcript.activeMessages.some((message) => message.role === "assistant" && message.text === "Streamed assistant reply.")).toBe(true);
+    } finally {
+      unsubscribe();
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      await runtime.shutdown();
+    }
+  });
+
+  test("preserves existing assistant blocks while appending streaming text", async () => {
+    const runtime = await createRuntime();
+    const conversation = await runtime.createConversation();
+    const internal = runtime as unknown as {
+      state: RuntimeState;
+      appendAssistantDelta(conversationId: string, messageId: string, delta: string): void;
+    };
+    const target = internal.state.conversations.find((item) => item.id === conversation.id)!;
+    target.messages.push({
+      id: "msg_streaming_blocks",
+      conversationId: conversation.id,
+      role: "assistant",
+      text: "Supbot is thinking...",
+      createdAt: new Date().toISOString(),
+      status: "running",
+      blocks: [
+        { type: "thinking", text: "Planning" },
+        { type: "tool_use", toolCallId: "tool_1", toolName: "ReadFile", input: {}, status: "completed" }
+      ]
+    });
+
+    internal.appendAssistantDelta(conversation.id, "msg_streaming_blocks", "Hello ");
+    internal.appendAssistantDelta(conversation.id, "msg_streaming_blocks", "world");
+
+    const assistant = runtime.snapshot().conversations
+      .find((item) => item.id === conversation.id)
+      ?.messages.find((message) => message.id === "msg_streaming_blocks");
+    expect(assistant?.text).toBe("Hello world");
+    expect(assistant?.blocks?.map((block) => block.type)).toEqual(["thinking", "tool_use", "message_delta"]);
+    expect(assistant?.blocks?.at(-1)).toEqual({ type: "message_delta", text: "Hello world" });
+    await runtime.shutdown();
+  });
+
+  test("keeps manual compact recovery anchored before recent messages", async () => {
+    const runtime = await createRuntime();
+    const conversation = await runtime.createConversation("Compact anchor");
+    const internal = runtime as unknown as { state: RuntimeState };
+    const target = internal.state.conversations.find((item) => item.id === conversation.id)!;
+    const messages = Array.from({ length: 8 }, (_, index) => ({
+      id: `compact_message_${index}`,
+      conversationId: conversation.id,
+      role: index % 2 === 0 ? "user" as const : "assistant" as const,
+      text: `message ${index}`,
+      createdAt: new Date(Date.now() + index).toISOString()
+    }));
+    target.messages = messages;
+
+    const boundary = await runtime.compactConversation(conversation.id);
+
+    expect(boundary.messageId).toBe(messages[2].id);
+    expect(boundary.preservedMessageIds).toEqual(messages.slice(-6).map((message) => message.id));
+    await runtime.shutdown();
+  });
+
+  test("uses generated-files as the workspace for non-project tools and bounds job progress", async () => {
+    const { runtime, dataDir } = await createRuntimeWithPaths();
+    const internal = runtime as unknown as {
+      state: RuntimeState;
+      createToolExecutionContext(signal: AbortSignal, jobId: string): { host: { cwd: string } };
+      updateJob(jobId: string, status: "running", progress: string): void;
+    };
+    const now = new Date().toISOString();
+    internal.state.jobs = [{
+      id: "job_progress_bound",
+      conversationId: "conversation_progress_bound",
+      prompt: "progress",
+      status: "running",
+      workspaceMode: "main",
+      diffStatus: "unavailable",
+      createdAt: now,
+      updatedAt: now,
+      progress: []
+    }];
+
+    const context = internal.createToolExecutionContext(new AbortController().signal, "job_progress_bound");
+    for (let index = 0; index < 150; index += 1) {
+      internal.updateJob("job_progress_bound", "running", `progress-${index}`);
+    }
+
+    expect(context.host.cwd).toBe(join(dataDir, "generated-files"));
+    expect(runtime.snapshot().jobs[0].progress).toHaveLength(100);
+    expect(runtime.snapshot().jobs[0].progress[0]).toBe("progress-50");
+    await runtime.shutdown();
+  });
+
+  test("does not fail a successful job when worktree finalization fails", async () => {
+    const runtime = await createRuntime();
+    const filePath = join(tempDirs[tempDirs.length - 1], "worktree-finalization.txt");
+    await writeFile(filePath, "completed output", "utf8");
+    const internal = runtime as unknown as { completeJobWorktree(jobId: string): Promise<void> };
+    vi.spyOn(internal, "completeJobWorktree").mockRejectedValue(new Error("worktree finalization exploded"));
+
+    const result = await runtime.sendPrompt({ prompt: `/read ${filePath}` });
+    await waitForJob(runtime, result.job.id);
+
+    expect(runtime.snapshot().jobs.find((job) => job.id === result.job.id)?.status).toBe("completed");
+    expect(runtime.snapshot().runtimeEvents.some((event) => event.jobId === result.job.id && event.kind === "worktree_event" && event.message.includes("finalization failed"))).toBe(true);
+    await runtime.shutdown();
+  });
+
   test("saves model config while redacting the API key", async () => {
     const runtime = await createRuntime();
     const saved = await runtime.updateModelConfig({
@@ -714,12 +1184,12 @@ describe("SupbotRuntime", () => {
     const rootDir = await createGitRoot();
     const dir = await mkdtemp(join(tmpdir(), "supbot-test-"));
     tempDirs.push(dir);
-    const runtime = new SupbotRuntime(new JsonFileStorage(dir), { rootDir });
+    const runtime = new SupbotRuntime(new JsonFileStorage(dir, { coalesceMs: 0 }), { rootDir });
     await runtime.init();
     await runtime.deleteCapability("tool.scheduler");
     expect(runtime.snapshot().capabilities.some((item) => item.id === "tool.scheduler")).toBe(false);
 
-    const restarted = new SupbotRuntime(new JsonFileStorage(dir), { rootDir });
+    const restarted = new SupbotRuntime(new JsonFileStorage(dir, { coalesceMs: 0 }), { rootDir });
     await restarted.init();
     expect(restarted.snapshot().capabilities.some((item) => item.id === "tool.scheduler")).toBe(false);
   });
@@ -794,7 +1264,7 @@ describe("SupbotRuntime", () => {
       scheduledJobs: []
     }), "utf8");
 
-    const runtime = new SupbotRuntime(new JsonFileStorage(dir));
+    const runtime = new SupbotRuntime(new JsonFileStorage(dir, { coalesceMs: 0 }));
     await runtime.init();
     expect(runtime.snapshot().toolMarketConfig.source).toBe("hybrid");
   });
@@ -926,9 +1396,12 @@ describe("SupbotRuntime", () => {
       expect(products).toHaveLength(1);
       expect(products[0]).toMatchObject({ id: "calendar-mcp", origin: "remote", installed: false });
 
-      const installed = await runtime.installToolMarketProduct("calendar-mcp");
+      await expect(runtime.installToolMarketProduct("calendar-mcp"))
+        .rejects.toThrow("requires explicit command confirmation");
+      const installed = await runtime.installToolMarketProduct("calendar-mcp", true);
       expect(installed.installed).toBe(true);
       expect(runtime.snapshot().capabilities.some((item) => item.id === installed.capabilityId)).toBe(true);
+      expect(runtime.snapshot().mcpServers.find((item) => item.name === "Calendar MCP")?.autoConnect).toBe(false);
       const dataDir = tempDirs[tempDirs.length - 1];
       const rootDir = tempDirs[tempDirs.length - 2];
       const installPath = join(dataDir, "mcp", "calendar-mcp");
@@ -951,7 +1424,7 @@ describe("SupbotRuntime", () => {
         args: [join(installPath, "calendar-mcp.cjs")]
       });
 
-      const restarted = new SupbotRuntime(new JsonFileStorage(dataDir), { rootDir });
+      const restarted = new SupbotRuntime(new JsonFileStorage(dataDir, { coalesceMs: 0 }), { rootDir });
       await restarted.init();
       await restarted.updateToolMarketConfig({ source: "local", apiUrl: "", accountEmail: "", clearPassword: true });
       const installedFromDisk = await restarted.listToolMarket({ query: "Calendar" });
@@ -1426,7 +1899,7 @@ describe("SupbotRuntime", () => {
   test("applies and discards completed Autopilot worktrees through run controls", async () => {
     const { runtime, dataDir, rootDir } = await createRuntimeWithPaths();
     await runtime.shutdown();
-    const storage = new JsonFileStorage(dataDir);
+    const storage = new JsonFileStorage(dataDir, { coalesceMs: 0 });
     const state = await storage.load();
     const now = new Date().toISOString();
     const project = {
@@ -1659,7 +2132,7 @@ describe("SupbotRuntime", () => {
     const projectDir = await mkdtemp(join(tmpdir(), "supbot-recover-project-"));
     tempDirs.push(projectDir);
     await mkdir(join(projectDir, ".supbot"), { recursive: true });
-    const storage = new JsonFileStorage(dataDir);
+    const storage = new JsonFileStorage(dataDir, { coalesceMs: 0 });
     const state = await storage.load();
     const now = new Date().toISOString();
     const project = {
@@ -1711,13 +2184,74 @@ describe("SupbotRuntime", () => {
     await restarted.shutdown();
   });
 
+  test("restarts a recovered Autopilot run after resolving its persisted tool approval", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "supbot-recover-tool-approval-"));
+    const projectDir = await mkdtemp(join(tmpdir(), "supbot-recover-tool-project-"));
+    tempDirs.push(dataDir, projectDir);
+    await mkdir(join(projectDir, ".supbot"), { recursive: true });
+    const storage = new JsonFileStorage(dataDir, { coalesceMs: 0 });
+    await seedAutopilotToolApproval(storage, projectDir, {
+      runId: "run_recover_tool",
+      taskId: "task_recover_tool",
+      permissionId: "perm_recover_tool"
+    });
+    const restarted = new SupbotRuntime(storage, { rootDir: projectDir });
+    await restarted.init();
+    const internal = restarted as unknown as { runAutopilot(id: string): Promise<void> };
+    const runSpy = vi.spyOn(internal, "runAutopilot").mockResolvedValue();
+
+    const waiting = restarted.snapshot().autopilotRuns.find((run) => run.id === "run_recover_tool")!;
+    const next = await restarted.decideAutopilotApproval({
+      runId: waiting.id,
+      decisionId: waiting.pendingDecision!.id,
+      decision: "approved"
+    });
+
+    expect(next.status).toBe("queued");
+    expect(next.pendingDecision).toBeUndefined();
+    expect(restarted.snapshot().pendingToolPermissions).toEqual([]);
+    expect(runSpy).toHaveBeenCalledWith(waiting.id);
+    await restarted.shutdown();
+  });
+
+  test("clears an Autopilot tool decision when its permission times out", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "supbot-timeout-tool-approval-"));
+    const projectDir = await mkdtemp(join(tmpdir(), "supbot-timeout-tool-project-"));
+    tempDirs.push(dataDir, projectDir);
+    await mkdir(join(projectDir, ".supbot"), { recursive: true });
+    const storage = new JsonFileStorage(dataDir, { coalesceMs: 0 });
+    const permission = await seedAutopilotToolApproval(storage, projectDir, {
+      runId: "run_timeout_tool",
+      taskId: "task_timeout_tool",
+      permissionId: "perm_timeout_tool",
+      stage: "review"
+    });
+    const runtime = new SupbotRuntime(storage, { rootDir: projectDir });
+    await runtime.init();
+    const internal = runtime as unknown as {
+      runningAutopilotRuns: Map<string, { controller: AbortController }>;
+      handlePermissionTimeout(permission: RuntimeState["pendingToolPermissions"][number]): Promise<void>;
+    };
+    internal.runningAutopilotRuns.set("run_timeout_tool", { controller: new AbortController() });
+
+    await internal.handlePermissionTimeout(permission);
+
+    const next = runtime.snapshot().autopilotRuns.find((run) => run.id === "run_timeout_tool")!;
+    expect(next.status).toBe("reviewing");
+    expect(next.pendingDecision).toBeUndefined();
+    expect(runtime.snapshot().pendingToolPermissions).toEqual([]);
+    expect(runtime.snapshot().autopilotEvents.some((event) => event.runId === next.id && event.message === "Autopilot tool approval timed out")).toBe(true);
+    internal.runningAutopilotRuns.delete("run_timeout_tool");
+    await runtime.shutdown();
+  });
+
   test("recovers uncertain Autopilot side effects into an approval gate", async () => {
     const { runtime, dataDir, rootDir } = await createRuntimeWithPaths();
     await runtime.shutdown();
     const projectDir = await mkdtemp(join(tmpdir(), "supbot-recover-uncertain-project-"));
     tempDirs.push(projectDir);
     await mkdir(join(projectDir, ".supbot"), { recursive: true });
-    const storage = new JsonFileStorage(dataDir);
+    const storage = new JsonFileStorage(dataDir, { coalesceMs: 0 });
     const state = await storage.load();
     const now = new Date().toISOString();
     const project = {
@@ -2934,7 +3468,7 @@ describe("SupbotRuntime", () => {
   test("does not block runtime init when MCP autoConnect fails", async () => {
     const dir = await mkdtemp(join(tmpdir(), "supbot-autoconnect-"));
     tempDirs.push(dir);
-    const storage = new JsonFileStorage(dir);
+    const storage = new JsonFileStorage(dir, { coalesceMs: 0 });
     const state = await storage.load();
     const now = new Date().toISOString();
     state.mcpServers = [{
@@ -2975,7 +3509,8 @@ describe("SupbotRuntime", () => {
     const transcript = await runtime.loadTranscript(result.conversation.id);
     expect(transcript.entries.some((entry: { type: string }) => entry.type === "event")).toBe(true);
     expect(transcript.compactBoundary?.id).toBe(boundary.id);
-    expect(transcript.activeMessages).toEqual([]);
+    expect(transcript.activeMessages).toHaveLength(1);
+    expect(transcript.activeMessages[0].role).toBe("assistant");
     expect(transcript.source).toBe("transcript");
 
     await runtime.removePermissionRule(rule.id);
@@ -2992,10 +3527,11 @@ describe("SupbotRuntime", () => {
       token
     });
     expect(config.enabled).toBe(true);
+    expect(config.pairingCode).not.toBe(token.slice(0, 6).toUpperCase());
     config = await runtime.updateRemoteBridgeConfig({ host: "0.0.0.0" });
     expect(config.host).toBe("127.0.0.1");
-    config = await runtime.updateRemoteBridgeConfig({ host: "0.0.0.0", allowRemoteBind: true });
-    expect(config.host).toBe("0.0.0.0");
+    await expect(runtime.updateRemoteBridgeConfig({ host: "0.0.0.0", allowRemoteBind: true }))
+      .rejects.toThrow("restricted to loopback");
     config = await runtime.updateRemoteBridgeConfig({ host: "127.0.0.1", allowRemoteBind: false });
     expect(config.host).toBe("127.0.0.1");
     const bridgeUrl = `http://127.0.0.1:${config.port}`;
@@ -3085,6 +3621,25 @@ describe("SupbotRuntime", () => {
       await mock.close();
       await runtime.shutdown();
     }
+  });
+
+  test("keeps a revoked remote bridge token prefix blocked", async () => {
+    const runtime = await createRuntime();
+    const token = "revoked-remote-token";
+    const config = await runtime.updateRemoteBridgeConfig({ enabled: true, host: "127.0.0.1", port: 0, token });
+    const bridgeUrl = `http://127.0.0.1:${config.port}`;
+
+    const first = await fetch(`${bridgeUrl}/snapshot`, { headers: { Authorization: `Bearer ${token}` } });
+    expect(first.status).toBe(200);
+    const session = (await runtime.listRemoteBridgeSessions())[0];
+    await runtime.revokeRemoteBridgeSession(session.id);
+
+    const rejected = await fetch(`${bridgeUrl}/snapshot`, { headers: { Authorization: `Bearer ${token}` } });
+
+    expect(rejected.status).toBe(401);
+    expect((await rejected.json() as { error: string }).error).toContain("revoked");
+    expect(await runtime.listRemoteBridgeSessions()).toHaveLength(1);
+    await runtime.shutdown();
   });
 
   test("exposes Servstation as a permission-gated outbound A2A tool", async () => {
@@ -3488,7 +4043,7 @@ describe("SupbotRuntime", () => {
       lastHeartbeatAt: "2026-01-01T00:00:01.000Z"
     });
 
-    const restarted = new SupbotRuntime(new JsonFileStorage(dataDir), { rootDir });
+    const restarted = new SupbotRuntime(new JsonFileStorage(dataDir, { coalesceMs: 0 }), { rootDir });
     try {
       await restarted.init();
       expect(restarted.snapshot().servstationA2A.config.reverse?.status).not.toBe("connected");
@@ -4600,7 +5155,7 @@ describe("SupbotRuntime", () => {
     }
   });
 
-  test("retries Servstation reverse SSE immediately when connect is clicked after an error", async () => {
+  test("retries transient Servstation reverse registration failures", async () => {
     const runtime = await createRuntime();
     let registrationAttempts = 0;
     let eventStream: import("node:http").ServerResponse | undefined;
@@ -4666,10 +5221,9 @@ describe("SupbotRuntime", () => {
     });
     await runtime.updateServstationA2AConfig({ enabled: true, baseUrl, authMode: "identityHeaders" });
     try {
-      await expect(runtime.connectServstationReverseBridge()).rejects.toThrow("transient reverse failure");
       const startedAt = Date.now();
       await runtime.connectServstationReverseBridge();
-      expect(Date.now() - startedAt).toBeLessThan(900);
+      expect(Date.now() - startedAt).toBeLessThan(1_500);
       expect(registrationAttempts).toBe(2);
       expect(runtime.snapshot().servstationA2A.config.reverse?.status).toBe("connected");
       expect(eventStream).toBeTruthy();
@@ -4941,5 +5495,23 @@ describe("SupbotRuntime", () => {
     const snapshot = runtime.snapshot();
     expect(snapshot.scheduledJobs[0].enabled).toBe(false);
     expect(snapshot.conversations[0].messages[0].text).toContain("[Scheduled] Ping");
+  });
+
+  test("continues running later scheduled jobs when one dispatch fails", async () => {
+    const runtime = await createRuntime();
+    const dueAt = new Date(Date.now() - 1_000).toISOString();
+    await runtime.createScheduledJob({ title: "First", prompt: "first", scheduleKind: "once", runAt: dueAt, enabled: true });
+    await runtime.createScheduledJob({ title: "Second", prompt: "second", scheduleKind: "once", runAt: dueAt, enabled: true });
+    const sendSpy = vi.spyOn(runtime, "sendPrompt")
+      .mockRejectedValueOnce(new Error("first dispatch failed"))
+      .mockResolvedValueOnce({} as never);
+
+    const count = await runtime.runDueScheduledJobs(new Date());
+
+    expect(count).toBe(2);
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+    expect(runtime.snapshot().runtimeEvents.some((event) => event.kind === "turn_failed" && event.message.includes("Scheduled job failed"))).toBe(true);
+    expect(runtime.snapshot().scheduledJobs.every((job) => !job.enabled)).toBe(true);
+    await runtime.shutdown();
   });
 });

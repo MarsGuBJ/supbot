@@ -1,7 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
-  AppstoreAddOutlined,
   AppstoreOutlined,
   BranchesOutlined,
   CalendarOutlined,
@@ -102,7 +101,6 @@ import type {
   PendingToolPermission,
   PermissionRule,
   PersonalityConfig,
-  Project,
   RemoteBridgeConfig,
   RuntimeEventRecord,
   RuntimeSnapshot,
@@ -113,8 +111,6 @@ import type {
   ServstationConversation,
   ServstationFlowEngineExecutionEvent,
   ServstationFlowEngineInitiatedExecution,
-  ServstationFlowEngineLaunchableWorkflow,
-  ServstationFlowEnginePendingTask,
   ServstationFlowEngineSnapshot,
   ServstationMailAccount,
   ServstationMailAccountDraft,
@@ -131,11 +127,10 @@ import type {
   SubagentConfig, 
   SupbotUpdateState, 
   ToolCallRecord, 
-  ToolMarketCatalogItem,
   ToolMarketConfigUpdate,
-  ToolMarketProductType,
   TranscriptLoadResult
 } from "@supbot/shared";
+import { defaultToolMarketApiUrl } from "@supbot/shared";
 import {
   conversationTitle,
   buildSlashCommands,
@@ -147,12 +142,27 @@ import {
   statusLabel
 } from "@supbot/ui";
 import { loadLanguage, saveLanguage, translate, type Language } from "./i18n";
+import { LanguageProvider } from "./app/LanguageProvider";
+import {
+  appendStreamingMessageDelta,
+  isAssistantWaitingText,
+  reconcileStreamingMessageDeltas,
+  syncStreamingMessageDelta,
+  useStreamingMessageDelta
+} from "./app/useSnapshotStore";
+import { useStickToBottom } from "./app/useStickToBottom";
+import { autopilotRiskColor, autopilotStatusColor } from "./autopilot/autopilotViewUtils";
+import { recentJobProgress } from "./chat/chatViewUtils";
+import { mcpStatusColor, mcpToolSourceLabel } from "./config/mcpViewUtils";
+import { numberField, stringField, toRecord } from "./lib/valueUtils";
+import { toolStatusColor } from "./panels/runtimeEventViewUtils";
+import { servstationJobIsTerminal } from "./server/serverViewUtils";
 import "./styles.css";
 
 type WorkspaceView = "chat" | "server" | "config" | "market";
 type DetailPanel = "memory" | "schedule" | "autopilot" | null;
 type Translator = (key: string, vars?: Record<string, string | number>) => string;
-const defaultToolMarketApiUrl = "https://i-shu.com";
+const LazyMarketWorkspace = React.lazy(() => import("./market/MarketWorkspace"));
 const hiddenSlashCommandCapabilityIds = new Set(["tool.file", "tool.shell"]);
 
 const theme = {
@@ -201,34 +211,10 @@ function App() {
   const [messageApi, contextHolder] = message.useMessage(); 
   const [modalApi, modalContextHolder] = Modal.useModal();
   const [updateState, setUpdateState] = useState<SupbotUpdateState | null>(null);
-  const scrollRef = useRef<HTMLDivElement | null>(null); 
-  const messageStackRef = useRef<HTMLDivElement | null>(null); 
-  const shouldStickToBottomRef = useRef(true); 
+  const { messageStackRef, scrollMessagesToBottom, scrollRef } = useStickToBottom(view === "chat", activeConversationId);
   const promptedUpdateVersionRef = useRef(""); 
   const t = useCallback((key: string, vars?: Record<string, string | number>) => translate(language, key, vars), [language]);
   const slashCommandList = useMemo(() => buildSlashCommands(t), [t]);
-
-  const updateMessageStickiness = useCallback(() => {
-    const element = scrollRef.current;
-    if (!element) {
-      return;
-    }
-    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
-    shouldStickToBottomRef.current = distanceFromBottom <= 48;
-  }, []);
-
-  const scrollMessagesToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
-    const element = scrollRef.current;
-    if (!element) {
-      return;
-    }
-    const top = Math.max(0, element.scrollHeight - element.clientHeight);
-    if (behavior === "auto") {
-      element.scrollTop = top;
-      return;
-    }
-    element.scrollTo({ top, behavior });
-  }, []);
 
   const setLanguage = (next: Language) => {
     setLanguageState(next);
@@ -237,6 +223,7 @@ function App() {
 
   const refresh = useCallback(async () => {
     const next = await window.supbot.snapshot();
+    reconcileStreamingMessageDeltas(next);
     setSnapshot(next);
     setActiveConversationId((current) => current || next.conversations[0]?.id || "");
   }, []);
@@ -246,13 +233,15 @@ function App() {
     void window.supbot.userDataPath().then(setUserDataPath); 
     return window.supbot.onEvent((event) => {
       if (event.type === "snapshot") {
+        reconcileStreamingMessageDeltas(event.snapshot);
         setSnapshot(event.snapshot);
         setActiveConversationId((current) => current || event.snapshot.conversations[0]?.id || "");
       }
       if (event.type === "message_delta") {
-        setSnapshot((current) => current ? applyMessageDelta(current, event.conversationId, event.messageId, event.delta) : current);
+        appendStreamingMessageDelta(event.conversationId, event.messageId, event.delta);
       }
       if (event.type === "message") {
+        syncStreamingMessageDelta(event.message);
         setSnapshot((current) => current ? applyMessageEvent(current, event.conversationId, event.message) : current);
       }
       if (event.type === "job") {
@@ -336,51 +325,6 @@ function App() {
     });
   }, [messageApi, modalApi, startSupbotUpdate, t]);
  
-  useEffect(() => { 
-    if (view !== "chat") {
-      return;
-    }
-    shouldStickToBottomRef.current = true;
-    const frame = window.requestAnimationFrame(() => scrollMessagesToBottom("auto"));
-    return () => window.cancelAnimationFrame(frame);
-  }, [activeConversationId, scrollMessagesToBottom, view]);
-
-  useEffect(() => {
-    if (view !== "chat") {
-      return;
-    }
-    const scrollElement = scrollRef.current;
-    const stackElement = messageStackRef.current;
-    if (!scrollElement || !stackElement || typeof ResizeObserver === "undefined") {
-      return;
-    }
-    let frame = 0;
-    const keepPinned = () => {
-      if (shouldStickToBottomRef.current) {
-        scrollElement.scrollTop = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
-      }
-    };
-    const schedulePin = () => {
-      window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(keepPinned);
-    };
-    const observer = new ResizeObserver(schedulePin);
-    observer.observe(stackElement);
-    schedulePin();
-    return () => {
-      window.cancelAnimationFrame(frame);
-      observer.disconnect();
-    };
-  }, [activeConversationId, view]);
-
-  useEffect(() => {
-    if (!shouldStickToBottomRef.current) {
-      return;
-    }
-    const frame = window.requestAnimationFrame(() => scrollMessagesToBottom("smooth"));
-    return () => window.cancelAnimationFrame(frame);
-  }, [snapshot?.conversations, scrollMessagesToBottom]);
-
   const activeConversation = useMemo(
     () => snapshot?.conversations.find((item) => item.id === activeConversationId) || snapshot?.conversations[0],
     [snapshot?.conversations, activeConversationId]
@@ -516,20 +460,23 @@ function App() {
 
   if (!snapshot) {
     return (
-      <ConfigProvider theme={theme}>
-        <div className="boot-screen">
-          <BrandMark />
-          <Typography.Title level={3}>{t("Starting Supbot")}</Typography.Title>
-        </div>
-      </ConfigProvider>
+      <LanguageProvider language={language}>
+        <ConfigProvider theme={theme}>
+          <div className="boot-screen">
+            <BrandMark />
+            <Typography.Title level={3}>{t("Starting Supbot")}</Typography.Title>
+          </div>
+        </ConfigProvider>
+      </LanguageProvider>
     );
   }
 
   return (
-    <ConfigProvider theme={theme} locale={language === "zh" ? zhCN : enUS}> 
+    <LanguageProvider language={language}>
+      <ConfigProvider theme={theme} locale={language === "zh" ? zhCN : enUS}> 
       {contextHolder} 
       {modalContextHolder}
-      <main className="workspace-shell"> 
+      <main className="workspace-shell" data-testid="workspace-shell"> 
         <Topbar 
           snapshot={snapshot}
           view={view}
@@ -572,7 +519,6 @@ function App() {
               loadTranscript={loadActiveTranscript}
             scrollRef={scrollRef}
             messageStackRef={messageStackRef}
-            onMessageScroll={updateMessageStickiness}
             t={t}
             slashCommands={slashCommandList}
             />
@@ -608,19 +554,20 @@ function App() {
             }}
           />
         ) : (
-          <MarketWorkspace
-            refresh={refresh}
-            snapshot={snapshot}
-            openMarketConfig={() => {
-              setFocusConfigTab("market");
-              setView("config");
-            }}
-            openMcpConfig={() => {
-              setFocusConfigTab("mcp");
-              setView("config");
-            }}
-            t={t}
-          />
+          <React.Suspense fallback={<div className="market-panel"><Spin /></div>}>
+            <LazyMarketWorkspace
+              refresh={refresh}
+              snapshot={snapshot}
+              openMarketConfig={() => {
+                setFocusConfigTab("market");
+                setView("config");
+              }}
+              openMcpConfig={() => {
+                setFocusConfigTab("mcp");
+                setView("config");
+              }}
+            />
+          </React.Suspense>
         )}
       </main>
       <ModelModal open={modelOpen} config={snapshot.modelConfig} onCancel={() => setModelOpen(false)} onSave={saveModel} t={t} />
@@ -654,7 +601,8 @@ function App() {
         onCancel={() => setTranscriptOpen(false)}
         t={t}
       />
-    </ConfigProvider>
+      </ConfigProvider>
+    </LanguageProvider>
   );
 }
 
@@ -698,6 +646,7 @@ function Topbar({
         </div>
       </div>
       <Segmented
+        data-testid="workspace-switcher"
         value={view}
         onChange={(value) => setView(value as WorkspaceView)}
         options={[
@@ -981,9 +930,12 @@ function ServerAgentWorkspace({
   const activeConversation = remote?.conversations.find((item) => item.id === activeConversationId) || remote?.conversations[0];
   const messages = useMemo(() => servstationMessagesFromJobs(remote?.jobs || []), [remote?.jobs]);
   const runningJob = useMemo(() => [...(remote?.jobs || [])].reverse().find((job) => !servstationJobIsTerminal(job)), [remote?.jobs]);
+  const hasRunningJob = Boolean(runningJob);
 
-  const loadRemote = useCallback(async (conversationId?: string) => {
-    setLoading(true);
+  const loadRemote = useCallback(async (conversationId?: string, background = false) => {
+    if (!background) {
+      setLoading(true);
+    }
     try {
       const next = await window.supbot.getServstationClientSnapshot({ conversationId });
       setRemote(next);
@@ -992,7 +944,9 @@ function ServerAgentWorkspace({
     } catch (error) {
       messageApi.error((error as Error).message);
     } finally {
-      setLoading(false);
+      if (!background) {
+        setLoading(false);
+      }
     }
   }, [messageApi]);
 
@@ -1004,12 +958,12 @@ function ServerAgentWorkspace({
     if (!remote?.connected) {
       return;
     }
-    const intervalMs = (remote.jobs || []).some((job) => !servstationJobIsTerminal(job)) ? 2_000 : 15_000;
+    const intervalMs = hasRunningJob ? 2_000 : 15_000;
     const timer = window.setInterval(() => {
-      void loadRemote(activeConversationId || undefined);
+      void loadRemote(activeConversationId || undefined, true);
     }, intervalMs);
     return () => window.clearInterval(timer);
-  }, [activeConversationId, loadRemote, remote?.connected, remote?.jobs]);
+  }, [activeConversationId, hasRunningJob, loadRemote, remote?.connected]);
 
   const connectRemote = async () => {
     setConnecting(true);
@@ -1173,6 +1127,7 @@ function ServerAgentWorkspace({
         />
       ) : null}
       <Tabs
+        data-testid="server-agent-tabs"
         className="server-agent-tabs"
         tabBarExtraContent={{
           right: (
@@ -1814,13 +1769,7 @@ function ServerAgentFlowWorkspace({
                 >
                   <span className="server-agent-mail-list-line">
                     <strong>{task.title}</strong>
-                    <span className="autopilot-task-meta">@{task.staffAgent} / {task.kind || task.stage} / {task.risk || "low"} / {task.attempts}/{task.maxAttempts} {t("attempts")}</span>
-                    {(task.dependsOn?.length || task.lastEvaluation) ? (
-                      <span className="autopilot-task-detail">
-                        {task.dependsOn?.length ? `${task.dependsOn.length} ${t("dependencies")}` : t("No dependencies")}
-                        {task.lastEvaluation ? ` / ${task.lastEvaluation.passed ? t("Verified") : t("Verification failed")}` : ""}
-                      </span>
-                    ) : null}
+                    <span className="autopilot-task-meta">{task.nodeId} / {task.approverRoles.join(", ") || t("No approval roles")}</span>
                     {flowEngineStatusTag(task.status, t)}
                   </span>
                   <span className="server-agent-mail-preview mono">{task.workflowId}</span>
@@ -2049,7 +1998,8 @@ function renderFlowInputControl(field: FlowInputField, disabled: boolean, t: Tra
 function FlowFileInput({
   value,
   onChange,
-  disabled
+  disabled,
+  t
 }: {
   value?: string | FlowFilePayload;
   onChange?: (value: FlowFilePayload | null) => void;
@@ -3120,10 +3070,6 @@ function servstationMessagesFromJobs(jobs: ServstationSessionJob[]): Servstation
   });
 }
 
-function servstationJobIsTerminal(job: Pick<ServstationSessionJob, "status">): boolean {
-  return ["completed", "failed", "canceled", "cancelled"].includes(job.status);
-}
-
 function servstationConversationTitle(conversation: ServstationConversation, fallback: string): string {
   return conversation.title?.trim() || formatDateTime(conversation.createdAt) || fallback;
 }
@@ -3225,7 +3171,7 @@ function extractServstationMessageAttachments(job: ServstationSessionJob): Servs
         size: numberField(record, "size") || 0
       };
     })
-    .filter((item): item is { name: string; mimeType?: string; size: number } => Boolean(item));
+    .filter((item): item is { name: string; mimeType: string | undefined; size: number } => item !== null);
   return attachments.length ? attachments : undefined;
 }
 
@@ -3278,21 +3224,7 @@ function servstationJobResponseAtMs(job: ServstationSessionJob): number {
   return Date.parse(job.finishedAt || job.startedAt || job.createdAt) || servstationJobCreatedAtMs(job);
 }
 
-function toRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
-}
-
-function stringField(record: Record<string, unknown> | undefined, key: string): string | undefined {
-  const value = record?.[key];
-  return typeof value === "string" ? value : undefined;
-}
-
-function numberField(record: Record<string, unknown> | undefined, key: string): number | undefined {
-  const value = record?.[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function ChatPanel({
+const ChatPanel = memo(function ChatPanel({
   conversation,
   prompt,
   setPrompt,
@@ -3308,7 +3240,6 @@ function ChatPanel({
   loadTranscript,
   scrollRef,
   messageStackRef,
-  onMessageScroll,
   t,
   slashCommands
 }: {
@@ -3327,7 +3258,6 @@ function ChatPanel({
   loadTranscript: () => void;
   scrollRef: React.RefObject<HTMLDivElement>;
   messageStackRef: React.RefObject<HTMLDivElement>;
-  onMessageScroll: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
   slashCommands: ReturnType<typeof buildSlashCommands>;
 }) {
@@ -3338,22 +3268,6 @@ function ChatPanel({
     const query = prompt.trim().toLowerCase();
     return slashCommands.filter((item) => item.command.startsWith(query));
   }, [prompt, slashCommands]);
-
-  useEffect(() => {
-    const stream = scrollRef.current;
-    if (!stream) {
-      return;
-    }
-    const pin = () => {
-      stream.scrollTop = Math.max(0, stream.scrollHeight - stream.clientHeight);
-    };
-    const frame = window.requestAnimationFrame(pin);
-    const timer = window.setTimeout(pin, 80);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.clearTimeout(timer);
-    };
-  }, [conversation?.id, scrollRef]);
 
   return (
     <section className="chat-panel">
@@ -3375,7 +3289,7 @@ function ChatPanel({
           {runningJob ? <Tag color="cyan"><ClockCircleOutlined /> {statusLabel(runningJob.status, t)}</Tag> : <Tag color="green"><CheckCircleOutlined /> {t("Ready")}</Tag>}
         </Space>
       </div>
-      <div className="message-stream" ref={scrollRef} onScroll={onMessageScroll}>
+      <div className="message-stream" ref={scrollRef}>
         <div className="message-stack" ref={messageStackRef}>
           {!conversation || conversation.messages.length === 0 ? (
             <div className="chat-empty">
@@ -3445,26 +3359,38 @@ function ChatPanel({
       </div>
     </section>
   );
-}
+});
 
-function MessageBubble({ message: item, t }: { message: ChatMessage; t: (key: string, vars?: Record<string, string | number>) => string }) {
+const MessageBubble = memo(function MessageBubble({ message: item, t }: { message: ChatMessage; t: (key: string, vars?: Record<string, string | number>) => string }) {
+  const streamingText = useStreamingMessageDelta(item.conversationId, item.id, item.role === "assistant" && item.status === "running");
+  const displayItem = useMemo(() => {
+    if (streamingText === undefined) {
+      return item;
+    }
+    const preservedBlocks = (item.blocks || []).filter((block) => block.type !== "message_delta");
+    return {
+      ...item,
+      text: streamingText,
+      blocks: [...preservedBlocks, { type: "message_delta" as const, text: streamingText }]
+    };
+  }, [item, streamingText]);
   return (
-    <div className={`message-row ${item.role}`}>
+    <div className={`message-row ${displayItem.role}`}>
       <div className="message-bubble">
         <div className="message-meta">
-          <span>{item.role === "user" ? t("You") : item.role === "assistant" ? "Supbot" : item.role === "tool" ? t("Tool") : t("System")}</span>
-          <span>{formatDateTime(item.createdAt)}</span>
-          {item.status ? <Tag color={statusColor(item.status)}>{statusLabel(item.status, t)}</Tag> : null}
+          <span>{displayItem.role === "user" ? t("You") : displayItem.role === "assistant" ? "Supbot" : displayItem.role === "tool" ? t("Tool") : t("System")}</span>
+          <span>{formatDateTime(displayItem.createdAt)}</span>
+          {displayItem.status ? <Tag color={statusColor(displayItem.status)}>{statusLabel(displayItem.status, t)}</Tag> : null}
         </div>
-        <MessageBlocks message={item} t={t} />
-        {item.attachments?.length ? (
+        <MessageBlocks message={displayItem} t={t} />
+        {displayItem.attachments?.length ? (
           <div className="attachment-row">
-            {item.attachments.map((attachment) => <Tag key={attachment.id}><PaperClipOutlined /> {attachment.name}</Tag>)}
+            {displayItem.attachments.map((attachment) => <Tag key={attachment.id}><PaperClipOutlined /> {attachment.name}</Tag>)}
           </div>
         ) : null}
-        {item.generatedFiles?.length ? (
+        {displayItem.generatedFiles?.length ? (
           <div className="generated-files">
-            {item.generatedFiles.map((file) => (
+            {displayItem.generatedFiles.map((file) => (
               <button className="generated-file" type="button" key={file.id} onClick={() => void window.supbot.openFile(file.path)}>
                 <PaperClipOutlined />
                 <span>{file.name}</span>
@@ -3476,7 +3402,7 @@ function MessageBubble({ message: item, t }: { message: ChatMessage; t: (key: st
       </div>
     </div>
   );
-}
+});
 
 function MessageBlocks({ message, t }: { message: ChatMessage; t: (key: string, vars?: Record<string, string | number>) => string }) {
   const blocks = message.blocks?.length ? message.blocks : [{ type: "text" as const, text: message.text }];
@@ -3502,7 +3428,7 @@ function MessageBlocks({ message, t }: { message: ChatMessage; t: (key: string, 
         }
         if (block.type === "tool_result") {
           return (
-            <div className={`tool-card result ${block.isError ? "is-error" : ""}`} key={`${message.id}-${block.toolCallId}-result`}>
+            <div className={`tool-card result ${block.isError ? "is-error" : ""}`} data-output-truncated={block.outputTruncated ? "true" : "false"} key={`${message.id}-${block.toolCallId}-result`}>
               <div className="tool-card-head">
                 {block.isError ? <CloseCircleOutlined /> : <CheckCircleOutlined />}
                 <strong>{t("Tool result")}</strong>
@@ -3511,7 +3437,7 @@ function MessageBlocks({ message, t }: { message: ChatMessage; t: (key: string, 
               {block.outputParts?.length ? (
                 <div className="tool-result-parts">
                   {block.outputParts.map((part, partIndex) => (
-                    <div className="tool-result-part" key={`${message.id}-${block.toolCallId}-part-${partIndex}`}>
+                    <div className="tool-result-part" data-part-type={part.type} key={`${message.id}-${block.toolCallId}-part-${partIndex}`}>
                       <div>
                         <Tag>{part.type}</Tag>
                         {part.mimeType ? <Tag>{part.mimeType}</Tag> : null}
@@ -3562,32 +3488,6 @@ function MessageBlocks({ message, t }: { message: ChatMessage; t: (key: string, 
       })}
     </>
   );
-}
-
-function applyMessageDelta(snapshot: RuntimeSnapshot, conversationId: string, messageId: string, delta: string): RuntimeSnapshot {
-  return {
-    ...snapshot,
-    conversations: snapshot.conversations.map((conversation) => {
-      if (conversation.id !== conversationId) {
-        return conversation;
-      }
-      return {
-        ...conversation,
-        messages: conversation.messages.map((message) => {
-          if (message.id !== messageId) {
-            return message;
-          }
-          const current = message.text.endsWith("is thinking...") ? "" : message.text;
-          const text = `${current}${delta}`;
-          return {
-            ...message,
-            text,
-            blocks: [{ type: "message_delta" as const, text }]
-          };
-        })
-      };
-    })
-  };
 }
 
 function applyMessageEvent(snapshot: RuntimeSnapshot, conversationId: string, message: ChatMessage): RuntimeSnapshot {
@@ -3758,22 +3658,6 @@ function jobRuntimeEventColor(kind: RuntimeEventRecord["kind"]): string {
   return "cyan";
 }
 
-function toolStatusColor(status: ToolCallRecord["status"]): string {
-  switch (status) {
-    case "pending_permission":
-      return "gold";
-    case "running":
-      return "cyan";
-    case "completed":
-      return "green";
-    case "failed":
-    case "denied":
-      return "red";
-    default:
-      return "default";
-  }
-}
-
 function assistantPreviewForJob(snapshot: RuntimeSnapshot, job: AgentJob): string {
   const conversation = snapshot.conversations.find((item) => item.id === job.conversationId);
   const messages = (conversation?.messages || []).filter((message) => message.jobId === job.id && message.role === "assistant");
@@ -3784,21 +3668,6 @@ function assistantPreviewForJob(snapshot: RuntimeSnapshot, job: AgentJob): strin
     }
   }
   return "";
-}
-
-function isAssistantWaitingText(text: string): boolean {
-  return text === "Supbot is thinking..." || /^@.+ is thinking\.\.\.$/.test(text);
-}
-
-function recentJobProgress(progress: string[]): string[] {
-  const result: string[] = [];
-  for (let index = progress.length - 1; index >= 0 && result.length < 5; index -= 1) {
-    const item = progress[index];
-    if (item && !result.includes(item)) {
-      result.push(item);
-    }
-  }
-  return result.reverse();
 }
 
 function RightPanel({
@@ -3823,6 +3692,7 @@ function RightPanel({
   return (
     <aside className={`activity-panel ${collapsed ? "is-collapsed" : ""}`}>
       <Tabs
+        data-testid="activity-tabs"
         activeKey={panel || "memory"}
         onChange={(key) => setPanel(key as DetailPanel)}
         items={[
@@ -4593,6 +4463,7 @@ function MemoryPanel({
           <div className="mini-stat"><span>{t("Chunks")}</span><strong>{snapshot.memory.chunks.length}</strong></div>
         </div>
         <Segmented
+          data-testid="memory-view-switcher"
           value={memoryView}
           onChange={(value) => setMemoryView(value as "manage" | "debug")}
           options={[
@@ -4622,12 +4493,12 @@ function MemoryPanel({
           <div className="activity-head">
             <div className="section-title"><FileTextOutlined /> {t("Memory candidates")}</div>
             <Space>
-              <Button size="small" type="primary" disabled={!selectedCandidateIds.length} onClick={() => void approveSelectedCandidates()}>{t("Approve selected")}</Button>
-              <Button size="small" danger disabled={!selectedCandidateIds.length} onClick={() => void denySelectedCandidates()}>{t("Deny selected")}</Button>
+              <Button className="memory-approve-selected" size="small" type="primary" disabled={!selectedCandidateIds.length} onClick={() => void approveSelectedCandidates()}>{t("Approve selected")}</Button>
+              <Button className="memory-deny-selected" size="small" danger disabled={!selectedCandidateIds.length} onClick={() => void denySelectedCandidates()}>{t("Deny selected")}</Button>
             </Space>
           </div>
           {pendingCandidates.map((candidate) => (
-            <div className="memory-candidate-card" key={candidate.id}>
+            <div className="memory-candidate-card" data-memory-id={candidate.id} key={candidate.id}>
               <div className="memory-select-row">
                 <Checkbox
                   checked={selectedCandidateIds.includes(candidate.id)}
@@ -4658,7 +4529,7 @@ function MemoryPanel({
       <div className="memory-recall-history">
         <div className="section-title"><ClockCircleOutlined /> {t("Recent recall")}</div>
         {recallHistory.map((item) => (
-          <div className="memory-recall-item" key={item.id}>
+          <div className="memory-recall-item" data-recall-id={item.id} key={item.id}>
             <div className="activity-head">
               <strong>{item.query || t("No query text")}</strong>
               <Tag color={item.injected ? "cyan" : "default"}>{item.injected ? t("Injected") : t("Not injected")}</Tag>
@@ -4726,14 +4597,14 @@ function MemoryPanel({
         <div className="activity-head">
           <div className="section-title"><FileTextOutlined /> {t("Memory items")}</div>
           <Space>
-            <Button size="small" disabled={!selectedRecordIds.length} onClick={() => void disableSelectedRecords()}>{t("Disable selected")}</Button>
+            <Button className="memory-disable-selected" size="small" disabled={!selectedRecordIds.length} onClick={() => void disableSelectedRecords()}>{t("Disable selected")}</Button>
             <Popconfirm title={t("Delete selected memory?")} onConfirm={() => void deleteSelectedRecords()}>
-              <Button size="small" danger disabled={!selectedRecordIds.length}>{t("Delete selected")}</Button>
+              <Button className="memory-delete-selected" size="small" danger disabled={!selectedRecordIds.length}>{t("Delete selected")}</Button>
             </Popconfirm>
           </Space>
         </div>
         {records.map((record) => (
-          <div className={`memory-record status-${record.status}`} key={record.id}>
+          <div className={`memory-record status-${record.status}`} data-memory-id={record.id} key={record.id}>
             <div className="memory-select-row">
               <Checkbox
                 checked={selectedRecordIds.includes(record.id)}
@@ -4758,9 +4629,9 @@ function MemoryPanel({
                   {record.keywords.slice(0, 6).map((keyword) => <Tag key={`${record.id}-${keyword}`}>{keyword}</Tag>)}
                 </div>
                 <Space>
-                  <Button size="small" onClick={() => void toggleRecord(record)}>{record.status === "active" ? t("Disable") : t("Enable")}</Button>
+                  <Button className="memory-toggle-record" size="small" onClick={() => void toggleRecord(record)}>{record.status === "active" ? t("Disable") : t("Enable")}</Button>
                   <Popconfirm title={t("Delete memory?")} onConfirm={() => void deleteRecord(record.id)}>
-                    <Button size="small" danger>{t("Delete")}</Button>
+                    <Button className="memory-delete-record" size="small" danger>{t("Delete")}</Button>
                   </Popconfirm>
                 </Space>
               </div>
@@ -5159,6 +5030,7 @@ function AutopilotPanel({ snapshot, refresh, t }: { snapshot: RuntimeSnapshot; r
         <section className="autopilot-panel">
           <div className="section-title"><ThunderboltOutlined /> {t("New Autopilot run")}</div>
           <Form
+            className="autopilot-start-form"
             form={runForm}
             layout="vertical"
             onFinish={(values) => void startRun(values)}
@@ -5586,29 +5458,6 @@ function formatAutopilotDecisionInput(input: unknown): string {
   }
 }
 
-function autopilotRiskColor(risk: AutopilotPendingDecision["risk"]): string {
-  if (risk === "high") {
-    return "red";
-  }
-  if (risk === "medium") {
-    return "gold";
-  }
-  return "green";
-}
-
-function autopilotStatusColor(status: AutopilotRun["status"]): string {
-  if (status === "completed") {
-    return "green";
-  }
-  if (status === "failed" || status === "blocked" || status === "canceled" || status === "budget_exhausted") {
-    return "red";
-  }
-  if (status === "paused" || status === "waiting_approval" || status === "partially_completed") {
-    return "gold";
-  }
-  return "cyan";
-}
-
 function AutopilotBudgetPanel({ run, t }: { run: AutopilotRun; t: (key: string, vars?: Record<string, string | number>) => string }) {
   const budget = run.budget!;
   const entries = [
@@ -5739,6 +5588,7 @@ function ConfigWorkspace({
         <Button icon={<ReloadOutlined />} onClick={refresh}>{t("Refresh")}</Button>
       </div>
       <Tabs
+        data-testid="config-tabs"
         activeKey={focusTab}
         onChange={setFocusTab}
         items={[
@@ -5755,161 +5605,6 @@ function ConfigWorkspace({
       />
     </section>
   );
-}
-
-function MarketWorkspace({
-  refresh,
-  snapshot,
-  openMarketConfig,
-  openMcpConfig,
-  t
-}: {
-  refresh: () => Promise<void>;
-  snapshot: RuntimeSnapshot;
-  openMarketConfig: () => void;
-  openMcpConfig: () => void;
-  t: (key: string, vars?: Record<string, string | number>) => string;
-}) {
-  const [products, setProducts] = useState<ToolMarketCatalogItem[]>([]);
-  const [query, setQuery] = useState("");
-  const [typeFilter, setTypeFilter] = useState<ToolMarketProductType | "all">("all");
-  const [loading, setLoading] = useState(false);
-  const [actingId, setActingId] = useState("");
-  const [error, setError] = useState("");
-  const [messageApi, contextHolder] = message.useMessage();
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const items = await window.supbot.listToolMarket({ query, type: typeFilter });
-      setProducts(items);
-    } catch (loadError) {
-      setError((loadError as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [query, typeFilter]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const toggleInstall = async (product: ToolMarketCatalogItem) => {
-    if (product.id === "local-mcp-bridge") {
-      openMcpConfig();
-      return;
-    }
-    setActingId(product.id);
-    try {
-      if (product.installed) {
-        await window.supbot.uninstallToolMarketProduct(product.id);
-        messageApi.success(t("Tool uninstalled."));
-      } else {
-        await window.supbot.installToolMarketProduct(product.id);
-        messageApi.success(t("Tool installed."));
-      }
-      await load();
-      await refresh();
-    } catch (actionError) {
-      messageApi.error((actionError as Error).message);
-    } finally {
-      setActingId("");
-    }
-  };
-
-  return (
-    <section className="market-panel">
-      {contextHolder}
-      <div className="market-header">
-        <div>
-          <div className="eyebrow">{t("LOCAL TOOL MARKET")}</div>
-          <Typography.Title level={3}>{t("Tool Market")}</Typography.Title>
-          <div className="muted">{t("Install local and remote capabilities into this single-user agent.")}</div>
-          <div className="market-source-row">
-            <Tag color="cyan">{t(`market.source.${snapshot.toolMarketConfig.source}`)}</Tag>
-            {snapshot.toolMarketConfig.apiUrl ? <Tag>{snapshot.toolMarketConfig.apiUrl}</Tag> : <Tag>{t("Built-in catalog")}</Tag>}
-            {snapshot.toolMarketConfig.lastSyncedAt ? <Tag>{t("Last sync: {time}", { time: formatDateTime(snapshot.toolMarketConfig.lastSyncedAt) })}</Tag> : null}
-          </div>
-        </div>
-        <Space wrap>
-          <Input
-            className="market-search"
-            allowClear
-            value={query}
-            placeholder={t("Search tool products")}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-          <Select
-            className="market-type-select"
-            value={typeFilter}
-            onChange={(value) => setTypeFilter(value as ToolMarketProductType | "all")}
-            options={[
-              { label: t("All types"), value: "all" },
-              { label: t("tool"), value: "tool" },
-              { label: t("skill"), value: "skill" },
-              { label: t("Plugin"), value: "plugin" },
-              { label: "MCP", value: "mcp" }
-            ]}
-          />
-          <Button icon={<ReloadOutlined />} onClick={() => void load()} loading={loading}>
-            {t("Refresh")}
-          </Button>
-          <Button icon={<SettingOutlined />} onClick={openMarketConfig}>{t("Market settings")}</Button>
-        </Space>
-      </div>
-      {error ? <Alert type="error" showIcon message={error} /> : null}
-      <div className="market-grid">
-        {products.map((product) => (
-          <article className={`market-product ${product.installed ? "is-installed" : ""}`} key={product.id}>
-            <div className="market-product-head">
-              <div className="market-product-icon">
-                <ToolOutlined />
-              </div>
-              <div className="market-product-copy">
-                <div className="market-product-title">{t(product.name)}</div>
-                <div className="muted">{t(product.providerName)}</div>
-              </div>
-              <Tag color={marketTypeColor(product.type)}>{t(product.type)}</Tag>
-            </div>
-            <div className="market-product-description">{t(product.description)}</div>
-            <div className="market-product-meta">
-              <Tag color={product.origin === "remote" ? "blue" : "default"}>{product.origin === "remote" ? t("Remote") : t("Local")}</Tag>
-              <Tag color={product.free ? "green" : "gold"}>{product.priceLabel ? t(product.priceLabel) : product.free ? t("Free") : t("Paid")}</Tag>
-              {product.tags.map((tag) => <Tag key={`${product.id}-${tag}`}>{t(tag)}</Tag>)}
-              {product.purchased ? <Tag color="blue">{t("Purchased")}</Tag> : null}
-              {product.sourceHealth ? <Tag>{product.sourceHealth}</Tag> : null}
-              {product.installed ? <Tag color="green">{t("Installed")}</Tag> : null}
-            </div>
-            <Button
-              className="market-product-action"
-              type={product.installed ? "default" : "primary"}
-              icon={product.installed ? <CheckCircleOutlined /> : <AppstoreAddOutlined />}
-              loading={actingId === product.id}
-              disabled={Boolean(actingId) && actingId !== product.id}
-              onClick={() => void toggleInstall(product)}
-            >
-              {product.id === "local-mcp-bridge" ? t("Configure") : product.installed ? t("Uninstall") : t("Install")}
-            </Button>
-          </article>
-        ))}
-      </div>
-      {!loading && products.length === 0 ? <Empty className="market-empty" description={t("No matching tool products")} /> : null}
-    </section>
-  );
-}
-
-function marketTypeColor(type: ToolMarketProductType): string {
-  switch (type) {
-    case "mcp":
-      return "purple";
-    case "plugin":
-      return "blue";
-    case "skill":
-      return "cyan";
-    default:
-      return "green";
-  }
 }
 
 function StorageCard({ userDataPath, t }: { userDataPath: string; t: (key: string, vars?: Record<string, string | number>) => string }) {
@@ -5931,7 +5626,7 @@ function StorageCard({ userDataPath, t }: { userDataPath: string; t: (key: strin
         type={userDataPath ? "info" : "warning"}
         showIcon
         message={t("Credential storage")}
-        description={t("Supbot uses the operating system safe storage when available. If the app reports file storage for a credential, treat that fallback as local obfuscation rather than strong encryption.")}
+        description={t("Supbot uses operating system safe storage when available. File storage uses a per-installation salt and local encryption, but it is not OS-backed: another process running as your user may still recover those credentials.")}
       />
       <Divider />
       <Alert
@@ -6336,7 +6031,7 @@ function McpServersCard({ snapshot, refresh, t }: {
         {snapshot.mcpServers.map((server) => {
           const tools = snapshot.mcpTools.filter((tool) => tool.serverId === server.id);
           return (
-            <div className="mcp-server-card" key={server.id}>
+            <div className="mcp-server-card" data-server-id={server.id} key={server.id}>
               <div className="activity-head">
                 <div>
                   <strong>{server.name}</strong>
@@ -7023,24 +6718,6 @@ function filterVisibleCapabilities(capabilities: RuntimeSnapshot["capabilities"]
 function truncateText(value: string, maxLength: number): string {
   const chars = Array.from(value);
   return chars.length > maxLength ? `${chars.slice(0, maxLength).join("")}...` : value;
-}
-
-function mcpStatusColor(state: string): string {
-  if (state === "connected") {
-    return "green";
-  }
-  if (state === "connecting") {
-    return "blue";
-  }
-  if (state === "error") {
-    return "red";
-  }
-  return "default";
-}
-
-function mcpToolSourceLabel(toolName: string): string {
-  const match = toolName.match(/^mcp\.([^.]+)\.(.+)$/);
-  return match ? `MCP ${match[1]} / ${match[2]}` : "";
 }
 
 createRoot(document.getElementById("root")!).render(<App />);

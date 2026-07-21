@@ -9,8 +9,11 @@ import type {
   ToolMarketProductType,
   ToolMarketQuery
 } from "@supbot/shared";
+import { fetchWithRetry, readResponseTextLimited } from "./httpClient";
 
 const toolMarketRequestTimeoutMs = 8000;
+const maxToolMarketResponseBytes = 2 * 1024 * 1024;
+const maxToolMarketErrorBytes = 64 * 1024;
 
 export const localToolMarketProducts: ToolMarketProduct[] = [
   {
@@ -174,30 +177,28 @@ export async function fetchRemoteToolMarketProducts(
     url.searchParams.set("type", query.type);
   }
   const cookie = await authenticateToolMarket(config, auth);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), toolMarketRequestTimeoutMs);
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await fetchWithRetry(url, {
       method: "GET",
-      signal: controller.signal,
       headers: {
         Accept: "application/json",
         ...authHeaders(auth.accessToken, cookie)
       }
-    });
+    }, { timeoutMs: toolMarketRequestTimeoutMs, idleTimeoutMs: toolMarketRequestTimeoutMs, maxRetries: 2 });
   } catch (error) {
     throw toolMarketConnectionError(error, url, "request");
-  } finally {
-    clearTimeout(timer);
   }
   if (!response.ok) {
     throw await toolMarketHttpError(response, "request");
   }
   let payload: RemoteToolMarketListPayload;
   try {
-    payload = await response.json() as RemoteToolMarketListPayload;
-  } catch {
+    payload = JSON.parse(await readResponseTextLimited(response, maxToolMarketResponseBytes)) as RemoteToolMarketListPayload;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("byte limit")) {
+      throw new Error(`Tool market request failed: ${error.message}`);
+    }
     throw new Error("Tool market request failed: catalog API returned invalid JSON.");
   }
   const items = Array.isArray(payload) ? payload : Array.isArray(payload.items) ? payload.items : [];
@@ -216,19 +217,16 @@ async function authenticateToolMarket(config: ToolMarketConfig, auth: ToolMarket
   }
   const loginUrl = new URL(normalizeMarketApiUrl(config.apiUrl));
   loginUrl.searchParams.set("action", "login");
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), toolMarketRequestTimeoutMs);
   try {
-    const response = await fetch(loginUrl, {
+    const response = await fetchWithRetry(loginUrl, {
       method: "POST",
-      signal: controller.signal,
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
         ...authHeaders(auth.accessToken)
       },
       body: JSON.stringify({ email: auth.email.trim(), password: auth.password })
-    });
+    }, { timeoutMs: toolMarketRequestTimeoutMs, idleTimeoutMs: toolMarketRequestTimeoutMs, maxRetries: 2 });
     if (!response.ok) {
       throw await toolMarketHttpError(response, "login");
     }
@@ -238,8 +236,6 @@ async function authenticateToolMarket(config: ToolMarketConfig, auth: ToolMarket
       throw error;
     }
     throw toolMarketConnectionError(error, loginUrl, "login");
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -261,7 +257,7 @@ function readSetCookie(headers: Headers): string | undefined {
 }
 
 async function toolMarketHttpError(response: Response, phase: "login" | "request"): Promise<Error> {
-  const detailText = await response.text().catch(() => response.statusText);
+  const detailText = await readResponseTextLimited(response, maxToolMarketErrorBytes).catch(() => response.statusText);
   const detail = parseMarketErrorDetail(detailText) || response.statusText || `HTTP ${response.status}`;
   if (phase === "login") {
     return new Error(`Tool market login failed: ${detail}`);
@@ -274,7 +270,7 @@ async function toolMarketHttpError(response: Response, phase: "login" | "request
 
 function toolMarketConnectionError(error: unknown, url: URL, phase: "login" | "request"): Error {
   const original = error as Error & { cause?: { code?: string; message?: string } };
-  if (original.name === "AbortError") {
+  if (original.name === "AbortError" || /timed out|was idle/i.test(original.message || "")) {
     return new Error(`Tool market ${phase} timed out while contacting ${url.origin}.`);
   }
   const reason = original.cause?.code || original.cause?.message;
@@ -302,6 +298,12 @@ function parseMarketErrorDetail(text: string): string {
 
 export function normalizeMarketApiUrl(rawUrl: string): string {
   const url = new URL(rawUrl);
+  if (url.username || url.password) {
+    throw new Error("Tool market API URL must not include credentials.");
+  }
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopbackHost(url.hostname))) {
+    throw new Error("Tool market API URL must use HTTPS unless it targets loopback.");
+  }
   const path = url.pathname.replace(/\/+$/, "");
   if (!path || path === "") {
     url.pathname = "/subscriber/market/api";
@@ -309,6 +311,11 @@ export function normalizeMarketApiUrl(rawUrl: string): string {
     url.pathname = `${path}/api`;
   }
   return url.toString();
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase();
+  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
 }
 
 export function findMarketProduct(products: ToolMarketProduct[], productId: string): ToolMarketProduct | undefined {

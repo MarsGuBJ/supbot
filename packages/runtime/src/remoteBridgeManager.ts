@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type {
   IdentityContext,
   RemoteBridgeCallerMetadata,
@@ -43,7 +43,18 @@ export class RemoteBridgeManager {
     sessions: RemoteBridgeSession[];
     audit: RemoteBridgeAuditRecord[];
   }): Promise<void> {
-    this.config = { ...input.config, host: normalizeHost(input.config.host, input.config.allowRemoteBind), tokenSaved: Boolean(input.token) };
+    let host: string;
+    let allowRemoteBind = input.config.allowRemoteBind;
+    try {
+      host = normalizeHost(input.config.host, allowRemoteBind);
+    } catch {
+      host = "127.0.0.1";
+      allowRemoteBind = false;
+      await this.host.onEvent("Remote bridge remote bind was disabled because HTTP transport is loopback-only.", {
+        requestedHost: input.config.host
+      });
+    }
+    this.config = { ...input.config, host, allowRemoteBind, tokenSaved: Boolean(input.token) };
     this.token = input.token;
     this.sessions = [...input.sessions];
     this.audit = [...input.audit];
@@ -130,7 +141,15 @@ export class RemoteBridgeManager {
       this.config = { ...this.config, tokenSaved: true, pairingCode: shortPairingCode(this.token) };
     }
     this.server = createServer((request, response) => {
-      void this.handle(request, response);
+      void this.handle(request, response).catch((error) => {
+        console.error("Remote bridge request failed", error);
+        if (!response.headersSent) {
+          response.statusCode = 500;
+          this.sendJson(response, { ok: false, error: "Remote bridge request failed" });
+        } else if (!response.writableEnded) {
+          response.end();
+        }
+      });
     });
     await new Promise<void>((resolve, reject) => {
       this.server!.once("error", reject);
@@ -151,7 +170,7 @@ export class RemoteBridgeManager {
   }
 
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const path = new URL(request.url || "/", `http://${request.headers.host || "127.0.0.1"}`).pathname;
+    let path = request.url || "/";
     const method = request.method || "GET";
     const remoteAddress = request.socket.remoteAddress;
     let statusCode = 200;
@@ -159,6 +178,7 @@ export class RemoteBridgeManager {
     let sessionId: string | undefined;
     let caller = callerMetadataFromRequest(request);
     try {
+      path = new URL(path, `http://${request.headers.host || "127.0.0.1"}`).pathname;
       const session = this.authenticate(request);
       sessionId = session.id;
       if (method === "GET" && path === "/snapshot") {
@@ -230,6 +250,9 @@ export class RemoteBridgeManager {
     }
     const now = this.host.nowIso();
     const tokenPrefix = token.slice(0, 8);
+    if (this.sessions.some((session) => session.tokenPrefix === tokenPrefix && session.revokedAt)) {
+      throw httpError(401, "Remote bridge session was revoked. Rotate the bridge token before reconnecting.");
+    }
     const current = this.sessions.find((session) => session.tokenPrefix === tokenPrefix && !session.revokedAt);
     if (current) {
       const next = { ...current, lastSeenAt: now };
@@ -291,7 +314,9 @@ function createBridgeToken(): string {
 }
 
 function shortPairingCode(token?: string): string | undefined {
-  return token ? token.slice(0, 6).toUpperCase() : undefined;
+  return token
+    ? createHash("sha256").update("supbot:remote-bridge:pairing:").update(token).digest("hex").slice(0, 6).toUpperCase()
+    : undefined;
 }
 
 async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {
@@ -329,7 +354,10 @@ function normalizeHost(value: unknown, allowRemoteBind = false): string {
   if (host === "localhost" || host === "::1" || host === "127.0.0.1") {
     return host;
   }
-  return allowRemoteBind ? host : "127.0.0.1";
+  if (allowRemoteBind) {
+    throw new Error("Remote bridge HTTP transport is restricted to loopback. Use a TLS-terminating reverse proxy for remote access.");
+  }
+  return "127.0.0.1";
 }
 
 function callerMetadataFromRequest(request: IncomingMessage, body?: Record<string, unknown>): RemoteBridgeCallerMetadata {

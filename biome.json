@@ -1,0 +1,18 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "files": {
+    "includes": ["**", "!!**/dist", "!!**/release", "!!**/node_modules", "!!**/coverage", "!!.beads"]
+  },
+  "formatter": {
+    "enabled": false
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "none",
+      "correctness": {
+        "noUnusedImports": "error"
+      }
+    }
+  }
+}

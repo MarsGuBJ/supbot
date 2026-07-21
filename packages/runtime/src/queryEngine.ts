@@ -283,6 +283,7 @@ export class QueryEngine {
   private async handleLoopEvent(event: QueryLoopEvent): Promise<void> {
     if (event.type === "message_delta") {
       await this.input.onMessageDelta(event.delta);
+      return;
     }
     if (event.type === "tool_progress") {
       await this.input.onToolProgress(event.record);

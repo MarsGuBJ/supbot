@@ -7,7 +7,16 @@ export default defineConfig({
   root: ".",
   build: {
     outDir: "dist/renderer",
-    emptyOutDir: false
+    emptyOutDir: false,
+    rolldownOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules/antd") || id.includes("node_modules/@ant-design")) return "vendor-antd";
+          if (id.includes("node_modules/react") || id.includes("node_modules/react-dom")) return "vendor-react";
+          return undefined;
+        }
+      }
+    }
   },
   server: {
     port: 5173,

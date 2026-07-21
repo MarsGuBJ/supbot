@@ -194,7 +194,7 @@ function upsertRecord(records: ToolCallRecord[], record: ToolCallRecord): ToolCa
 }
 
 async function emit(input: QueryLoopInput, events: RuntimeEventRecord[], event: QueryLoopEvent): Promise<void> {
-  if (events) {
+  if (event.type !== "message_delta") {
     events.push(toRuntimeEvent(input.jobId, input.conversationId, event));
   }
   await input.onEvent(event);

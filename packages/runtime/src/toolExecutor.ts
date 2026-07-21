@@ -2,6 +2,7 @@ import type { GeneratedFile, PendingToolPermission, PermissionMode, PermissionRu
 import { nowIso } from "@supbot/shared";
 import { createHash } from "node:crypto";
 import type { AdapterToolCall } from "./modelAdapter";
+import { stableJson } from "./jsonUtils";
 import { PermissionPolicy } from "./permissionPolicy";
 import { pathIsInside, resolveProjectWriteTarget } from "./projectManager";
 import { validateJsonSchemaValue } from "./jsonSchema";
@@ -250,14 +251,17 @@ function validateProjectBoundary(tool: ToolDefinition, input: unknown, context: 
   return undefined;
 }
 
-function validateProjectShellCommand(command: string, projectRoot: string, allowedWriteRoots: string[]): string | undefined {
+export function validateProjectShellCommand(command: string, projectRoot: string, allowedWriteRoots: string[]): string | undefined {
   if (!command.trim()) {
     return undefined;
   }
   if (/(^|[\\/\s])\.\.([\\/\s]|$)/.test(command)) {
     return "Project shell commands cannot reference parent-directory paths.";
   }
-  const absolutePath = command.match(/[A-Za-z]:[\\/][^\s"'`]+|\/[^\s"'`]+/g)?.find((path) => !pathIsInside(projectRoot, path));
+  const pathInput = command
+    .replace(/["'`]/g, " ")
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s]+/gi, " ");
+  const absolutePath = pathInput.match(/[A-Za-z]:[\\/][^\s]+|\/[^\s]+/g)?.find((path) => !pathIsInside(projectRoot, path));
   if (absolutePath) {
     return `Project shell command path must stay inside ${projectRoot}: ${absolutePath}`;
   }
@@ -311,16 +315,6 @@ function isPathLike(value: string): boolean {
 
 function objectInput(input: unknown): Record<string, unknown> {
   return input && typeof input === "object" && !Array.isArray(input) ? input as Record<string, unknown> : {};
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(stableJson).join(",")}]`;
-  }
-  if (value && typeof value === "object") {
-    return `{${Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
 }
 
 function projectRelative(projectRoot: string, path: string): string {

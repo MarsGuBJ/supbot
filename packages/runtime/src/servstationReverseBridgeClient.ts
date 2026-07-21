@@ -7,6 +7,7 @@ import type {
   ServstationA2AReverseConfig,
   TranscriptLoadResult
 } from "@supbot/shared";
+import { fetchWithRetry } from "./httpClient";
 
 interface ReverseBridgeHost {
   getConfig(): ServstationA2AConfig;
@@ -113,7 +114,9 @@ export class ServstationReverseBridgeClient {
     this.restartAfterLoop = false;
     this.stopped = false;
     this.retryDelayMs = 1_000;
-    this.loop = this.runLoop().finally(() => {
+    this.loop = this.runLoop().catch((error) => {
+      console.error("Servstation reverse bridge loop failed", error);
+    }).finally(() => {
       const shouldRestart = this.restartAfterLoop && !this.stopped;
       this.loop = undefined;
       this.restartAfterLoop = false;
@@ -266,11 +269,11 @@ export class ServstationReverseBridgeClient {
     registration: ReverseRegisterResponse,
     signal: AbortSignal
   ): Promise<void> {
-    const response = await fetch(joinUrl(baseUrl, streamUrl), {
+    const response = await fetchWithRetry(joinUrl(baseUrl, streamUrl), {
       method: "GET",
       signal,
       headers: await this.headers(signal)
-    });
+    }, { timeoutMs: 30_000, idleTimeoutMs: 45_000, maxRetries: 0 });
     if (!response.ok || !response.body) {
       const text = await response.text().catch(() => "");
       throw new Error(`Servstation reverse event stream failed: ${text || `HTTP ${response.status}`}`);
@@ -329,7 +332,7 @@ export class ServstationReverseBridgeClient {
           connectedAt: undefined,
           lastHeartbeatAt: undefined,
           lastError: (error as Error).message || "Servstation reverse heartbeat failed."
-        });
+        }).catch((updateError) => console.error("Failed to persist reverse heartbeat error", updateError));
         void response.body?.cancel().catch(() => undefined);
       });
     }, heartbeatEveryMs);
@@ -342,15 +345,18 @@ export class ServstationReverseBridgeClient {
           continue;
         }
         if (event.event === "invoke_prompt") {
-          void this.handleInvocation(baseUrl, agentInstanceId, peerId, event, signal);
+          void this.handleInvocation(baseUrl, agentInstanceId, peerId, event, signal)
+            .catch((error) => console.error("Reverse prompt invocation failed", error));
           continue;
         }
         if (event.event === "snapshot_request") {
-          void this.handleSnapshotRequest(baseUrl, agentInstanceId, peerId, event, signal);
+          void this.handleSnapshotRequest(baseUrl, agentInstanceId, peerId, event, signal)
+            .catch((error) => console.error("Reverse snapshot request failed", error));
           continue;
         }
         if (event.event === "transcript_request") {
-          void this.handleTranscriptRequest(baseUrl, agentInstanceId, peerId, event, signal);
+          void this.handleTranscriptRequest(baseUrl, agentInstanceId, peerId, event, signal)
+            .catch((error) => console.error("Reverse transcript request failed", error));
         }
       }
       if (!signal.aborted) {
@@ -502,13 +508,13 @@ export class ServstationReverseBridgeClient {
   }
 
   private async request<T = unknown>(baseUrl: string, path: string, init: RequestInit): Promise<T> {
-    const response = await fetch(joinUrl(baseUrl, path), {
+    const response = await fetchWithRetry(joinUrl(baseUrl, path), {
       ...init,
       headers: {
         ...await this.headers(init.signal instanceof AbortSignal ? init.signal : undefined),
         ...(init.headers || {})
       }
-    });
+    }, { timeoutMs: 30_000, idleTimeoutMs: 30_000, maxRetries: 2 });
     const text = await response.text();
     const payload = text.trim() ? safeJson(text) : {};
     if (!response.ok) {

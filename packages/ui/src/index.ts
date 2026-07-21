@@ -79,16 +79,18 @@ export function statusColor(status?: JobStatus): string {
   }
 }
 
+const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit"
+});
+
 export function formatDateTime(value?: string): string {
   if (!value) {
     return "-";
   }
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit"
-  }).format(new Date(value));
+  return dateTimeFormatter.format(new Date(value));
 }
 
 export function formatSchedule(job: ScheduledJob, t: (key: string, vars?: Record<string, string | number>) => string = (key, vars) => {

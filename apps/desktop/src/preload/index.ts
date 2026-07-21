@@ -173,7 +173,7 @@ const api = {
   saveSubagent: (input: SubagentConfig) => ipcRenderer.invoke("subagent:save", input),
   deleteSubagent: (id: string) => ipcRenderer.invoke("subagent:delete", id),
   listToolMarket: (query?: ToolMarketQuery) => ipcRenderer.invoke("market:list", query),
-  installToolMarketProduct: (id: string) => ipcRenderer.invoke("market:install", id),
+  installToolMarketProduct: (id: string, confirmMcpInstall = false) => ipcRenderer.invoke("market:install", id, confirmMcpInstall),
   uninstallToolMarketProduct: (id: string) => ipcRenderer.invoke("market:uninstall", id),
   listMcpServers: () => ipcRenderer.invoke("mcp:listServers"),
   addMcpServer: (input: McpServerInput) => ipcRenderer.invoke("mcp:addServer", input),

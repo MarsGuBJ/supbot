@@ -1,5 +1,5 @@
 import type { GeneratedFile, SubagentConfig, ToolCallRecord } from "@supbot/shared";
-import type { OpenAiToolDefinition } from "./modelClient";
+import type { OpenAiToolDefinition } from "./modelAdapter";
 import { readLocalFile, shellLocalCommand, writeLocalFile, type LocalToolHost } from "./localTools";
 
 export type ToolRisk = "read" | "dangerous";

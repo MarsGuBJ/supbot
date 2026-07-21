@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   clampNumber,
@@ -15,7 +16,6 @@ import {
   type AutopilotRunReport,
   type AutopilotRunMetrics,
   type AutopilotQualitySummary,
-  type AutopilotStage,
   type AutopilotStartDataRunInput,
   type AutopilotStartInput,
   type AutopilotTask,
@@ -55,7 +55,6 @@ import {
   type MemoryReplayRecallResult,
   type MemorySearchQuery,
   type MemorySearchResult,
-  type MemorySnapshot,
   type MemoryTransfer,
   type MemoryUpdateInput,
   type ModelConfig,
@@ -129,6 +128,13 @@ import {
 import { AutopilotOrchestrator } from "./autopilotOrchestrator";
 import { calculateAutopilotMetrics, summarizeAutopilotQuality } from "./autopilotMetrics";
 import {
+  extractReviewViolations,
+  formatAutopilotApprovalHistory,
+  goalReviewPassed,
+  resetAutopilotBudgetWindow,
+  sumOptionalNumber
+} from "./autopilotRuntime";
+import {
   autopilotBudgetExceeded,
   canTransitionAutopilot,
   classifyAutopilotFailure,
@@ -143,7 +149,9 @@ import { AutopilotRunStore } from "./autopilotRunStore";
 import { runShellCommand, stripQuotes, type LocalToolHost, type LocalToolResult } from "./localTools";
 import { MemoryManager } from "./memoryManager";
 import { McpManager } from "./mcpManager";
-import { generateReply } from "./modelClient";
+import { stableJson } from "./jsonUtils";
+import { generateReply } from "./modelProbe";
+import { pathIsInside } from "./pathUtils";
 import { ProjectManager } from "./projectManager";
 import { QueryEngine } from "./queryEngine";
 import { RemoteBridgeManager } from "./remoteBridgeManager";
@@ -163,6 +171,16 @@ import { ToolExecutor } from "./toolExecutor";
 import { ToolRegistry } from "./toolRegistry";
 import { TranscriptStore } from "./transcriptStore";
 import { fetchRemoteToolMarketProducts, findLocalToolMarketProduct, findMarketProduct, listToolMarketCatalog, localToolMarketProducts } from "./toolMarket";
+import {
+  defaultLocalDeployment,
+  localToolDirName,
+  marketInstallSlug,
+  marketMcpServerId,
+  materializeInstallPath,
+  normalizeMarketMcpTimeout,
+  resolveToolMarketPackagePath,
+  uniqueMarketProducts
+} from "./toolMarketRuntime";
 import { WorktreeManager } from "./worktreeManager";
 
 interface RunningJob {
@@ -191,6 +209,7 @@ export class SupbotRuntime extends EventEmitter {
   private readonly runningJobs = new Map<string, RunningJob>();
   private readonly runningAutopilotRuns = new Map<string, RunningAutopilotRun>();
   private readonly permissionWaiters = new Map<string, PendingPermissionWaiter>();
+  private readonly importedAttachmentPaths = new Set<string>();
   private readonly toolRegistry = new ToolRegistry();
   private readonly mcpManager: McpManager;
   private readonly servstationA2AProvider: ServstationA2AProvider;
@@ -202,6 +221,7 @@ export class SupbotRuntime extends EventEmitter {
   private readonly projectManager = new ProjectManager({ randomId, nowIso });
   private readonly autopilotOrchestrator = new AutopilotOrchestrator({ randomId, nowIso });
   private readonly autopilotRunStore = new AutopilotRunStore();
+  private readonly autopilotMetricsCache = new Map<string, { updatedAt: string; metrics: AutopilotRunMetrics }>();
   private remoteMarketCache: ToolMarketProduct[] = [];
   private loaded = false;
   private readonly secretStorageKind: ModelConfig["apiKeyStorage"];
@@ -306,13 +326,15 @@ export class SupbotRuntime extends EventEmitter {
       getIdentityContext: () => this.state.identityContext,
       updateConfig: (input) => this.updateServstationA2AConfig(input),
       randomId,
-      nowIso
+      nowIso,
+      isAllowedAttachmentPath: (filePath) => this.isAllowedAttachmentPath(filePath)
     });
     this.toolRegistry.addProvider(this.mcpManager);
     this.toolRegistry.addProvider(this.servstationA2AProvider);
   }
 
   async init(): Promise<RuntimeSnapshot> {
+    await ensureRuntimeDirs(this.storage.getDataDir());
     this.state = await this.storage.load();
     this.resetServstationReverseStartupState();
     this.mcpManager.setServers(this.state.mcpServers);
@@ -354,6 +376,7 @@ export class SupbotRuntime extends EventEmitter {
 
   snapshot(): RuntimeSnapshot {
     this.assertLoaded();
+    const autopilotMetrics = this.state.autopilotRuns.map((run) => this.calculateAutopilotRunMetrics(run.id));
     return {
       status: this.runningJobs.size || this.runningAutopilotRuns.size ? "running" : "ready",
       agentName: this.state.agentName,
@@ -372,8 +395,8 @@ export class SupbotRuntime extends EventEmitter {
       autopilotEvents: this.state.autopilotEvents,
       autopilotCheckpoints: this.state.autopilotCheckpoints,
       autopilotActions: this.state.autopilotActions,
-      autopilotMetrics: this.state.autopilotRuns.map((run) => this.calculateAutopilotRunMetrics(run.id)),
-      autopilotQuality: this.calculateAutopilotQuality(),
+      autopilotMetrics,
+      autopilotQuality: this.calculateAutopilotQuality(autopilotMetrics),
       dataArtifacts: this.state.dataArtifacts,
       pendingToolPermissions: this.state.pendingToolPermissions,
       agentLoopTraces: this.state.agentLoopTraces,
@@ -527,7 +550,7 @@ export class SupbotRuntime extends EventEmitter {
     await this.addAutopilotCheckpoint(nextRun, "Autopilot project run queued");
     await this.addAutopilotEvent(nextRun, "info", "Autopilot project run queued", { taskCount: tasks.length, profile: resolvedProfile });
     await this.persistAndBroadcast();
-    void this.runAutopilot(nextRun.id);
+    this.runInBackground(this.runAutopilot(nextRun.id), `Autopilot run ${nextRun.id}`);
     return this.requireAutopilotRun(nextRun.id);
   }
 
@@ -560,7 +583,7 @@ export class SupbotRuntime extends EventEmitter {
     });
     await this.addAutopilotEvent(next, "info", "Autopilot data run resumed");
     await this.persistAndBroadcast();
-    void this.runAutopilot(id);
+    this.runInBackground(this.runAutopilot(id), `Autopilot run ${id}`);
     return this.requireAutopilotRun(id);
   }
 
@@ -617,8 +640,8 @@ export class SupbotRuntime extends EventEmitter {
       throw new Error("Autopilot approval request is no longer pending.");
     }
     if (decision.kind === "tool") {
-      const nextStatus = decision.taskId && this.requireAutopilotTask(decision.taskId).stage === "review" ? "reviewing" : "running";
-      const next = this.transitionAutopilotRun(run.id, nextStatus, { pendingDecision: undefined, updatedAt: nowIso() });
+      const settlement = this.settleAutopilotToolDecision(decision.id);
+      const next = settlement?.run || this.patchAutopilotRun(run.id, { pendingDecision: undefined, updatedAt: nowIso() });
       if (input.decision === "approved") {
         await this.approveToolPermission(decision.id);
       } else {
@@ -626,6 +649,9 @@ export class SupbotRuntime extends EventEmitter {
       }
       await this.addAutopilotEvent(next, input.decision === "approved" ? "info" : "warning", `Autopilot tool approval ${input.decision}`, { decision, comment: input.comment });
       await this.persistAndBroadcast();
+      if (settlement?.restart) {
+        this.runInBackground(this.runAutopilot(run.id), `Autopilot run ${run.id}`);
+      }
       return this.requireAutopilotRun(run.id);
     }
     if (input.decision === "denied") {
@@ -648,7 +674,7 @@ export class SupbotRuntime extends EventEmitter {
     });
     await this.addAutopilotEvent(next, "info", "Autopilot approval granted", { decision, comment: input.comment });
     await this.persistAndBroadcast();
-    void this.runAutopilot(run.id);
+    this.runInBackground(this.runAutopilot(run.id), `Autopilot run ${run.id}`);
     return this.requireAutopilotRun(run.id);
   }
 
@@ -667,7 +693,7 @@ export class SupbotRuntime extends EventEmitter {
     });
     await this.addAutopilotEvent(next, "info", "Autopilot retry requested from latest checkpoint");
     await this.persistAndBroadcast();
-    void this.runAutopilot(id);
+    this.runInBackground(this.runAutopilot(id), `Autopilot run ${id}`);
     return this.requireAutopilotRun(id);
   }
 
@@ -748,7 +774,7 @@ export class SupbotRuntime extends EventEmitter {
     await this.appendTranscript(conversation.id, { type: "message", message: userMessage });
     this.emitTyped({ type: "message", conversationId: conversation.id, message: userMessage });
     this.emitTyped({ type: "job", job });
-    void this.runJob(job.id);
+    this.runInBackground(this.runJob(job.id), `Agent job ${job.id}`);
     return { conversation: this.findConversation(conversation.id)!, userMessage, job };
   }
 
@@ -822,7 +848,7 @@ export class SupbotRuntime extends EventEmitter {
     const boundary: CompactBoundary = {
       id: randomId("compact"),
       conversationId,
-      messageId: conversation.messages.at(-1)?.id || conversation.messages[0]?.id,
+      messageId: conversation.messages.at(-6)?.id || conversation.messages[0]?.id,
       summary: summarizeConversationForManualCompact(conversation.messages),
       preservedMessageIds: conversation.messages.slice(-6).map((message) => message.id),
       originalMessageCount: conversation.messages.length,
@@ -1242,6 +1268,7 @@ export class SupbotRuntime extends EventEmitter {
       ? normalizeIdentityContext({ ...input.identityContext, servstationUrl: baseUrl, updatedAt: nowIso() })
       : identityContextFromAccessToken(tokens.accessToken, {
         ...(this.state.identityContext || {}),
+        issuerUrl,
         servstationUrl: baseUrl
       });
     if (derivedIdentity) {
@@ -1290,6 +1317,7 @@ export class SupbotRuntime extends EventEmitter {
     const refreshed = await refreshServstationOidcTokenSet(tokens, signal);
     const derivedIdentity = identityContextFromAccessToken(refreshed.accessToken, {
       ...(this.state.identityContext || {}),
+      issuerUrl: refreshed.issuerUrl,
       agentInstanceId: current.agentInstanceId || this.state.identityContext?.agentInstanceId,
       servstationUrl: current.baseUrl || this.state.identityContext?.servstationUrl
     });
@@ -1654,9 +1682,9 @@ export class SupbotRuntime extends EventEmitter {
     if (this.schedulerTimer) {
       return;
     }
-    void this.runDueScheduledJobs();
+    this.runInBackground(this.runDueScheduledJobs(), "Scheduled job scan");
     this.schedulerTimer = setInterval(() => {
-      void this.runDueScheduledJobs();
+      this.runInBackground(this.runDueScheduledJobs(), "Scheduled job scan");
     }, intervalMs);
   }
 
@@ -1695,7 +1723,19 @@ export class SupbotRuntime extends EventEmitter {
       this.state.scheduledJobs = this.state.scheduledJobs.map((item) => item.id === job.id
         ? { ...item, ...nextSchedule, lastRunAt: ranAt, updatedAt: ranAt }
         : item);
-      await this.sendPrompt({ prompt: `[Scheduled] ${job.title}\n\n${job.prompt}` });
+      try {
+        await this.sendPrompt({ prompt: `[Scheduled] ${job.title}\n\n${job.prompt}` });
+      } catch (error) {
+        const event: RuntimeEventRecord = {
+          id: randomId("event"),
+          kind: "turn_failed",
+          message: `Scheduled job failed: ${job.title}`,
+          createdAt: nowIso(),
+          data: { scheduledJobId: job.id, error: error instanceof Error ? error.message : String(error) }
+        };
+        this.addRuntimeEvent(event);
+        this.emitTyped({ type: "query_event", event });
+      }
     }
     if (due.length) {
       await this.persistAndBroadcast();
@@ -1874,7 +1914,7 @@ export class SupbotRuntime extends EventEmitter {
     return listToolMarketCatalog(uniqueMarketProducts([...local, ...remote, ...installed]), this.state.capabilities, query);
   }
 
-  async installToolMarketProduct(productId: string): Promise<ToolMarketCatalogItem> {
+  async installToolMarketProduct(productId: string, confirmMcpInstall = false): Promise<ToolMarketCatalogItem> {
     this.assertLoaded();
     const product = await this.resolveMarketProduct(productId);
     if (!product) {
@@ -1884,6 +1924,9 @@ export class SupbotRuntime extends EventEmitter {
       throw new Error(`Tool market product must be purchased before local installation: ${product.name}`);
     }
     const deployment = product.localDeployment || defaultLocalDeployment(product);
+    if (deployment.mcpServer && !confirmMcpInstall) {
+      throw new Error(`Installing MCP product ${product.name} requires explicit command confirmation.`);
+    }
     const installPath = await this.installToolMarketPackage(product, deployment);
     const capability: CapabilityDefinition = {
       ...(deployment.capability || product.capability),
@@ -1968,13 +2011,37 @@ export class SupbotRuntime extends EventEmitter {
 
   async importAttachment(filePath: string): Promise<Attachment> {
     this.assertLoaded();
-    const info = await stat(filePath);
+    const canonicalPath = await realpath(filePath);
+    const info = await stat(canonicalPath);
+    if (!info.isFile() || info.size > 25 * 1024 * 1024) {
+      throw new Error("Attachments must be files no larger than 25 MiB.");
+    }
+    this.importedAttachmentPaths.add(canonicalPath.toLowerCase());
     return {
       id: randomId("att"),
-      name: basename(filePath),
-      path: filePath,
+      name: basename(canonicalPath),
+      path: canonicalPath,
       size: info.size
     };
+  }
+
+  private async isAllowedAttachmentPath(filePath: string): Promise<boolean> {
+    try {
+      const canonicalPath = await realpath(filePath);
+      if (this.importedAttachmentPaths.has(canonicalPath.toLowerCase())) {
+        return true;
+      }
+      const roots = [this.storage.getDataDir(), ...this.state.projects.map((project) => project.rootPath)];
+      for (const root of roots) {
+        const canonicalRoot = await realpath(root).catch(() => resolve(root));
+        if (pathIsInside(canonicalRoot, canonicalPath)) {
+          return true;
+        }
+      }
+      return false;
+    } catch {
+      return false;
+    }
   }
 
   async generatedFilePath(file: GeneratedFile): Promise<string> {
@@ -2015,10 +2082,9 @@ export class SupbotRuntime extends EventEmitter {
     }
     const controller = new AbortController();
     this.runningJobs.set(jobId, { controller });
-    this.updateJob(jobId, "running", "Preparing model request");
-    await this.persistAndBroadcast();
-
     try {
+      this.updateJob(jobId, "running", "Preparing model request");
+      await this.persistAndBroadcast();
       const conversation = this.findConversation(job.conversationId);
       if (!conversation) {
         throw new Error("Conversation disappeared before the job could run.");
@@ -2051,7 +2117,7 @@ export class SupbotRuntime extends EventEmitter {
         };
         this.replaceMessage(conversation.id, assistantSeed.id, finalMessage);
         this.updateJob(jobId, "completed", "Completed local tool command");
-        await this.completeJobWorktree(jobId);
+        await this.completeJobWorktreeSafely(jobId);
         await this.persistAndBroadcast();
         this.emitTyped({ type: "message", conversationId: conversation.id, message: finalMessage });
         return;
@@ -2061,7 +2127,7 @@ export class SupbotRuntime extends EventEmitter {
         jobId,
         conversationId: conversation.id,
         dataDir: this.storage.getDataDir(),
-        cwd: process.cwd(),
+        cwd: this.defaultWorkspacePath(),
         modelConfig: this.state.modelConfig,
         apiKey: this.state.modelSecret,
         personality: this.state.personality,
@@ -2086,7 +2152,6 @@ export class SupbotRuntime extends EventEmitter {
         },
         onMessageDelta: async (delta) => {
           this.appendAssistantDelta(conversation.id, assistantSeed.id, delta);
-          await this.persistAndBroadcast();
           this.emitTyped({ type: "message_delta", conversationId: conversation.id, messageId: assistantSeed.id, delta });
         },
         onTrace: async (trace) => {
@@ -2113,9 +2178,7 @@ export class SupbotRuntime extends EventEmitter {
           this.emitTyped({ type: "memory_candidate", candidate });
         },
         onPermissionTimeout: async (permission) => {
-          this.resolvePermission(permission.id, "denied");
-          await this.persistAndBroadcast();
-          this.emitTyped({ type: "permission_timeout", permission });
+          await this.handlePermissionTimeout(permission);
         }
       });
       const response = await engine.submitTurn();
@@ -2133,7 +2196,7 @@ export class SupbotRuntime extends EventEmitter {
       };
       this.replaceMessage(conversation.id, assistantSeed.id, finalMessage);
       this.updateJob(jobId, "completed", "Completed");
-      await this.completeJobWorktree(jobId);
+      await this.completeJobWorktreeSafely(jobId);
       await this.persistAndBroadcast();
       this.emitTyped({ type: "message", conversationId: conversation.id, message: finalMessage });
     } catch (error) {
@@ -2141,8 +2204,16 @@ export class SupbotRuntime extends EventEmitter {
       const message = controller.signal.aborted ? "Canceled by user" : (error as Error).message;
       this.updateAssistantMessageForJob(job.conversationId, jobId, status, message);
       this.updateJob(jobId, status, message);
-      await this.finishJobWorktree(jobId, status, message);
-      await this.persistAndBroadcast();
+      try {
+        await this.finishJobWorktree(jobId, status, message);
+      } catch (cleanupError) {
+        this.reportBackgroundError(`Agent job ${jobId} worktree cleanup`, cleanupError);
+      }
+      try {
+        await this.persistAndBroadcast();
+      } catch (persistError) {
+        this.reportBackgroundError(`Agent job ${jobId} failure persistence`, persistError);
+      }
       this.emitTyped({ type: "error", message });
     } finally {
       this.runningJobs.delete(jobId);
@@ -2277,11 +2348,7 @@ export class SupbotRuntime extends EventEmitter {
         return;
       }
       const now = nowIso();
-      const failed = this.transitionAutopilotRun(runId, "failed", {
-        error: (error as Error).message,
-        updatedAt: now,
-        finishedAt: now
-      });
+      const failed = this.failAutopilotRun(runId, error, now);
       await this.addAutopilotEvent(failed, "error", "Autopilot data run failed", { error: failed.error });
       await this.addAutopilotCheckpoint(failed, `Failed: ${failed.error}`);
       await this.persistAndBroadcast();
@@ -2697,9 +2764,7 @@ export class SupbotRuntime extends EventEmitter {
         this.emitTyped({ type: "memory_candidate", candidate });
       },
       onPermissionTimeout: async (permission) => {
-        this.resolvePermission(permission.id, "denied");
-        await this.persistAndBroadcast();
-        this.emitTyped({ type: "permission_timeout", permission });
+        await this.handlePermissionTimeout(permission);
       }
     });
     const result = await query.submitTurn();
@@ -2862,6 +2927,7 @@ export class SupbotRuntime extends EventEmitter {
       updatedAt: toolCall.updatedAt
     };
     this.state.autopilotActions = [action, ...this.state.autopilotActions.filter((item) => item.id !== action.id)];
+    this.autopilotMetricsCache.delete(runId);
     if (!existing) {
       this.incrementAutopilotBudget(runId, { toolCalls: 1 });
     }
@@ -2963,7 +3029,7 @@ export class SupbotRuntime extends EventEmitter {
         startedAt: status === "running" ? job.startedAt || now : job.startedAt,
         finishedAt: ["completed", "failed", "canceled"].includes(status) ? now : job.finishedAt,
         error: status === "failed" ? progress : job.error,
-        progress: [...job.progress, progress]
+        progress: [...job.progress, progress].slice(-100)
       };
     });
     const updated = this.findJob(jobId);
@@ -2990,16 +3056,21 @@ export class SupbotRuntime extends EventEmitter {
 
   private calculateAutopilotRunMetrics(id: string): AutopilotRunMetrics {
     const run = this.requireAutopilotRun(id);
-    return calculateAutopilotMetrics(
+    const cached = this.autopilotMetricsCache.get(id);
+    if (cached?.updatedAt === run.updatedAt) {
+      return cached.metrics;
+    }
+    const metrics = calculateAutopilotMetrics(
       run,
       this.state.autopilotTasks.filter((task) => task.runId === id),
       this.state.autopilotActions.filter((action) => action.runId === id),
       this.state.autopilotEvents.filter((event) => event.runId === id)
     );
+    this.autopilotMetricsCache.set(id, { updatedAt: run.updatedAt, metrics });
+    return metrics;
   }
 
-  private calculateAutopilotQuality(): AutopilotQualitySummary {
-    const metrics = this.state.autopilotRuns.map((run) => this.calculateAutopilotRunMetrics(run.id));
+  private calculateAutopilotQuality(metrics = this.state.autopilotRuns.map((run) => this.calculateAutopilotRunMetrics(run.id))): AutopilotQualitySummary {
     return summarizeAutopilotQuality(metrics, this.state.autopilotTasks);
   }
 
@@ -3038,6 +3109,18 @@ export class SupbotRuntime extends EventEmitter {
     return this.patchAutopilotRun(id, { ...patch, status });
   }
 
+  private failAutopilotRun(id: string, error: unknown, failedAt = nowIso()): AutopilotRun {
+    const current = this.requireAutopilotRun(id);
+    const patch: Partial<AutopilotRun> = {
+      error: error instanceof Error ? error.message : String(error),
+      updatedAt: failedAt,
+      finishedAt: failedAt
+    };
+    return canTransitionAutopilot(current.status, "failed")
+      ? this.transitionAutopilotRun(id, "failed", patch)
+      : this.patchAutopilotRun(id, { ...patch, status: "failed" });
+  }
+
   private patchAutopilotTask(id: string, patch: Partial<AutopilotTask>): AutopilotTask {
     let next: AutopilotTask | undefined;
     this.state.autopilotTasks = this.state.autopilotTasks.map((task) => {
@@ -3047,6 +3130,9 @@ export class SupbotRuntime extends EventEmitter {
       next = { ...task, ...patch, updatedAt: patch.updatedAt || nowIso() };
       return next;
     });
+    if (next) {
+      this.autopilotMetricsCache.delete(next.runId);
+    }
     return next || this.requireAutopilotTask(id);
   }
 
@@ -3061,6 +3147,7 @@ export class SupbotRuntime extends EventEmitter {
       data
     };
     this.state.autopilotEvents = [event, ...this.state.autopilotEvents].slice(0, 500);
+    this.autopilotMetricsCache.delete(run.id);
     await this.autopilotRunStore.appendEvent(this.requireAutopilotRun(run.id), event);
     this.emitTyped({ type: "autopilot_event", event });
     return event;
@@ -3119,8 +3206,7 @@ export class SupbotRuntime extends EventEmitter {
 
   private async dataArtifactFromPath(project: Project, run: AutopilotRun, task: Pick<AutopilotTask, "id" | "stage">, filePath: string, source: string): Promise<DataArtifact> {
     const info = await stat(filePath);
-    const content = await readFile(filePath);
-    const text = content.toString("utf8");
+    const { sha256, lineCount } = await inspectArtifactFile(filePath);
     return {
       id: randomId("artifact"),
       projectId: project.id,
@@ -3132,8 +3218,8 @@ export class SupbotRuntime extends EventEmitter {
       path: filePath,
       source,
       size: info.size,
-      sha256: createHash("sha256").update(content).digest("hex"),
-      lineCount: text.length ? text.split(/\r?\n/).length : 0,
+      sha256,
+      lineCount,
       createdAt: nowIso()
     };
   }
@@ -3341,11 +3427,15 @@ export class SupbotRuntime extends EventEmitter {
     }
   }
 
+  private defaultWorkspacePath(): string {
+    return join(this.storage.getDataDir(), "generated-files");
+  }
+
   private createToolExecutionContext(signal: AbortSignal, jobId: string, depth = 0, options: ProjectToolContextOptions = {}) {
     const job = this.findRootJob(jobId);
     const worktree = job?.worktreeId ? this.worktreeManager.get(job.worktreeId) : undefined;
     const project = options.project;
-    const workspacePath = options.workspacePath || project?.rootPath || worktree?.path || this.rootDir;
+    const workspacePath = options.workspacePath || project?.rootPath || worktree?.path || this.defaultWorkspacePath();
     const allowedWriteRoots = options.allowedWriteRoots || (project ? this.projectManager.absoluteAllowedWriteRoots(workspacePath, options.policy) : undefined);
     const runId = jobId.split(":", 1)[0];
     const completedActionFingerprints = this.state.autopilotActions
@@ -3428,9 +3518,7 @@ export class SupbotRuntime extends EventEmitter {
             this.emitTyped({ type: "memory_candidate", candidate });
           },
           onPermissionTimeout: async (permission) => {
-            this.resolvePermission(permission.id, "denied");
-            await this.persistAndBroadcast();
-            this.emitTyped({ type: "permission_timeout", permission });
+            await this.handlePermissionTimeout(permission);
           }
         });
         return runner.run({
@@ -3467,6 +3555,37 @@ export class SupbotRuntime extends EventEmitter {
     this.state.pendingToolPermissions = this.state.pendingToolPermissions.filter((item) => item.id !== permissionId);
     waiter?.resolve(decision);
     return permission;
+  }
+
+  private settleAutopilotToolDecision(permissionId: string): { run: AutopilotRun; restart: boolean } | undefined {
+    const run = this.state.autopilotRuns.find((item) => item.pendingDecision?.kind === "tool" && item.pendingDecision.id === permissionId);
+    if (!run) {
+      return undefined;
+    }
+    const hasActiveSupervisor = this.runningAutopilotRuns.has(run.id);
+    const task = run.pendingDecision?.taskId
+      ? this.state.autopilotTasks.find((item) => item.id === run.pendingDecision?.taskId)
+      : undefined;
+    const nextStatus: AutopilotRun["status"] = hasActiveSupervisor
+      ? task?.stage === "review" ? "reviewing" : "running"
+      : "queued";
+    return {
+      run: this.transitionAutopilotRun(run.id, nextStatus, { pendingDecision: undefined, updatedAt: nowIso() }),
+      restart: !hasActiveSupervisor
+    };
+  }
+
+  private async handlePermissionTimeout(permission: PendingToolPermission): Promise<void> {
+    const settlement = this.settleAutopilotToolDecision(permission.id);
+    this.resolvePermission(permission.id, "denied");
+    if (settlement) {
+      await this.addAutopilotEvent(settlement.run, "warning", "Autopilot tool approval timed out", { permissionId: permission.id });
+    }
+    await this.persistAndBroadcast();
+    this.emitTyped({ type: "permission_timeout", permission });
+    if (settlement?.restart) {
+      this.runInBackground(this.runAutopilot(settlement.run.id), `Autopilot run ${settlement.run.id}`);
+    }
   }
 
   private resolveJobPermissions(jobId: string, decision: "approved" | "denied"): void {
@@ -3533,6 +3652,29 @@ export class SupbotRuntime extends EventEmitter {
     const worktree = await this.worktreeManager.complete(job.worktreeId);
     this.state.worktrees = this.worktreeManager.list();
     this.markJobWorktree(worktree);
+  }
+
+  private async completeJobWorktreeSafely(jobId: string): Promise<void> {
+    try {
+      await this.completeJobWorktree(jobId);
+    } catch (error) {
+      const job = this.findRootJob(jobId);
+      const event: RuntimeEventRecord = {
+        id: randomId("event"),
+        jobId,
+        conversationId: job?.conversationId,
+        kind: "worktree_event",
+        message: "Job completed, but worktree finalization failed.",
+        createdAt: nowIso(),
+        data: { error: error instanceof Error ? error.message : String(error) }
+      };
+      this.addRuntimeEvent(event);
+      if (job?.conversationId) {
+        await this.appendTranscript(job.conversationId, { type: "event", event })
+          .catch((appendError) => this.reportBackgroundError(`Job ${jobId} worktree event transcript`, appendError));
+      }
+      this.emitTyped({ type: "query_event", event });
+    }
   }
 
   private async finishJobWorktree(jobId: string, status: JobStatus, message: string): Promise<void> {
@@ -3702,7 +3844,10 @@ export class SupbotRuntime extends EventEmitter {
           return {
             ...message,
             text,
-            blocks: [{ type: "message_delta", text }]
+            blocks: [
+              ...(message.blocks || []).filter((block) => block.type !== "message_delta"),
+              { type: "message_delta", text }
+            ]
           };
         })
       };
@@ -3756,9 +3901,7 @@ export class SupbotRuntime extends EventEmitter {
         permissionRules: this.state.permissionRules,
         requestPermission: (permission) => this.requestToolPermission(permission),
         onPermissionTimeout: async (permission) => {
-          this.resolvePermission(permission.id, "denied");
-          await this.persistAndBroadcast();
-          this.emitTyped({ type: "permission_timeout", permission });
+          await this.handlePermissionTimeout(permission);
         },
         onProgress: async (toolCall) => {
           this.upsertToolCall(job.id, toolCall);
@@ -3935,6 +4078,20 @@ export class SupbotRuntime extends EventEmitter {
     this.emit("event", event);
   }
 
+  private runInBackground(task: Promise<unknown>, label: string): void {
+    void task.catch((error) => this.reportBackgroundError(label, error));
+  }
+
+  private reportBackgroundError(label: string, error: unknown): void {
+    const message = `${label} failed: ${error instanceof Error ? error.message : String(error)}`;
+    try {
+      console.error(message, error);
+      this.emitTyped({ type: "error", message });
+    } catch (reportError) {
+      console.error("Failed to report Supbot background error", reportError);
+    }
+  }
+
   private assertLoaded(): void {
     if (!this.loaded) {
       throw new Error("SupbotRuntime.init() must be called before use.");
@@ -4034,7 +4191,7 @@ export class SupbotRuntime extends EventEmitter {
       env: input.env ? { ...input.env } : undefined,
       requestTimeoutMs: normalizeMarketMcpTimeout(input.requestTimeoutMs),
       enabled: input.enabled !== false,
-      autoConnect: Boolean(input.autoConnect),
+      autoConnect: product.origin !== "remote" && Boolean(input.autoConnect),
       createdAt: current?.createdAt || now,
       updatedAt: now
     };
@@ -4143,38 +4300,6 @@ async function writeLocalToolScaffold(root: string, product: ToolMarketProduct, 
   }
 }
 
-function resolveToolMarketPackagePath(root: string, filePath: string): string {
-  if (isAbsolute(filePath)) {
-    throw new Error(`Tool market package file must be relative: ${filePath}`);
-  }
-  const target = resolve(root, filePath);
-  if (!pathIsInside(root, target)) {
-    throw new Error(`Tool market package file escapes install directory: ${filePath}`);
-  }
-  return target;
-}
-
-function defaultLocalDeployment(product: ToolMarketProduct): ToolMarketLocalDeployment {
-  return {
-    kind: product.type,
-    capability: product.capability,
-    commandTemplates: product.commandTemplates || []
-  };
-}
-
-function localToolDirName(kind: ToolMarketProduct["type"]): string {
-  switch (kind) {
-    case "skill":
-      return "skills";
-    case "plugin":
-      return "plugins";
-    case "mcp":
-      return "mcp";
-    default:
-      return "tools";
-  }
-}
-
 function normalizePackagePath(value: string): string {
   return value.replace(/\\/g, "/").replace(/^\.\/+/, "").toLowerCase();
 }
@@ -4278,14 +4403,6 @@ function installedManifestToProduct(manifest: Record<string, unknown>): ToolMark
   };
 }
 
-function uniqueMarketProducts(products: ToolMarketProduct[]): ToolMarketProduct[] {
-  const byId = new Map<string, ToolMarketProduct>();
-  for (const product of products) {
-    byId.set(product.id, product);
-  }
-  return [...byId.values()];
-}
-
 function normalizeMarketProductType(value: unknown): ToolMarketProduct["type"] {
   return value === "skill" || value === "plugin" || value === "mcp" || value === "tool" ? value : "tool";
 }
@@ -4346,29 +4463,6 @@ function manifestEnv(value: unknown): Record<string, string> | undefined {
     .filter(([key, entry]) => key.trim() && typeof entry === "string")
     .map(([key, entry]) => [key.trim(), entry as string]);
   return entries.length ? Object.fromEntries(entries) : undefined;
-}
-
-function marketMcpServerId(product: ToolMarketProduct, input: ToolMarketMcpDeployment): string {
-  return sanitizeMarketId(input.id || `market-${product.id}`);
-}
-
-function sanitizeMarketId(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "market-tool";
-}
-
-function marketInstallSlug(value: string): string {
-  return sanitizeMarketId(value);
-}
-
-function materializeInstallPath(value: string, installPath: string): string {
-  return value.replace(/\{(?:installDir|productDir)\}/g, installPath);
-}
-
-function normalizeMarketMcpTimeout(value: unknown): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return undefined;
-  }
-  return Math.min(120_000, Math.max(1_000, Math.round(value)));
 }
 
 export function redactModelConfig(config: ModelConfig, secret?: string): ModelConfig {
@@ -4478,63 +4572,24 @@ function extractEvidencePaths(text: string): string[] {
   return uniqueStrings(matches.map((item) => item.replace(/[.,;:]+$/, "")));
 }
 
-function formatAutopilotApprovalHistory(events: AutopilotEvent[]): string {
-  const approvals = events
-    .map((event) => {
-      const outcome = autopilotApprovalOutcome(event.message);
-      if (!outcome) {
-        return undefined;
+async function inspectArtifactFile(filePath: string): Promise<{ sha256: string; lineCount: number }> {
+  const hash = createHash("sha256");
+  let bytes = 0;
+  let newlines = 0;
+  for await (const chunk of createReadStream(filePath)) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    hash.update(buffer);
+    bytes += buffer.length;
+    for (const byte of buffer) {
+      if (byte === 0x0a) {
+        newlines += 1;
       }
-      const data = recordValue(event.data);
-      const decision = recordValue(data?.decision);
-      const title = stringValue(decision?.title) || "Approval decision";
-      const kind = stringValue(decision?.kind) || "unknown";
-      const risk = stringValue(decision?.risk) || "unknown";
-      const impact = stringArrayValue(decision?.impact);
-      const comment = stringValue(data?.comment);
-      return [
-        `- ${event.createdAt} — ${outcome === "approved" ? "Approved" : "Denied"} — ${markdownInline(title)}`,
-        `  - Type: ${markdownInline(kind)}`,
-        `  - Risk: ${markdownInline(risk)}`,
-        `  - Impact: ${impact.length ? impact.map(markdownInline).join(", ") : "No explicit impact scope."}`,
-        `  - Comment: ${comment ? markdownInline(comment) : "No approval comment."}`
-      ].join("\n");
-    })
-    .filter((item): item is string => Boolean(item));
-  return approvals.length ? approvals.join("\n") : "- No approval decisions recorded.";
-}
-
-function autopilotApprovalOutcome(message: string): "approved" | "denied" | undefined {
-  if (message === "Autopilot approval granted" || message === "Autopilot tool approval approved") {
-    return "approved";
+    }
   }
-  if (message === "Autopilot approval denied" || message === "Autopilot tool approval denied") {
-    return "denied";
-  }
-  return undefined;
-}
-
-function recordValue(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function markdownInline(value: string): string {
-  return value.replace(/\s+/g, " ").replace(/[|`]/g, "\\$&").trim();
-}
-
-function goalReviewPassed(text: string): boolean {
-  const firstMeaningfulLine = text.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "";
-  if (/^PASS\b/i.test(firstMeaningfulLine)) {
-    return true;
-  }
-  if (/^FAIL\b/i.test(firstMeaningfulLine)) {
-    return false;
-  }
-  return /\bPASS\b/i.test(text) && !/\bFAIL\b/i.test(text);
+  return {
+    sha256: hash.digest("hex"),
+    lineCount: bytes ? newlines + 1 : 0
+  };
 }
 
 function uniqueStrings(values: string[]): string[] {
@@ -4553,13 +4608,6 @@ function normalizePermissionMode(value: PermissionMode): PermissionMode {
   return value === "acceptEdits" || value === "bypassPermissions" || value === "plan" || value === "default" ? value : "default";
 }
 
-function pathIsInside(parent: string, child: string): boolean {
-  const resolvedParent = resolve(parent);
-  const resolvedChild = resolve(child);
-  const relativePath = relative(resolvedParent, resolvedChild);
-  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
-}
-
 function randomId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -4569,38 +4617,6 @@ function objectData(value: unknown): Record<string, unknown> {
     return { value };
   }
   return value as Record<string, unknown>;
-}
-
-function extractReviewViolations(output: string): string[] {
-  return output.split(/\r?\n/).slice(1).map((line) => line.replace(/^[-*]\s*/, "").trim()).filter(Boolean).slice(0, 12);
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
-
-function sumOptionalNumber(left: number | undefined, right: number | undefined): number | undefined {
-  return left === undefined && right === undefined ? undefined : (left || 0) + (right || 0);
-}
-
-function resetAutopilotBudgetWindow(budget: AutopilotRun["budget"]): AutopilotRun["budget"] {
-  if (!budget) return undefined;
-  const startedAt = nowIso();
-  return {
-    ...budget,
-    usage: {
-      ...budget.usage,
-      iterations: 0,
-      modelTurns: 0,
-      toolCalls: 0,
-      startedAt,
-      deadlineAt: new Date(new Date(startedAt).getTime() + budget.limits.maxRuntimeMinutes * 60_000).toISOString()
-    }
-  };
 }
 
 function waitWithAbort(ms: number, signal: AbortSignal): Promise<void> {

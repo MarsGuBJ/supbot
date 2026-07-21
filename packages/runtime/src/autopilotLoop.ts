@@ -32,7 +32,7 @@ const transitions: Record<AutopilotRunStatus, AutopilotRunStatus[]> = {
   queued: ["analyzing", "paused", "canceled", "failed"],
   analyzing: ["planning", "waiting_approval", "paused", "blocked", "failed", "canceled"],
   planning: ["waiting_approval", "running", "paused", "blocked", "failed", "canceled"],
-  waiting_approval: ["queued", "planning", "running", "replanning", "paused", "blocked", "canceled"],
+  waiting_approval: ["queued", "planning", "running", "reviewing", "replanning", "paused", "blocked", "canceled"],
   running: ["reviewing", "verifying", "replanning", "waiting_approval", "paused", "blocked", "budget_exhausted", "failed", "canceled"],
   verifying: ["reviewing", "completed", "partially_completed", "replanning", "waiting_approval", "paused", "blocked", "budget_exhausted", "failed", "canceled"],
   replanning: ["running", "reviewing", "waiting_approval", "paused", "blocked", "budget_exhausted", "failed", "canceled"],

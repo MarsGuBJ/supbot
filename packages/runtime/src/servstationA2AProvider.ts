@@ -3,7 +3,8 @@ import type {
   ServstationA2AConfig,
   ServstationA2AConfigUpdate
 } from "@supbot/shared";
-import type { ToolDefinition, ToolExecutionContext, ToolExecutionResult, ToolProvider } from "./toolRegistry";
+import type { ToolDefinition, ToolExecutionResult, ToolProvider } from "./toolRegistry";
+import { fetchWithRetry } from "./httpClient";
 
 interface ServstationA2AHost {
   getConfig(): ServstationA2AConfig;
@@ -233,13 +234,13 @@ export class ServstationA2AProvider implements ToolProvider {
     } else if (token) {
       headers.Authorization = `Bearer ${token}`;
     }
-    const response = await fetch(`${baseUrl}${path}`, {
+    const response = await fetchWithRetry(`${baseUrl}${path}`, {
       ...init,
       headers: {
         ...headers,
         ...(init.headers || {})
       }
-    });
+    }, { timeoutMs: 30_000, idleTimeoutMs: 30_000, maxRetries: 2 });
     const text = await response.text();
     const payload = text ? safeJson(text) : {};
     if (!response.ok) {
