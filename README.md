@@ -39,6 +39,14 @@ The desktop package exposes the `supbot` bin after global npm installation.
 renderer mounted real Supbot UI content. It catches `file://` asset path
 regressions that otherwise show up as an empty window.
 
+## Continuous integration
+
+GitHub Actions runs on every push and pull request using a Windows runner. The
+CI gate installs with `npm ci`, then builds, typechecks, lints, checks formatting,
+and runs the runtime and desktop Vitest suites. The Electron smoke test remains
+a local release gate through `npm run verify` because it requires a reliably
+display-capable environment.
+
 ## Working tree hygiene
 
 This workspace is expected to stay source-focused after Git initialization: do
