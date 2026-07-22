@@ -178,6 +178,24 @@ async function main() {
   const text = String(bodyText);
   const hasHBClient = text.includes("HBClient");
   const hasDefaultChinese = text.includes("本地智能体控制台") && text.includes("对话") && text.includes("配置");
+  const versionDialog = await evaluate(
+    page.webSocketDebuggerUrl,
+    `(async () => {
+      const trigger = document.querySelector("button[aria-label='\u67e5\u770b HBClient \u7248\u672c\u4fe1\u606f']");
+      trigger?.click();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const dialog = document.querySelector(".ant-modal-confirm");
+      const text = dialog?.textContent || "";
+      const visible = Boolean(dialog) && text.includes("HBClient") && /v\\d+\\.\\d+\\.\\d+/.test(text);
+      dialog?.querySelector(".ant-btn-primary")?.click();
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      return {
+        triggerFound: Boolean(trigger),
+        visible,
+        closed: !document.querySelector(".ant-modal-confirm")
+      };
+    })()`,
+  );
   const collapsedToolUi = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => ({
@@ -208,6 +226,7 @@ async function main() {
         rootChildren,
         hasHBClient,
         hasDefaultChinese,
+        versionDialog,
         layoutMetrics,
         toolUi: { collapsed: collapsedToolUi, expanded: expandedToolUi },
         url: page.url,
@@ -222,6 +241,9 @@ async function main() {
   );
   if (!rootChildren || !hasHBClient || !hasDefaultChinese) {
     throw new Error("Electron renderer did not render the HBClient workspace.");
+  }
+  if (!versionDialog?.triggerFound || !versionDialog.visible || !versionDialog.closed) {
+    throw new Error(`HBClient version dialog did not complete its open/close flow: ${JSON.stringify(versionDialog)}`);
   }
   const securityWarning = diagnostics.events.find((event) => {
     const text = `${event.args || ""} ${event.text || ""}`;

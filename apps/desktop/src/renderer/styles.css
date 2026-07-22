@@ -165,6 +165,59 @@ button {
   font-size: 18px;
 }
 
+.brand-mark-button {
+  padding: 0;
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.brand-mark-button:hover {
+  border-color: rgba(212, 117, 10, 0.62);
+  box-shadow:
+    0 0 0 3px rgba(212, 117, 10, 0.1),
+    0 18px 42px rgba(27, 31, 38, 0.1);
+  transform: translateY(-1px);
+}
+
+.brand-mark-button:focus-visible {
+  outline: 3px solid rgba(212, 117, 10, 0.28);
+  outline-offset: 3px;
+}
+
+.brand-mark-button:active {
+  transform: translateY(0);
+}
+
+.version-info {
+  display: grid;
+  gap: 14px;
+  padding-top: 4px;
+}
+
+.version-info-product {
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.version-info-number {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  color: var(--muted);
+}
+
+.version-info-number strong {
+  color: #b8650a;
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 15px;
+}
+
 .eyebrow {
   color: #b8650a;
   font-size: 11px;

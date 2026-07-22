@@ -268,6 +268,36 @@ function App() {
     }
   }, [messageApi, updateState.status]);
 
+  const showHBClientVersion = useCallback(async () => {
+    let currentVersion = updateState.currentVersion;
+    if (!currentVersion) {
+      try {
+        const state = await window.supbot.getHBClientUpdateState();
+        if (state) {
+          currentVersion = state.currentVersion;
+          setUpdateState(state);
+        }
+      } catch {
+        // The dialog still provides useful product information if version lookup fails.
+      }
+    }
+    const chinese = language === "zh";
+    modalApi.info({
+      title: chinese ? "关于 HBClient" : "About HBClient",
+      content: (
+        <div className="version-info">
+          <div className="version-info-product">HBClient</div>
+          <div className="version-info-number">
+            <span>{chinese ? "版本号" : "Version"}</span>
+            <strong>{currentVersion ? `v${currentVersion}` : chinese ? "未知" : "Unknown"}</strong>
+          </div>
+        </div>
+      ),
+      okText: chinese ? "关闭" : "Close",
+      icon: <RobotOutlined />,
+    });
+  }, [language, modalApi, updateState.currentVersion]);
+
   useEffect(() => {
     void refresh();
     void window.supbot.userDataPath().then(setUserDataPath);
@@ -657,6 +687,7 @@ function App() {
           setRightCollapsed={setRightCollapsed}
           updateState={updateState}
           startUpdate={startHBClientUpdate}
+          showVersionInfo={showHBClientVersion}
         />
         {view === "chat" ? (
           <section

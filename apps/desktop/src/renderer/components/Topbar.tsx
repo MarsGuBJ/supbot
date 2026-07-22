@@ -19,6 +19,7 @@ export function Topbar({
   setRightCollapsed,
   updateState,
   startUpdate,
+  showVersionInfo,
 }: {
   snapshot: RuntimeSnapshot;
   view: WorkspaceView;
@@ -32,13 +33,21 @@ export function Topbar({
   setRightCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   updateState: HBClientUpdateState;
   startUpdate: () => void | Promise<void>;
+  showVersionInfo: () => void | Promise<void>;
 }) {
   return (
     <header className="topbar">
       <div className="identity">
-        <div className="brand-mark small">
-          <RobotOutlined />
-        </div>
+        <Tooltip title={language === "zh" ? "查看版本信息" : "View version information"}>
+          <button
+            className="brand-mark brand-mark-button small"
+            type="button"
+            aria-label={language === "zh" ? "查看 HBClient 版本信息" : "View HBClient version information"}
+            onClick={() => void showVersionInfo()}
+          >
+            <RobotOutlined />
+          </button>
+        </Tooltip>
         <div>
           <div className="eyebrow">{translate(language, "LOCAL AGENT CONSOLE")}</div>
           <div className="agent-title">{snapshot.agentName}</div>
