@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "HyBotClient",
+  "project_id": "f8a2f487-c5b8-4551-b2bf-f32134c100f1"
+}
