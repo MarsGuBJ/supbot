@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   type AgentJob,
@@ -12,6 +12,12 @@ import {
   type Conversation,
   type DataArtifact,
   defaultModelProviderConfig,
+  defaultServstationBaseUrl,
+  defaultServstationClientId,
+  defaultServstationIssuerUrl,
+  defaultServstationRedirectUri,
+  defaultServstationScope,
+  defaultServstationUser,
   defaultPersonality,
   defaultToolMarketConfig,
   type ChatMessage,
@@ -182,12 +188,12 @@ const legacyRemoteBotstationA2A = {
 };
 
 const defaultBotstationA2A = {
-  baseUrl: "http://101.227.67.76:8800",
-  issuerUrl: "http://101.227.67.76:8092",
-  clientId: "botstation-agent-client-web",
-  scope: "openid profile email",
-  redirectUri: "http://localhost:8800/oauth2/callback",
-  userId: "dev-user"
+  baseUrl: defaultServstationBaseUrl,
+  issuerUrl: defaultServstationIssuerUrl,
+  clientId: defaultServstationClientId,
+  scope: defaultServstationScope,
+  redirectUri: defaultServstationRedirectUri,
+  userId: defaultServstationUser
 };
 
 export function createInitialState(): RuntimeState {
@@ -262,10 +268,12 @@ export function defaultCapabilityDefinitions(): CapabilityDefinition[] {
 
 export class JsonFileStorage implements StorageAdapter {
   private readonly statePath: string;
+  private readonly backupPath: string;
   private writeQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly dataDir: string) {
     this.statePath = join(dataDir, "state.json");
+    this.backupPath = join(dataDir, "state.json.bak");
   }
 
   getDataDir(): string {
@@ -280,25 +288,42 @@ export class JsonFileStorage implements StorageAdapter {
       await this.save(state);
       return state;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw error;
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        const state = createInitialState();
+        await this.save(state);
+        return state;
       }
-      const state = createInitialState();
-      await this.save(state);
-      return state;
+      const recovered = await this.loadBackup();
+      if (recovered) {
+        await this.save(recovered);
+        return recovered;
+      }
+      throw error;
     }
   }
 
   async save(state: RuntimeState): Promise<void> {
     const snapshot = JSON.stringify(state, null, 2);
-    this.writeQueue = this.writeQueue.then(() => this.writeSnapshot(snapshot));
+    this.writeQueue = this.writeQueue.catch(() => undefined).then(() => this.writeSnapshot(snapshot));
     await this.writeQueue;
+  }
+
+  private async loadBackup(): Promise<RuntimeState | undefined> {
+    try {
+      const raw = await readFile(this.backupPath, "utf8");
+      return normalizeState(JSON.parse(raw) as Partial<RuntimeState>);
+    } catch {
+      return undefined;
+    }
   }
 
   private async writeSnapshot(snapshot: string): Promise<void> {
     await mkdir(dirname(this.statePath), { recursive: true });
     const tempPath = `${this.statePath}.${process.pid}.${Date.now()}.tmp`;
     await writeFile(tempPath, `${snapshot}\n`, "utf8");
+    // Best effort: keep the previous state.json as a backup, but a failed
+    // backup copy must not break the save itself.
+    await copyFile(this.statePath, this.backupPath).catch(() => undefined);
     await rename(tempPath, this.statePath);
   }
 }
@@ -757,10 +782,12 @@ function normalizeWorktree(value: TaskWorktree): TaskWorktree | undefined {
     conversationId: typeof value.conversationId === "string" ? value.conversationId : "",
     baseRef: typeof value.baseRef === "string" ? value.baseRef : "HEAD",
     branchName: typeof value.branchName === "string" ? value.branchName : `supbot/${value.id}`,
+    mode: value.mode === "scratch" ? "scratch" : "git",
     status: normalizeWorktreeStatus(value.status),
     diffStatus: normalizeDiffStatus(value.diffStatus),
     createdAt: typeof value.createdAt === "string" ? value.createdAt : now,
-    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : now
+    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : now,
+    rootDir: typeof value.rootDir === "string" && value.rootDir ? value.rootDir : undefined
   };
 }
 

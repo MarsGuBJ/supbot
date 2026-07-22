@@ -522,6 +522,34 @@ async function main() {
   if (!configClick?.clickedConfig || !permissionRuleUi?.clickedCapabilities || !permissionRuleUiAfterClick.hasRuleRow || !permissionRuleUiAfterClick.hasRuleBuilder || !permissionRuleUiAfterClick.hasShellRule) {
     throw new Error("Permission rule UI did not render in the capabilities config.");
   }
+  const capabilityCardLayout = await evaluate(
+    page.webSocketDebuggerUrl,
+    `(() => {
+      const card = document.querySelector(".capability-card");
+      const id = card?.querySelector(".activity-head .mono");
+      if (!card || !id) return { hasCard: false };
+      id.textContent = "local.skill." + "x".repeat(240);
+      const cardRect = card.getBoundingClientRect();
+      const idRect = id.getBoundingClientRect();
+      return {
+        hasCard: true,
+        cardScrollWidth: card.scrollWidth,
+        cardClientWidth: card.clientWidth,
+        idScrollWidth: id.scrollWidth,
+        idClientWidth: id.clientWidth,
+        idRight: idRect.right,
+        cardRight: cardRect.right
+      };
+    })()`
+  );
+  if (
+    !capabilityCardLayout?.hasCard
+    || capabilityCardLayout.cardScrollWidth > capabilityCardLayout.cardClientWidth + 1
+    || capabilityCardLayout.idScrollWidth > capabilityCardLayout.idClientWidth + 1
+    || capabilityCardLayout.idRight > capabilityCardLayout.cardRight + 1
+  ) {
+    throw new Error(`Capability card text overflowed its boundary: ${JSON.stringify(capabilityCardLayout)}`);
+  }
   const mcpTabClick = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => {

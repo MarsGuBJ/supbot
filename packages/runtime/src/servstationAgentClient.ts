@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { fetchWithRetry } from "./fetchWithRetry";
 import type {
   Attachment,
   IdentityContext,
@@ -49,6 +50,7 @@ import type {
 interface ServstationAgentClientHost {
   getConfig(): ServstationA2AConfig;
   getAccessToken(signal?: AbortSignal): Promise<string | undefined>;
+  refreshAccessToken?(signal?: AbortSignal): Promise<string | undefined>;
   getIdentityContext(): IdentityContext | undefined;
   updateConfig(input: ServstationA2AConfigUpdate): Promise<ServstationA2AConfig>;
   randomId(prefix: string): string;
@@ -1115,13 +1117,15 @@ export class ServstationAgentClient {
     if (!identity) {
       throw new Error("Servstation identity context is not paired.");
     }
-    const response = await fetch(joinUrl(baseUrl, path), {
-      ...init,
-      headers: {
-        ...await this.headers(init.signal instanceof AbortSignal ? init.signal : undefined),
-        ...(init.headers || {})
+    const signal = init.signal instanceof AbortSignal ? init.signal : undefined;
+    let response = await this.requestOnce(joinUrl(baseUrl, path), init, signal);
+    if (response.status === 401 && this.host.refreshAccessToken) {
+      await response.arrayBuffer().catch(() => undefined);
+      const refreshed = await this.host.refreshAccessToken(signal).catch(() => undefined);
+      if (refreshed) {
+        response = await this.requestOnce(joinUrl(baseUrl, path), init, signal, 0);
       }
-    });
+    }
     const text = await response.text();
     const payload = text.trim() ? safeJson(text) : {};
     if (!response.ok) {
@@ -1131,6 +1135,16 @@ export class ServstationAgentClient {
       throw error;
     }
     return payload as T;
+  }
+
+  private async requestOnce(url: string, init: RequestInit, signal: AbortSignal | undefined, retries?: number): Promise<Response> {
+    return fetchWithRetry(url, {
+      ...init,
+      headers: {
+        ...await this.headers(signal),
+        ...(init.headers || {})
+      }
+    }, { signal, retries });
   }
 
   private async headers(signal?: AbortSignal): Promise<Record<string, string>> {

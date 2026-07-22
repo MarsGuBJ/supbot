@@ -230,6 +230,10 @@ function validateProjectBoundary(tool: ToolDefinition, input: unknown, context: 
   return undefined;
 }
 
+// Defense-in-depth heuristics only: these string checks can be bypassed
+// (environment variables, subshells, aliases) and are NOT a security boundary.
+// The real boundary is the permission prompt/policy above; shell commands
+// always execute with the full privileges of the desktop user.
 function validateProjectShellCommand(command: string, projectRoot: string, allowedWriteRoots: string[]): string | undefined {
   if (!command.trim()) {
     return undefined;

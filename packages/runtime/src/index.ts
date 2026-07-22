@@ -1,4 +1,5 @@
-export { generateReply, normalizeChatCompletionsUrl } from "./modelClient";
+export { generateReply, normalizeChatCompletionsUrl } from "./modelAdapter";
+export { fetchWithRetry, type FetchWithRetryOptions } from "./fetchWithRetry";
 export { AutopilotOrchestrator } from "./autopilotOrchestrator";
 export { JsonFileStorage, createInitialState, type RuntimeState, type StorageAdapter } from "./storage";
 export { ensureRuntimeDirs, redactModelConfig, redactToolMarketConfig, resolveMentionedSubagent, SupbotRuntime } from "./runtime";
@@ -20,4 +21,4 @@ export { ServstationAgentClient } from "./servstationAgentClient";
 export { ServstationA2AProvider } from "./servstationA2AProvider";
 export { ServstationReverseBridgeClient, buildReverseWorkspaceSnapshot } from "./servstationReverseBridgeClient";
 export { identityContextFromAccessToken, oidcTokenSetFromTokenResponse } from "./servstationOidc";
-export { WorktreeManager, ensureGitWorktreeReady } from "./worktreeManager";
+export { WorktreeManager, ensureGitWorktreeReady, probeGitWorktreeReady, type GitWorktreeProbe, WorktreeSetupError } from "./worktreeManager";

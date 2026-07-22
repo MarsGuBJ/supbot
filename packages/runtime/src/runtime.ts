@@ -1,4 +1,3 @@
-import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -82,40 +81,6 @@ import {
   type ServstationA2AConfig,
   type ServstationA2AConfigUpdate,
   type ServstationA2AOidcSessionUpdate,
-  type ServstationAutopilotEvent,
-  type ServstationAutopilotRun,
-  type ServstationAutopilotStartInput,
-  type ServstationAutopilotStep,
-  type ServstationAutopilotStatusUpdate,
-  type ServstationClientSnapshot,
-  type ServstationClientSnapshotQuery,
-  type ServstationConversation,
-  type ServstationDeleteProjectResourceResponse,
-  type ServstationDeleteProjectResponse,
-  type ServstationFlowEngineApprovalDecisionInput,
-  type ServstationFlowEngineExecutionEvent,
-  type ServstationFlowEngineInitiatedExecution,
-  type ServstationFlowEngineLaunchInput,
-  type ServstationFlowEnginePendingTask,
-  type ServstationFlowEngineSnapshot,
-  type ServstationMailAccount,
-  type ServstationMailAccountDraft,
-  type ServstationMailConnectionTestResult,
-  type ServstationMessageAttachmentContent,
-  type ServstationMessageDetail,
-  type ServstationMessageEvent,
-  type ServstationMessageFolder,
-  type ServstationMessageListResponse,
-  type ServstationMessageUnreadSummary,
-  type ServstationProject,
-  type ServstationProjectResource,
-  type ServstationScheduledJob,
-  type ServstationScheduledJobInput,
-  type ServstationSendAgentMessageInput,
-  type ServstationSendDirectMessageInput,
-  type ServstationSendPromptInput,
-  type ServstationSendPromptResult,
-  type ServstationSessionJob,
   type SubagentConfig,
   type SupbotEvent,
   type TaskWorktree,
@@ -135,13 +100,14 @@ import { stripQuotes, type LocalToolHost, type LocalToolResult } from "./localTo
 import { LocalPackageManager } from "./localPackageManager";
 import { MemoryManager } from "./memoryManager";
 import { McpManager } from "./mcpManager";
-import { generateReply, normalizeModelApiKey } from "./modelClient";
+import { generateReply, normalizeModelApiKey } from "./modelAdapter";
 import { ProjectManager } from "./projectManager";
 import { QueryEngine } from "./queryEngine";
 import { RemoteBridgeManager } from "./remoteBridgeManager";
 import { ServstationAgentClient } from "./servstationAgentClient";
 import { ServstationA2AProvider } from "./servstationA2AProvider";
 import { ServstationReverseBridgeClient, type ReversePromptResult } from "./servstationReverseBridgeClient";
+import { ServstationRuntimeFacade } from "./servstationFacade";
 import {
   identityContextFromAccessToken,
   oidcAccessTokenExpiringSoon,
@@ -175,7 +141,12 @@ interface PendingPermissionWaiter {
   resolve(decision: "approved" | "denied"): void;
 }
 
-export class SupbotRuntime extends EventEmitter {
+const MAX_CONVERSATION_MESSAGES = 200;
+const MAX_JOBS = 200;
+const MAX_JOB_PROGRESS_ENTRIES = 50;
+const PERSIST_DEBOUNCE_MS = 150;
+
+export class SupbotRuntime extends ServstationRuntimeFacade {
   private state: RuntimeState = createInitialState();
   private readonly runningJobs = new Map<string, RunningJob>();
   private readonly runningAutopilotRuns = new Map<string, RunningAutopilotRun>();
@@ -183,7 +154,7 @@ export class SupbotRuntime extends EventEmitter {
   private readonly toolRegistry = new ToolRegistry();
   private readonly mcpManager: McpManager;
   private readonly servstationA2AProvider: ServstationA2AProvider;
-  private readonly servstationAgentClient: ServstationAgentClient;
+  protected readonly servstationAgentClient: ServstationAgentClient;
   private readonly worktreeManager: WorktreeManager;
   private readonly localPackageManager: LocalPackageManager;
   private readonly remoteBridgeManager: RemoteBridgeManager;
@@ -197,6 +168,7 @@ export class SupbotRuntime extends EventEmitter {
   private readonly marketSecretStorageKind: ToolMarketConfig["tokenStorage"];
   private readonly rootDir: string;
   private schedulerTimer: ReturnType<typeof setInterval> | null = null;
+  private persistTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly storage: StorageAdapter, options: { secretStorageKind?: ModelConfig["apiKeyStorage"]; marketSecretStorageKind?: ToolMarketConfig["tokenStorage"]; rootDir?: string } = {}) {
     super();
@@ -304,6 +276,7 @@ export class SupbotRuntime extends EventEmitter {
     this.servstationAgentClient = new ServstationAgentClient({
       getConfig: () => this.state.servstationA2AConfig,
       getAccessToken: (signal) => this.servstationA2AAccessToken(signal),
+      refreshAccessToken: (signal) => this.servstationA2AAccessToken(signal, true),
       getIdentityContext: () => this.state.identityContext,
       updateConfig: (input) => this.updateServstationA2AConfig(input),
       randomId,
@@ -426,6 +399,7 @@ export class SupbotRuntime extends EventEmitter {
     this.state.runtimeEvents = this.state.runtimeEvents.filter((item) => !belongsToDeletedConversation(item));
     this.state.worktrees = this.state.worktrees.filter((item) => !belongsToDeletedConversation(item));
     this.state.compactBoundaries = this.state.compactBoundaries.filter((item) => item.conversationId !== id);
+    await new TranscriptStore(this.storage.getDataDir()).delete(id).catch(() => undefined);
     this.worktreeManager.setWorktrees(this.state.worktrees);
     await this.persistAndBroadcast();
   }
@@ -605,7 +579,7 @@ export class SupbotRuntime extends EventEmitter {
     };
 
     this.appendMessage(conversation.id, userMessage);
-    this.state.jobs = [job, ...this.state.jobs];
+    this.state.jobs = [job, ...this.state.jobs].slice(0, MAX_JOBS);
     await this.persistAndBroadcast();
     await this.appendTranscript(conversation.id, { type: "message", message: userMessage });
     this.emitTyped({ type: "message", conversationId: conversation.id, message: userMessage });
@@ -912,220 +886,6 @@ export class SupbotRuntime extends EventEmitter {
     this.assertLoaded();
     await this.servstationReverseBridgeClient.stop(false);
     return this.redactServstationA2AConfig();
-  }
-
-  async getServstationClientSnapshot(query: ServstationClientSnapshotQuery = {}): Promise<ServstationClientSnapshot> {
-    this.assertLoaded();
-    return this.servstationAgentClient.snapshot(query);
-  }
-
-  async createServstationProject(name: string): Promise<ServstationProject> {
-    this.assertLoaded();
-    return this.servstationAgentClient.createProject(name);
-  }
-
-  async updateServstationProject(projectId: string, name: string): Promise<ServstationProject> {
-    this.assertLoaded();
-    return this.servstationAgentClient.updateProject(projectId, name);
-  }
-
-  async deleteServstationProject(projectId: string): Promise<ServstationDeleteProjectResponse> {
-    this.assertLoaded();
-    return this.servstationAgentClient.deleteProject(projectId);
-  }
-
-  async listServstationProjectResources(projectId: string): Promise<ServstationProjectResource[]> {
-    this.assertLoaded();
-    return this.servstationAgentClient.listProjectResources(projectId);
-  }
-
-  async deleteServstationProjectResource(projectId: string, resourceId: string): Promise<ServstationDeleteProjectResourceResponse> {
-    this.assertLoaded();
-    return this.servstationAgentClient.deleteProjectResource(projectId, resourceId);
-  }
-
-  async createServstationConversation(title?: string, projectId?: string): Promise<ServstationConversation> {
-    this.assertLoaded();
-    return this.servstationAgentClient.createConversation(title, projectId);
-  }
-
-  async deleteServstationConversation(conversationId: string): Promise<void> {
-    this.assertLoaded();
-    await this.servstationAgentClient.deleteConversation(conversationId);
-  }
-
-  async sendServstationPrompt(input: ServstationSendPromptInput): Promise<ServstationSendPromptResult> {
-    this.assertLoaded();
-    return this.servstationAgentClient.sendPrompt(input);
-  }
-
-  async cancelServstationJob(jobId: string): Promise<ServstationSessionJob> {
-    this.assertLoaded();
-    return this.servstationAgentClient.cancelJob(jobId);
-  }
-
-  async createServstationScheduledJob(input: ServstationScheduledJobInput): Promise<ServstationScheduledJob> {
-    this.assertLoaded();
-    return this.servstationAgentClient.createScheduledJob(input);
-  }
-
-  async updateServstationScheduledJob(id: string, input: Partial<ServstationScheduledJobInput>): Promise<ServstationScheduledJob> {
-    this.assertLoaded();
-    return this.servstationAgentClient.updateScheduledJob(id, input);
-  }
-
-  async deleteServstationScheduledJob(id: string): Promise<void> {
-    this.assertLoaded();
-    await this.servstationAgentClient.deleteScheduledJob(id);
-  }
-
-  async startServstationAutopilotRun(input: ServstationAutopilotStartInput): Promise<ServstationAutopilotRun> {
-    this.assertLoaded();
-    return this.servstationAgentClient.startAutopilotRun(input);
-  }
-
-  async updateServstationAutopilotRun(input: ServstationAutopilotStatusUpdate): Promise<ServstationAutopilotRun> {
-    this.assertLoaded();
-    return this.servstationAgentClient.updateAutopilotRun(input);
-  }
-
-  async getServstationAutopilotRun(runId: string): Promise<ServstationAutopilotRun | null> {
-    this.assertLoaded();
-    return this.servstationAgentClient.fetchAutopilotRun(runId);
-  }
-
-  async getServstationAutopilotSteps(runId: string): Promise<ServstationAutopilotStep[]> {
-    this.assertLoaded();
-    return this.servstationAgentClient.fetchAutopilotSteps(runId);
-  }
-
-  async streamServstationAutopilotEvents(
-    runId: string,
-    onEvent: (event: ServstationAutopilotEvent) => void,
-    signal?: AbortSignal
-  ): Promise<void> {
-    this.assertLoaded();
-    await this.servstationAgentClient.streamAutopilotEvents(runId, onEvent, signal);
-  }
-
-  async getServstationFlowEngineSnapshot(): Promise<ServstationFlowEngineSnapshot> {
-    this.assertLoaded();
-    return this.servstationAgentClient.flowEngineSnapshot();
-  }
-
-  async launchServstationFlowEngineWorkflow(input: ServstationFlowEngineLaunchInput): Promise<ServstationFlowEngineInitiatedExecution> {
-    this.assertLoaded();
-    return this.servstationAgentClient.launchFlowEngineWorkflow(input);
-  }
-
-  async getServstationFlowEngineExecution(executionId: string): Promise<ServstationFlowEngineInitiatedExecution> {
-    this.assertLoaded();
-    return this.servstationAgentClient.getFlowEngineExecution(executionId);
-  }
-
-  async getServstationFlowEngineExecutionEvents(executionId: string): Promise<ServstationFlowEngineExecutionEvent[]> {
-    this.assertLoaded();
-    return this.servstationAgentClient.getFlowEngineExecutionEvents(executionId);
-  }
-
-  async decideServstationFlowEngineApproval(input: ServstationFlowEngineApprovalDecisionInput): Promise<ServstationFlowEnginePendingTask> {
-    this.assertLoaded();
-    return this.servstationAgentClient.decideFlowEngineApproval(input);
-  }
-
-  async listServstationMessages(folder: ServstationMessageFolder, unreadOnly = false): Promise<ServstationMessageListResponse> {
-    this.assertLoaded();
-    return this.servstationAgentClient.listMessages(folder, unreadOnly);
-  }
-
-  async getServstationUnreadMessages(): Promise<ServstationMessageUnreadSummary> {
-    this.assertLoaded();
-    return this.servstationAgentClient.getUnreadMessages();
-  }
-
-  async getServstationMessage(messageId: string): Promise<ServstationMessageDetail> {
-    this.assertLoaded();
-    return this.servstationAgentClient.getMessage(messageId);
-  }
-
-  async markServstationMessageRead(messageId: string): Promise<ServstationMessageDetail> {
-    this.assertLoaded();
-    return this.servstationAgentClient.markMessageRead(messageId);
-  }
-
-  async setServstationMessageFavorite(messageId: string, favorited: boolean): Promise<ServstationMessageDetail> {
-    this.assertLoaded();
-    return this.servstationAgentClient.setMessageFavorite(messageId, favorited);
-  }
-
-  async trashServstationMessage(messageId: string): Promise<ServstationMessageDetail> {
-    this.assertLoaded();
-    return this.servstationAgentClient.trashMessage(messageId);
-  }
-
-  async restoreServstationMessage(messageId: string): Promise<ServstationMessageDetail> {
-    this.assertLoaded();
-    return this.servstationAgentClient.restoreMessage(messageId);
-  }
-
-  async deleteServstationMessage(messageId: string): Promise<void> {
-    this.assertLoaded();
-    await this.servstationAgentClient.deleteMessage(messageId);
-  }
-
-  async fetchServstationMessageAttachment(messageId: string, attachmentId: string): Promise<ServstationMessageAttachmentContent> {
-    this.assertLoaded();
-    return this.servstationAgentClient.fetchMessageAttachment(messageId, attachmentId);
-  }
-
-  async sendServstationAgentMessage(input: ServstationSendAgentMessageInput): Promise<ServstationSessionJob> {
-    this.assertLoaded();
-    return this.servstationAgentClient.sendAgentMessage(input);
-  }
-
-  async sendServstationDirectMessage(input: ServstationSendDirectMessageInput): Promise<ServstationMessageDetail> {
-    this.assertLoaded();
-    return this.servstationAgentClient.sendDirectMessage(input);
-  }
-
-  async listServstationMailAccounts(): Promise<ServstationMailAccount[]> {
-    this.assertLoaded();
-    return this.servstationAgentClient.listMailAccounts();
-  }
-
-  async createServstationMailAccount(input: ServstationMailAccountDraft): Promise<ServstationMailAccount> {
-    this.assertLoaded();
-    return this.servstationAgentClient.createMailAccount(input);
-  }
-
-  async updateServstationMailAccount(id: string, input: ServstationMailAccountDraft): Promise<ServstationMailAccount> {
-    this.assertLoaded();
-    return this.servstationAgentClient.updateMailAccount(id, input);
-  }
-
-  async deleteServstationMailAccount(id: string): Promise<void> {
-    this.assertLoaded();
-    await this.servstationAgentClient.deleteMailAccount(id);
-  }
-
-  async setDefaultServstationMailAccount(id: string): Promise<ServstationMailAccount> {
-    this.assertLoaded();
-    return this.servstationAgentClient.setDefaultMailAccount(id);
-  }
-
-  async testServstationMailAccountConnection(id: string): Promise<ServstationMailConnectionTestResult> {
-    this.assertLoaded();
-    return this.servstationAgentClient.testMailAccountConnection(id);
-  }
-
-  async syncServstationMailAccountNow(id: string): Promise<{ status: string }> {
-    this.assertLoaded();
-    return this.servstationAgentClient.syncMailAccountNow(id);
-  }
-
-  async streamServstationMessageEvents(onEvent: (event: ServstationMessageEvent) => void, signal?: AbortSignal): Promise<void> {
-    this.assertLoaded();
-    await this.servstationAgentClient.streamMessageEvents(onEvent, signal);
   }
 
   async updateServstationA2AOidcSession(input: ServstationA2AOidcSessionUpdate): Promise<ServstationA2AConfig> {
@@ -2046,38 +1806,37 @@ export class SupbotRuntime extends EventEmitter {
         permissionRules: this.state.permissionRules,
         signal: controller.signal,
         requestPermission: (permission) => this.requestToolPermission(permission),
-        onSession: async (session) => {
+        onSession: (session) => {
           this.upsertQuerySession(session);
-          await this.persistAndBroadcast();
+          this.schedulePersistAndBroadcast();
         },
-        onRuntimeEvent: async (event) => {
+        onRuntimeEvent: (event) => {
           this.addRuntimeEvent(event);
-          await this.persistAndBroadcast();
+          this.schedulePersistAndBroadcast();
           this.emitTyped({ type: "query_event", event });
         },
-        onMessageDelta: async (delta) => {
+        onMessageDelta: (delta) => {
           this.appendAssistantDelta(conversation.id, assistantSeed.id, delta);
-          await this.persistAndBroadcast();
           this.emitTyped({ type: "message_delta", conversationId: conversation.id, messageId: assistantSeed.id, delta });
         },
-        onTrace: async (trace) => {
+        onTrace: (trace) => {
           this.upsertTrace(trace);
-          await this.persistAndBroadcast();
+          this.schedulePersistAndBroadcast();
         },
-        onToolProgress: async (toolCall) => {
+        onToolProgress: (toolCall) => {
           this.upsertToolCall(jobId, toolCall);
           this.updateJob(jobId, this.findJob(jobId)?.status || "running", `${toolCall.toolName}: ${toolCall.status}`);
-          await this.persistAndBroadcast();
+          this.schedulePersistAndBroadcast();
           this.emitTyped({ type: "tool_progress", toolCall });
         },
-        onCompact: async (boundary) => {
+        onCompact: (boundary) => {
           this.upsertCompactBoundary(boundary);
-          await this.persistAndBroadcast();
+          this.schedulePersistAndBroadcast();
           this.emitTyped({ type: "compact", boundary });
         },
-        onMemoryChanged: async (memory) => {
+        onMemoryChanged: (memory) => {
           this.state.memory = memory;
-          await this.persistAndBroadcast();
+          this.schedulePersistAndBroadcast();
           this.emitTyped({ type: "memory_changed", memory });
         },
         onMemoryCandidate: async (candidate) => {
@@ -2501,7 +2260,7 @@ export class SupbotRuntime extends EventEmitter {
         title: conversation.title === "New conversation" && message.role === "user" ? titleFromPrompt(message.text) : conversation.title,
         updatedAt: now,
         lastMessageAt: now,
-        messages: [...conversation.messages, message]
+        messages: [...conversation.messages, message].slice(-MAX_CONVERSATION_MESSAGES)
       };
     });
   }
@@ -2539,7 +2298,7 @@ export class SupbotRuntime extends EventEmitter {
         startedAt: status === "running" ? job.startedAt || now : job.startedAt,
         finishedAt: ["completed", "failed", "canceled"].includes(status) ? now : job.finishedAt,
         error: status === "failed" ? progress : job.error,
-        progress: [...job.progress, progress]
+        progress: [...job.progress, progress].slice(-MAX_JOB_PROGRESS_ENTRIES)
       };
     });
     const updated = this.findJob(jobId);
@@ -3170,7 +2929,8 @@ export class SupbotRuntime extends EventEmitter {
       }
     }
     try {
-      const worktree = await this.worktreeManager.createForJob({ jobId: job.id, conversationId: job.conversationId });
+      const rootDir = this.resolveJobWorktreeRoot(job);
+      const worktree = await this.worktreeManager.createForJob({ jobId: job.id, conversationId: job.conversationId }, rootDir);
       this.state.worktrees = this.worktreeManager.list();
       this.markJobWorktree(worktree);
       await this.persistAndBroadcast();
@@ -3183,12 +2943,24 @@ export class SupbotRuntime extends EventEmitter {
         nowIso
       };
     } catch (error) {
-      const message = `Could not create isolated worktree for ${toolName}: ${(error as Error).message}`;
+      const detail = (error as Error).message;
+      const checked = (error as { rootDir?: string }).rootDir || this.rootDir;
+      const message = `Could not prepare an isolated workspace for ${toolName} (checked ${checked}): ${detail}. Without an isolated workspace, the writable tool cannot run safely. Initialize a Git repository at ${checked} (run \`git init && git commit --allow-empty -m "init"\`), or open the conversation in a project that is already a Git repository.`;
       const event = this.createRuntimeEvent("worktree_event", message, { toolName }, job.id, job.conversationId);
       this.addRuntimeEvent(event);
       await this.appendTranscript(job.conversationId, { type: "event", event });
-      throw new Error(`${message}. Create a baseline Git commit before running writable tools.`);
+      throw new Error(message);
     }
+  }
+
+  private resolveJobWorktreeRoot(job: AgentJob): string | undefined {
+    const conversation = this.findConversation(job.conversationId);
+    const projectId = job.projectId || conversation?.projectId;
+    if (!projectId) {
+      return undefined;
+    }
+    const project = this.state.projects.find((item) => item.id === projectId);
+    return project?.rootPath;
   }
 
   private async completeJobWorktree(jobId: string): Promise<void> {
@@ -3673,15 +3445,30 @@ export class SupbotRuntime extends EventEmitter {
   }
 
   private async persistAndBroadcast(): Promise<void> {
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = null;
+    }
     await this.storage.save(this.state);
     this.emitTyped({ type: "snapshot", snapshot: this.snapshot() });
+  }
+
+  private schedulePersistAndBroadcast(): void {
+    if (this.persistTimer) {
+      return;
+    }
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null;
+      void this.persistAndBroadcast().catch(() => undefined);
+    }, PERSIST_DEBOUNCE_MS);
+    this.persistTimer.unref?.();
   }
 
   private emitTyped(event: SupbotEvent): void {
     this.emit("event", event);
   }
 
-  private assertLoaded(): void {
+  protected assertLoaded(): void {
     if (!this.loaded) {
       throw new Error("HBClient runtime init() must be called before use.");
     }

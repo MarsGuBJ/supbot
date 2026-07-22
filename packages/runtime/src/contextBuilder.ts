@@ -1,8 +1,8 @@
 import type { ChatMessage, PersonalityConfig, SubagentConfig } from "@supbot/shared";
 
 /**
- * @deprecated Runtime v2.5 builds active conversation context through ContextManager.
- * This OpenAI-shaped builder remains for legacy agentLoop/modelClient callers.
+ * Builds OpenAI-shaped messages for one-off model calls (generateReply).
+ * Conversation turns build active context through ContextManager instead.
  */
 export type OpenAiMessage =
   | { role: "system"; content: string }

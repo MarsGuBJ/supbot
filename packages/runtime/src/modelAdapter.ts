@@ -1,5 +1,6 @@
-import type { ModelConfig } from "@supbot/shared";
-import { normalizeChatCompletionsUrl, normalizeModelApiKey, type OpenAiToolDefinition } from "./modelClient";
+import type { ChatMessage, ModelConfig, PersonalityConfig, SubagentConfig } from "@supbot/shared";
+import { buildContext, type OpenAiToolCall } from "./contextBuilder";
+import { fetchWithRetry } from "./fetchWithRetry";
 
 export type AdapterMessage =
   | { role: "system"; content: string }
@@ -60,15 +61,14 @@ export class OpenAIChatCompletionsAdapter implements ModelAdapter {
     const url = normalizeChatCompletionsUrl(input.modelConfig.baseUrl);
     const body = chatCompletionsBody(input);
 
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         authorization: `Bearer ${apiKey}`
       },
-      body: JSON.stringify(body),
-      signal: input.signal
-    });
+      body: JSON.stringify(body)
+    }, { signal: input.signal });
     if (!response.ok) {
       const responseBody = await response.text().catch(() => "");
       throw new Error(`Model request failed (${response.status}): ${responseBody.slice(0, 500) || response.statusText}`);
@@ -84,15 +84,14 @@ export class OpenAIChatCompletionsAdapter implements ModelAdapter {
     }
 
     const url = normalizeChatCompletionsUrl(input.modelConfig.baseUrl);
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         authorization: `Bearer ${apiKey}`
       },
-      body: JSON.stringify({ ...chatCompletionsBody(input), stream: true }),
-      signal: input.signal
-    });
+      body: JSON.stringify({ ...chatCompletionsBody(input), stream: true })
+    }, { signal: input.signal });
     if (!response.ok) {
       const responseBody = await response.text().catch(() => "");
       throw new Error(`Model stream failed (${response.status}): ${responseBody.slice(0, 500) || response.statusText}`);
@@ -274,6 +273,93 @@ function localFallbackFromMessages(messages: AdapterMessage[]): string {
     "你的消息已经保存，本地运行时工作正常。请在“配置 > 模型”中添加 OpenAI-compatible Base URL、API 密钥和模型名，以启用真实模型调用。",
     "",
     "Local fallback: no API key is configured yet. Add an OpenAI-compatible base URL, API key, and model in Config > Model to enable real model calls.",
+    last ? `\n最近提示词 / Last prompt: ${last}` : ""
+  ].join("\n");
+}
+
+export interface OpenAiToolDefinition {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: {
+      type: "object";
+      properties: Record<string, unknown>;
+      required?: string[];
+      additionalProperties?: boolean;
+    };
+  };
+}
+
+export interface GenerateReplyInput {
+  modelConfig: ModelConfig;
+  apiKey?: string;
+  personality: PersonalityConfig;
+  subagent?: SubagentConfig;
+  messages: ChatMessage[];
+  tools?: OpenAiToolDefinition[];
+  signal?: AbortSignal;
+}
+
+export interface GenerateReplyResult {
+  text: string;
+  toolCalls?: OpenAiToolCall[];
+}
+
+export async function generateReply(input: GenerateReplyInput): Promise<GenerateReplyResult> {
+  const context = buildContext(input);
+  const adapter = new OpenAIChatCompletionsAdapter();
+  try {
+    const result = await adapter.complete({
+      modelConfig: input.modelConfig,
+      apiKey: input.apiKey,
+      messages: context.messages,
+      tools: input.tools,
+      signal: input.signal
+    });
+    return { text: result.text, toolCalls: result.toolCalls };
+  } catch (error) {
+    if (!input.apiKey?.trim()) {
+      return { text: localFallbackReply(input) };
+    }
+    throw error;
+  }
+}
+
+export function normalizeChatCompletionsUrl(baseUrl: string): string {
+  const trimmed = baseUrl.trim().replace(/\/+$/, "");
+  if (trimmed.endsWith("/chat/completions")) {
+    return trimmed;
+  }
+  if (trimmed.endsWith("/v1")) {
+    return `${trimmed}/chat/completions`;
+  }
+  return `${trimmed}/v1/chat/completions`;
+}
+
+export function normalizeModelApiKey(value?: string): string {
+  const trimmed = value?.trim() || "";
+  if (!trimmed) {
+    return "";
+  }
+  const embeddedKey = trimmed.match(/sk-[A-Za-z0-9._-]+/)?.[0];
+  const apiKey = embeddedKey || trimmed;
+  if (!/^[\x21-\x7e]+$/.test(apiKey)) {
+    throw new Error("Model API key contains invalid characters. Paste only the provider API key, such as sk-..., without labels or Chinese text.");
+  }
+  return apiKey;
+}
+
+function localFallbackReply(input: GenerateReplyInput): string {
+  const last = input.messages.filter((message) => message.role === "user").at(-1)?.text || "";
+  const zhSubagent = input.subagent ? `（@${input.subagent.name}）` : "";
+  const enSubagent = input.subagent ? ` via @${input.subagent.name}` : "";
+  return [
+    `本地回退模式${zhSubagent}：尚未配置 API 密钥。`,
+    "",
+    "你的消息已经保存，本地运行时工作正常。请在“配置 > 模型”中添加 OpenAI-compatible Base URL、API 密钥和模型名，以启用真实模型调用。",
+    "",
+    `Local fallback${enSubagent}: no API key is configured yet. Add an OpenAI-compatible base URL, API key, and model in Config > Model to enable real model calls.`,
     last ? `\n最近提示词 / Last prompt: ${last}` : ""
   ].join("\n");
 }

@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { ChatMessage, CompactBoundary, TranscriptDiagnostic, TranscriptLoadResult, TranscriptRecord, RuntimeEventRecord } from "@supbot/shared";
 
@@ -82,6 +82,10 @@ export class TranscriptStore {
       }
       throw error;
     }
+  }
+
+  async delete(conversationId: string): Promise<void> {
+    await rm(this.pathFor(conversationId), { force: true });
   }
 
   pathFor(conversationId: string): string {

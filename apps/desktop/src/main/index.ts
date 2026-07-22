@@ -5,6 +5,7 @@ import { hostname, userInfo } from "node:os";
 import { isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { JsonFileStorage, SupbotRuntime, ensureRuntimeDirs, identityContextFromAccessToken, oidcTokenSetFromTokenResponse, type RuntimeState, type StorageAdapter } from "@supbot/runtime";
 import type { AutopilotStartDataRunInput, CapabilityUpdateInput, CreateConversationInput, DataSourceSpec, IdentityContext, McpConfigTransfer, McpServerInput, McpServerUpdate, MemoryAddInput, MemoryImportInput, MemoryRecallFeedbackInput, MemoryReplayRecallInput, MemorySearchQuery, MemoryUpdateInput, ModelConfigUpdate, ModelProviderUpdate, PermissionMode, PermissionRule, PersonalityConfig, ProjectCreateFromNameInput, ProjectCreateInput, ProjectUpdateInput, RemoteBridgeConfig, ScheduledJobInput, SendPromptInput, ServstationA2AConfigUpdate, ServstationA2AOidcLoginInput, ServstationA2AOidcLoginResult, ServstationAutopilotStartInput, ServstationAutopilotStatusUpdate, ServstationClientSnapshotQuery, ServstationFlowEngineApprovalDecisionInput, ServstationFlowEngineLaunchInput, ServstationMailAccountDraft, ServstationMessageAttachmentUpload, ServstationMessageFolder, ServstationMessageAccountRef, ServstationScheduledJobInput, ServstationSendAgentMessageInput, ServstationSendDirectMessageInput, ServstationSendPromptInput, SubagentConfig, ToolMarketConfigUpdate, ToolMarketQuery } from "@supbot/shared";
+import { defaultServstationBaseUrl, defaultServstationClientId, defaultServstationIssuerUrl, defaultServstationRedirectUri, defaultServstationScope, defaultServstationUser } from "@supbot/shared";
 import { HBClientUpdateManager } from "./updateManager";
 
 let mainWindow: BrowserWindow | null = null;
@@ -14,12 +15,7 @@ const servstationMessageEventSubscriptions = new Map<string, AbortController>();
 const servstationAutopilotEventSubscriptions = new Map<string, AbortController>();
 const isDev = !app.isPackaged;
 const appDisplayName = "HBClient";
-const defaultBotstationBaseUrl = "http://101.227.67.76:8800";
-const defaultBotstationIssuerUrl = "http://101.227.67.76:8092";
-const defaultBotstationClientId = "botstation-agent-client-web";
-const defaultBotstationScope = "openid profile email";
-const defaultBotstationRedirectUri = "http://localhost:8800/oauth2/callback";
-const defaultBotstationUser = "dev-user";
+// Dev-only fallback password for the local Botstation login form autofill.
 const defaultBotstationPassword = "dev-user";
 const allowedDevServerOrigin = "http://127.0.0.1:5173";
 const productionCsp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'none'";
@@ -302,12 +298,12 @@ async function loginServstationOidc(input: ServstationA2AOidcLoginInput): Promis
   const service = getRuntime();
   const currentConfig = await service.servstationA2AConfig();
   const currentIdentity = await service.identityContext();
-  const baseUrl = normalizeOidcUrl(input.baseUrl || currentConfig.baseUrl || currentIdentity?.servstationUrl || process.env.HBCLIENT_BOTSTATION_BASE_URL || defaultBotstationBaseUrl, "Botstation base URL");
-  const issuerUrl = normalizeOidcUrl(input.issuerUrl || currentConfig.oidc?.issuerUrl || process.env.HBCLIENT_BOTSTATION_ISSUER_URL || defaultBotstationIssuerUrl, "Botstation OIDC issuer URL");
-  const clientId = requiredString(input.clientId || currentConfig.oidc?.clientId || process.env.HBCLIENT_BOTSTATION_CLIENT_ID || defaultBotstationClientId, "Botstation OIDC client id");
-  const scope = input.scope || currentConfig.oidc?.scope || process.env.HBCLIENT_BOTSTATION_SCOPE || defaultBotstationScope;
-  const redirectUri = normalizeOidcUrl(input.redirectUri || currentConfig.oidc?.redirectUri || process.env.HBCLIENT_BOTSTATION_REDIRECT_URI || defaultBotstationRedirectUri, "Botstation OIDC redirect URI");
-  const loginHint = input.loginHint || currentConfig.staffAgentAccount || process.env.HBCLIENT_BOTSTATION_USERNAME || defaultBotstationUser;
+  const baseUrl = normalizeOidcUrl(input.baseUrl || currentConfig.baseUrl || currentIdentity?.servstationUrl || process.env.HBCLIENT_BOTSTATION_BASE_URL || defaultServstationBaseUrl, "Botstation base URL");
+  const issuerUrl = normalizeOidcUrl(input.issuerUrl || currentConfig.oidc?.issuerUrl || process.env.HBCLIENT_BOTSTATION_ISSUER_URL || defaultServstationIssuerUrl, "Botstation OIDC issuer URL");
+  const clientId = requiredString(input.clientId || currentConfig.oidc?.clientId || process.env.HBCLIENT_BOTSTATION_CLIENT_ID || defaultServstationClientId, "Botstation OIDC client id");
+  const scope = input.scope || currentConfig.oidc?.scope || process.env.HBCLIENT_BOTSTATION_SCOPE || defaultServstationScope;
+  const redirectUri = normalizeOidcUrl(input.redirectUri || currentConfig.oidc?.redirectUri || process.env.HBCLIENT_BOTSTATION_REDIRECT_URI || defaultServstationRedirectUri, "Botstation OIDC redirect URI");
+  const loginHint = input.loginHint || currentConfig.staffAgentAccount || process.env.HBCLIENT_BOTSTATION_USERNAME || defaultServstationUser;
   const savedPassword = await service.servstationA2AStaffAgentPassword();
   const autoLogin = localBotstationAutoLogin(issuerUrl, loginHint, savedPassword || process.env.HBCLIENT_BOTSTATION_PASSWORD);
   const discovery = await discoverOidcDocument(issuerUrl);
@@ -496,7 +492,7 @@ function localBotstationAutoLogin(issuerUrl: string, userId: string | undefined,
   if (!isLoopbackHost(issuer.hostname)) {
     return undefined;
   }
-  const resolvedPassword = password?.trim() || (userId.trim() === defaultBotstationUser ? defaultBotstationPassword : "");
+  const resolvedPassword = password?.trim() || (isDev && userId.trim() === defaultServstationUser ? defaultBotstationPassword : "");
   if (!resolvedPassword) {
     return undefined;
   }
@@ -641,7 +637,7 @@ async function createWindow(): Promise<void> {
 async function hbClientUpdateFeedContext(forceRefresh: boolean): Promise<{ baseUrl: string; accessToken?: string }> {
   const service = getRuntime();
   const [config, identity] = await Promise.all([service.servstationA2AConfig(), service.identityContext()]);
-  const baseUrl = config.baseUrl || identity?.servstationUrl || process.env.HBCLIENT_BOTSTATION_BASE_URL || defaultBotstationBaseUrl;
+  const baseUrl = config.baseUrl || identity?.servstationUrl || process.env.HBCLIENT_BOTSTATION_BASE_URL || defaultServstationBaseUrl;
   let accessToken: string | undefined;
   try {
     accessToken = await service.servstationA2AAccessToken(undefined, forceRefresh);
@@ -673,8 +669,8 @@ async function autoConnectLocalBotstation(): Promise<void> {
 }
 
 function isLocalBotstationConfig(config: ServstationA2AConfigUpdate & { oidc?: { issuerUrl?: string; accessTokenExpiresAt?: string }; reverse?: { status?: string } }): boolean {
-  const baseUrl = config.baseUrl || defaultBotstationBaseUrl;
-  const issuerUrl = config.oidc?.issuerUrl || defaultBotstationIssuerUrl;
+  const baseUrl = config.baseUrl || defaultServstationBaseUrl;
+  const issuerUrl = config.oidc?.issuerUrl || defaultServstationIssuerUrl;
   try {
     return isLoopbackHost(new URL(baseUrl).hostname) && isLoopbackHost(new URL(issuerUrl).hostname);
   } catch {
@@ -1022,9 +1018,9 @@ function validateAttachment(input: unknown) {
 
 function validatePermissionRuleInput(input: Omit<PermissionRule, "id" | "createdAt" | "scope"> & { id?: string }) {
   const value = object(input, "permission rule");
-  const behavior = requiredString(value.behavior, "permission behavior");
-  if (behavior !== "allow" && behavior !== "deny" && behavior !== "ask") {
-    throw new Error(`Invalid permission behavior: ${behavior}`);
+  const behavior = optionalEnum(value.behavior, ["allow", "deny", "ask"], "permission behavior");
+  if (!behavior) {
+    throw new Error("permission behavior is required.");
   }
   return {
     id: optionalString(value.id, "permission rule id"),
@@ -1599,18 +1595,24 @@ function optionalStringRecord(value: unknown, label: string): Record<string, str
   return Object.fromEntries(entries.map(([key, item]) => [key.trim(), item.trim()]));
 }
 
-function optionalEnum<T extends string>(value: unknown, choices: readonly T[], label: string): T | undefined {
+function optionalEnum<const T extends readonly string[]>(value: unknown, choices: T, label: string): T[number] | undefined {
   if (value === undefined || value === null || value === "") {
     return undefined;
   }
-  if (typeof value !== "string" || !choices.includes(value as T)) {
+  if (typeof value !== "string" || !choices.includes(value)) {
     throw new Error(`${label} is invalid.`);
   }
-  return value as T;
+  return value as T[number];
 }
 
-function compactUndefined<T extends Record<string, unknown>>(value: T): Partial<T> {
-  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)) as Partial<T>;
+type Compacted<T> = {
+  [K in keyof T as undefined extends T[K] ? never : K]: T[K];
+} & {
+  [K in keyof T as undefined extends T[K] ? K : never]?: Exclude<T[K], undefined>;
+};
+
+function compactUndefined<T extends Record<string, unknown>>(value: T): Compacted<T> {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)) as Compacted<T>;
 }
 
 function isLocalhost(host: string): boolean {

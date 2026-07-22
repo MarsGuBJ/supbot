@@ -3268,11 +3268,28 @@ button {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-width: 0;
   min-height: 120px;
 }
 
+.capability-card .activity-head {
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.capability-card .activity-head > div:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.capability-card .activity-head strong,
 .capability-card .muted {
   margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.capability-card .activity-head > .ant-space {
+  flex: 0 0 auto;
 }
 
 .capability-card-actions {

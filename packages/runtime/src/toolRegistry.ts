@@ -1,6 +1,6 @@
 import { isAbsolute, resolve } from "node:path";
 import type { GeneratedFile, LocalPackageInspection, LocalPackageInstallResult, SubagentConfig, ToolCallRecord } from "@supbot/shared";
-import type { OpenAiToolDefinition } from "./modelClient";
+import type { OpenAiToolDefinition } from "./modelAdapter";
 import { readLocalFile, shellLocalCommand, writeLocalFile, type LocalToolHost } from "./localTools";
 
 export type ToolRisk = "read" | "dangerous";

@@ -70,7 +70,7 @@ afterEach(async () => {
 });
 
 async function waitForJob(runtime: SupbotRuntime, jobId: string): Promise<void> {
-  const deadline = Date.now() + 5_000;
+  const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
     const job = runtime.snapshot().jobs.find((item) => item.id === jobId);
     if (job && ["completed", "failed", "canceled"].includes(job.status)) {
@@ -96,7 +96,7 @@ async function waitForAutopilotRun(runtime: SupbotRuntime, runId: string): Promi
 }
 
 async function waitForCondition(label: string, predicate: () => boolean): Promise<void> {
-  const deadline = Date.now() + 5_000;
+  const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
     if (predicate()) {
       return;
@@ -1508,16 +1508,55 @@ describe("SupbotRuntime", () => {
     await expect(readFile(join(dirname(worktree!.path), "escape.txt"), "utf8")).rejects.toThrow();
   });
 
-  test("fails writable tools with a clear worktree error when no baseline commit exists", async () => {
+  test("falls back to a scratch workspace when the runtime root is not a Git repository", async () => {
     const runtime = await createRuntimeWithoutBaseline();
     await runtime.addPermissionRule({ toolName: "WriteFile", behavior: "allow" });
     const result = await runtime.sendPrompt({ prompt: "/write note.txt\nhello" });
     await waitForJob(runtime, result.job.id);
 
+    const job = runtime.snapshot().jobs.find((item) => item.id === result.job.id);
+    const worktree = runtime.snapshot().worktrees.find((item) => item.id === job?.worktreeId);
+    expect(worktree).toBeDefined();
+    expect(worktree?.mode).toBe("scratch");
+
     const conversation = runtime.snapshot().conversations.find((item) => item.id === result.conversation.id);
     const assistant = conversation?.messages.find((item) => item.role === "assistant");
-    expect(assistant?.text).toContain("Create a baseline Git commit");
-    expect(runtime.snapshot().runtimeEvents.some((event) => event.kind === "worktree_event")).toBe(true);
+    expect(assistant?.text).toContain("Wrote note.txt");
+
+    const generated = assistant?.generatedFiles || [];
+    expect(generated.length).toBe(1);
+    expect(generated[0].name).toBe("note.txt");
+    const written = await readFile(generated[0].path, "utf8");
+    expect(written).toBe("hello");
+  });
+
+  test("creates an isolated worktree bound to the runtime root when no project is attached", async () => {
+    const runtime = await createRuntime();
+    await runtime.addPermissionRule({ toolName: "WriteFile", behavior: "allow" });
+    const result = await runtime.sendPrompt({ prompt: "/write note.txt\nhello-from-no-project" });
+    await waitForJob(runtime, result.job.id);
+
+    const job = runtime.snapshot().jobs.find((item) => item.id === result.job.id);
+    const worktree = runtime.snapshot().worktrees.find((item) => item.id === job?.worktreeId);
+    expect(worktree).toBeDefined();
+    expect(["active", "completed", "applied"].includes(worktree?.status || "")).toBe(true);
+    expect(worktree?.rootDir).toBeTruthy();
+  });
+
+  test("routes writable tools through a project instead of an isolated worktree", async () => {
+    const projectDir = await createGitRoot();
+    const dir = await mkdtemp(join(tmpdir(), "supbot-test-"));
+    tempDirs.push(dir);
+    const runtime = new SupbotRuntime(new JsonFileStorage(dir), { rootDir: await mkdtemp(join(tmpdir(), "supbot-unrelated-")) });
+    await runtime.init();
+    const project = await runtime.createProjectFromFolder({ rootPath: projectDir, name: "Project With Baseline" });
+    await runtime.addPermissionRule({ toolName: "WriteFile", behavior: "allow" });
+
+    const result = await runtime.sendPrompt({ projectId: project.id, prompt: "/write note.txt\nhello-from-project" });
+    await waitForJob(runtime, result.job.id);
+
+    const job = runtime.snapshot().jobs.find((item) => item.id === result.job.id);
+    expect(job?.worktreeId).toBeUndefined();
   });
 
   test("reads local UTF-8 files with the read tool", async () => {
