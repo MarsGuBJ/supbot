@@ -1,5 +1,12 @@
 import { useMemo, useState } from "react";
-import { DeleteOutlined, DownOutlined, FolderOpenOutlined, FolderOutlined, PlusOutlined, RightOutlined } from "@ant-design/icons";
+import {
+  DeleteOutlined,
+  DownOutlined,
+  FolderOpenOutlined,
+  FolderOutlined,
+  PlusOutlined,
+  RightOutlined,
+} from "@ant-design/icons";
 import { Button, Form, Input, Modal, Popconfirm, Tooltip, message } from "antd";
 import type { Conversation, Project, RuntimeSnapshot } from "@supbot/shared";
 import { conversationTitle, formatDateTime } from "@supbot/shared";
@@ -15,7 +22,7 @@ export function LeftPanel({
   collapsed,
   refresh,
   startNewConversation,
-  t
+  t,
 }: {
   snapshot: RuntimeSnapshot;
   activeConversationId: string;
@@ -54,7 +61,9 @@ export function LeftPanel({
         <div className="panel-scroll">
           <section className="panel-section">
             <div className="panel-heading">
-              <div className="section-title"><FolderOpenOutlined /> {t("Projects")}</div>
+              <div className="section-title">
+                <FolderOpenOutlined /> {t("Projects")}
+              </div>
               <Tooltip title={t("New conversation")}>
                 <Button
                   size="small"
@@ -120,7 +129,7 @@ export function HistoryPanel({
   refresh,
   startNewConversation,
   t,
-  embedded = false
+  embedded = false,
 }: {
   conversations: Conversation[];
   projects: Project[];
@@ -189,7 +198,7 @@ export function ProjectConversationGroup({
   onSelectConversation,
   onCreateConversation,
   refresh,
-  t
+  t,
 }: {
   project?: Project;
   conversations: Conversation[];
@@ -220,7 +229,9 @@ export function ProjectConversationGroup({
   };
 
   return (
-    <section className={`project-history-group ${activeProjectId === projectId ? "is-active" : ""} ${archived ? "is-archived" : ""}`}>
+    <section
+      className={`project-history-group ${activeProjectId === projectId ? "is-active" : ""} ${archived ? "is-archived" : ""}`}
+    >
       <div className="project-history-heading">
         <Tooltip title={t(collapsed ? "Expand project" : "Collapse project")}>
           <Button
@@ -238,7 +249,9 @@ export function ProjectConversationGroup({
           <strong title={title}>{title}</strong>
           <span>{conversations.length}</span>
         </button>
-        <Tooltip title={archived ? t("Archived project") : t(project ? "New project conversation" : "New conversation")}>
+        <Tooltip
+          title={archived ? t("Archived project") : t(project ? "New project conversation" : "New conversation")}
+        >
           <Button
             type="text"
             size="small"
@@ -254,10 +267,16 @@ export function ProjectConversationGroup({
       {collapsed ? null : (
         <div className="project-conversation-list">
           {visibleConversations.map((conversation) => (
-            <div className={`activity-item history-item ${conversation.id === activeConversationId ? "is-active" : ""}`} key={conversation.id}>
+            <div
+              className={`activity-item history-item ${conversation.id === activeConversationId ? "is-active" : ""}`}
+              key={conversation.id}
+            >
               <button className="history-item-content" type="button" onClick={() => onSelectConversation(conversation)}>
                 <strong>{conversationTitle(conversation, t("New conversation"))}</strong>
-                <span className="muted">{formatDateTime(conversation.lastMessageAt || conversation.updatedAt)} · {conversation.messages.length} {t(conversation.messages.length === 1 ? "message" : "messages")}</span>
+                <span className="muted">
+                  {formatDateTime(conversation.lastMessageAt || conversation.updatedAt)} ·{" "}
+                  {conversation.messageCount || 0} {t((conversation.messageCount || 0) === 1 ? "message" : "messages")}
+                </span>
               </button>
               <Popconfirm
                 title={t("Delete conversation?")}
@@ -266,11 +285,19 @@ export function ProjectConversationGroup({
                   await refresh();
                 }}
               >
-                <Button size="small" type="text" danger icon={<DeleteOutlined />} aria-label={t("Delete conversation?")} />
+                <Button
+                  size="small"
+                  type="text"
+                  danger
+                  icon={<DeleteOutlined />}
+                  aria-label={t("Delete conversation?")}
+                />
               </Popconfirm>
             </div>
           ))}
-          {!conversations.length ? <div className="project-history-empty">{t("No conversations in this project")}</div> : null}
+          {!conversations.length ? (
+            <div className="project-history-empty">{t("No conversations in this project")}</div>
+          ) : null}
           {hasHiddenConversations ? (
             <button className="project-history-more" type="button" onClick={() => setShowAll((value) => !value)}>
               {showAll ? t("Collapse display") : t("Expand display")}

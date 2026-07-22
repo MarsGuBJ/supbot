@@ -1,16 +1,90 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ApiOutlined, CalendarOutlined, CloseCircleOutlined, CopyOutlined, DatabaseOutlined, DeleteOutlined, DownOutlined, DownloadOutlined, EditOutlined, FileTextOutlined, FolderOpenOutlined, FolderOutlined, MailOutlined, MessageOutlined, OrderedListOutlined, PaperClipOutlined, PlusOutlined, ReloadOutlined, RightOutlined, RobotOutlined, SaveOutlined, SearchOutlined, SendOutlined, StopOutlined, ToolOutlined } from "@ant-design/icons";
-import { Alert, Badge, Button, ConfigProvider, Empty, Form, Input, Modal, Popconfirm, Popover, Segmented, Select, Space, Switch, Tabs, Tag, Tooltip, Typography, message } from "antd";
+import {
+  ApiOutlined,
+  CalendarOutlined,
+  CloseCircleOutlined,
+  CopyOutlined,
+  DatabaseOutlined,
+  DeleteOutlined,
+  DownOutlined,
+  DownloadOutlined,
+  EditOutlined,
+  FileTextOutlined,
+  FolderOpenOutlined,
+  FolderOutlined,
+  MailOutlined,
+  MessageOutlined,
+  OrderedListOutlined,
+  PaperClipOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+  RightOutlined,
+  RobotOutlined,
+  SaveOutlined,
+  SearchOutlined,
+  SendOutlined,
+  StopOutlined,
+  ToolOutlined,
+} from "@ant-design/icons";
+import {
+  Alert,
+  Badge,
+  Button,
+  ConfigProvider,
+  Empty,
+  Form,
+  Input,
+  Modal,
+  Popconfirm,
+  Popover,
+  Select,
+  Space,
+  Switch,
+  Tabs,
+  Tag,
+  Tooltip,
+  Typography,
+  message,
+} from "antd";
 import type { TextAreaRef } from "antd/es/input/TextArea";
 import zhCN from "antd/locale/zh_CN";
 import enUS from "antd/locale/en_US";
-import type { Attachment, Conversation, HBClientUpdateState, Project, RuntimeSnapshot, ScheduledJobInput, ServstationClientSnapshot, ServstationConversation, ServstationLocalCapabilityAsset, ServstationProject, ServstationProjectResource, ServstationScheduledJob, ServstationServiceDefinition, ServstationSessionJob, SubagentConfig, TranscriptLoadResult } from "@supbot/shared";
+import type {
+  Attachment,
+  ChatMessage,
+  HBClientUpdateState,
+  Project,
+  RuntimeSnapshot,
+  ScheduledJobInput,
+  ServstationClientSnapshot,
+  ServstationConversation,
+  ServstationLocalCapabilityAsset,
+  ServstationProject,
+  ServstationProjectResource,
+  ServstationScheduledJob,
+  ServstationServiceDefinition,
+  ServstationSessionJob,
+  SubagentConfig,
+  TranscriptLoadResult,
+} from "@supbot/shared";
 import { buildSlashCommands, formatDateTime, latestAssistantMessage, resolveSlashCommand } from "@supbot/shared";
 import { loadLanguage, saveLanguage, translate, type Language } from "./i18n";
 import { mergeServstationAutopilotEvent, servstationAutopilotIsActive } from "./servstationAutopilot";
-import { buildEffectiveServstationServices, buildVisibleServstationCapabilities, filterVisibleServstationCapabilities, formatServstationCapabilityPromptDirective, type ServstationVisibleCapability } from "./servstationCapabilities";
-import { groupServstationConversations, servstationJobsForConversation, servstationMessagesForConversation, servstationPromptTarget, type ServstationConversationGroup } from "./servstationProjects";
+import {
+  buildEffectiveServstationServices,
+  buildVisibleServstationCapabilities,
+  filterVisibleServstationCapabilities,
+  formatServstationCapabilityPromptDirective,
+  type ServstationVisibleCapability,
+} from "./servstationCapabilities";
+import {
+  groupServstationConversations,
+  servstationJobsForConversation,
+  servstationMessagesForConversation,
+  servstationPromptTarget,
+  type ServstationConversationGroup,
+} from "./servstationProjects";
 import "./styles.css";
 import { ChatPanel } from "./components/ChatPanel";
 import { LeftPanel } from "./components/LeftPanel";
@@ -18,8 +92,24 @@ import { RightPanel } from "./components/RightPanel";
 import { Topbar } from "./components/Topbar";
 import { readClipboardText, selectedTextWithin, selectionMemoryTitle, writeClipboardText } from "./lib/clipboard";
 import { formatFileSize } from "./lib/flowSchema";
-import { servstationConversationTitle, servstationJobIsTerminal, servstationMessagesFromTranscript, servstationStatusColor, type ServstationChatMessage } from "./lib/servstationFormat";
-import { applyCompactBoundary, applyJobEvent, applyMemoryCandidate, applyMessageDelta, applyMessageEvent, applyPendingPermission, applyRuntimeEvent, applyToolProgress, clearPendingPermission } from "./lib/snapshotApply";
+import {
+  servstationConversationTitle,
+  servstationJobIsTerminal,
+  servstationMessagesFromTranscript,
+  servstationStatusColor,
+  type ServstationChatMessage,
+} from "./lib/servstationFormat";
+import {
+  applyCompactBoundary,
+  applyJobEvent,
+  applyMemoryCandidate,
+  applyMessageDelta,
+  applyMessageEvent,
+  applyPendingPermission,
+  applyRuntimeEvent,
+  applyToolProgress,
+  clearPendingPermission,
+} from "./lib/snapshotApply";
 import type { DetailPanel, PromptContextMenu, SelectionContextMenu, Translator, WorkspaceView } from "./lib/types";
 import { ConfigWorkspace } from "./views/ConfigWorkspace";
 import { MarketWorkspace } from "./views/MarketWorkspace";
@@ -38,7 +128,7 @@ const theme = {
     colorTextBase: "#1a1d23",
     colorBorder: "#dde0e5",
     borderRadius: 8,
-    fontFamily: "Aptos, Bahnschrift, Segoe UI, sans-serif"
+    fontFamily: "Aptos, Bahnschrift, Segoe UI, sans-serif",
   },
   components: {
     Button: { borderRadius: 8, primaryShadow: "0 8px 22px rgba(212, 117, 10, 0.16)" },
@@ -46,9 +136,48 @@ const theme = {
     Select: { optionSelectedBg: "#FFEFE0" },
     Segmented: { itemSelectedBg: "#FFEFE0", itemSelectedColor: "#B8650A" },
     Tag: { borderRadiusSM: 6 },
-    Card: { borderRadius: 8 }
-  }
+    Card: { borderRadius: 8 },
+  },
 };
+
+function mergeRuntimeSnapshot(
+  current: RuntimeSnapshot | null,
+  next: RuntimeSnapshot,
+  activeConversationId: string,
+): RuntimeSnapshot {
+  if (!current) {
+    return next;
+  }
+  const activeId = activeConversationId || next.activeConversationId || next.conversations[0]?.id || "";
+  return {
+    ...next,
+    activeConversationId: activeId || undefined,
+    conversations: next.conversations.map((conversation) => {
+      if (conversation.id !== activeId) {
+        return { ...conversation, messages: [] };
+      }
+      const previous = current.conversations.find((item) => item.id === conversation.id);
+      if (!previous?.messages.length) {
+        return conversation;
+      }
+      const messages = mergeMessages(previous.messages, conversation.messages);
+      return {
+        ...conversation,
+        messages,
+        messageCount: Math.max(conversation.messageCount || 0, previous.messageCount || 0, messages.length),
+      };
+    }),
+  };
+}
+
+function mergeMessages(existing: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
+  const incomingById = new Map(incoming.map((message) => [message.id, message]));
+  const existingIds = new Set(existing.map((message) => message.id));
+  return [
+    ...existing.map((message) => incomingById.get(message.id) || message),
+    ...incoming.filter((message) => !existingIds.has(message.id)),
+  ];
+}
 
 function App() {
   const [language, setLanguageState] = useState<Language>(() => loadLanguage());
@@ -67,16 +196,20 @@ function App() {
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [transcriptResult, setTranscriptResult] = useState<TranscriptLoadResult | null>(null);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [focusConfigTab, setFocusConfigTab] = useState("model");
   const [userDataPath, setUserDataPath] = useState("");
   const [updateState, setUpdateState] = useState<HBClientUpdateState>({ status: "idle", currentVersion: "" });
   const [messageApi, contextHolder] = message.useMessage();
   const [modalApi, modalContextHolder] = Modal.useModal();
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const messageStackRef = useRef<HTMLDivElement | null>(null);
+  const activeConversationIdRef = useRef("");
   const shouldStickToBottomRef = useRef(true);
   const promptedUpdateRef = useRef("");
-  const t = useCallback((key: string, vars?: Record<string, string | number>) => translate(language, key, vars), [language]);
+  const t = useCallback(
+    (key: string, vars?: Record<string, string | number>) => translate(language, key, vars),
+    [language],
+  );
   const slashCommandList = useMemo(() => buildSlashCommands(t), [t]);
 
   const updateMessageStickiness = useCallback(() => {
@@ -106,11 +239,16 @@ function App() {
     saveLanguage(next);
   };
 
-  const refresh = useCallback(async () => {
-    const next = await window.supbot.snapshot();
-    setSnapshot(next);
-    setActiveConversationId((current) => current || next.conversations[0]?.id || "");
+  const applySnapshot = useCallback((next: RuntimeSnapshot) => {
+    const selectedId = activeConversationIdRef.current || next.activeConversationId || next.conversations[0]?.id || "";
+    activeConversationIdRef.current = selectedId;
+    setSnapshot((current) => mergeRuntimeSnapshot(current, next, selectedId));
+    setActiveConversationId(selectedId);
   }, []);
+
+  const refresh = useCallback(async () => {
+    applySnapshot(await window.supbot.snapshot(activeConversationIdRef.current || undefined));
+  }, [applySnapshot]);
 
   const startHBClientUpdate = useCallback(async () => {
     try {
@@ -133,50 +271,72 @@ function App() {
     void window.supbot.userDataPath().then(setUserDataPath);
     return window.supbot.onEvent((event) => {
       if (event.type === "snapshot") {
-        setSnapshot(event.snapshot);
-        setActiveConversationId((current) => current || event.snapshot.conversations[0]?.id || "");
+        applySnapshot(event.snapshot);
       }
       if (event.type === "message_delta") {
-        setSnapshot((current) => current ? applyMessageDelta(current, event.conversationId, event.messageId, event.delta) : current);
+        setSnapshot((current) =>
+          current ? applyMessageDelta(current, event.conversationId, event.messageId, event.delta) : current,
+        );
       }
       if (event.type === "message") {
-        setSnapshot((current) => current ? applyMessageEvent(current, event.conversationId, event.message) : current);
+        setSnapshot((current) => (current ? applyMessageEvent(current, event.conversationId, event.message) : current));
       }
       if (event.type === "job") {
-        setSnapshot((current) => current ? applyJobEvent(current, event.job) : current);
+        setSnapshot((current) => (current ? applyJobEvent(current, event.job) : current));
       }
       if (event.type === "tool_progress") {
-        setSnapshot((current) => current ? applyToolProgress(current, event.toolCall) : current);
+        setSnapshot((current) => (current ? applyToolProgress(current, event.toolCall) : current));
       }
       if (event.type === "tool_permission") {
-        setSnapshot((current) => current ? applyPendingPermission(current, event.permission) : current);
+        setSnapshot((current) => (current ? applyPendingPermission(current, event.permission) : current));
       }
       if (event.type === "permission_timeout") {
-        setSnapshot((current) => current ? clearPendingPermission(current, event.permission) : current);
+        setSnapshot((current) => (current ? clearPendingPermission(current, event.permission) : current));
       }
       if (event.type === "compact") {
-        setSnapshot((current) => current ? applyCompactBoundary(current, event.boundary) : current);
+        setSnapshot((current) => (current ? applyCompactBoundary(current, event.boundary) : current));
       }
       if (event.type === "memory_changed") {
-        setSnapshot((current) => current ? { ...current, memory: event.memory } : current);
+        setSnapshot((current) => (current ? { ...current, memory: event.memory } : current));
       }
       if (event.type === "memory_candidate") {
-        setSnapshot((current) => current ? applyMemoryCandidate(current, event.candidate) : current);
+        setSnapshot((current) => (current ? applyMemoryCandidate(current, event.candidate) : current));
       }
       if (event.type === "query_event" || event.type === "subagent_event") {
-        setSnapshot((current) => current ? applyRuntimeEvent(current, event.event) : current);
+        setSnapshot((current) => (current ? applyRuntimeEvent(current, event.event) : current));
       }
       if (event.type === "servstation_a2a") {
-        setSnapshot((current) => current ? {
-          ...applyRuntimeEvent(current, event.event!),
-          servstationA2A: { config: event.config }
-        } : current);
+        setSnapshot((current) =>
+          current
+            ? {
+                ...applyRuntimeEvent(current, event.event!),
+                servstationA2A: { config: event.config },
+              }
+            : current,
+        );
       }
       if (event.type === "error") {
         message.error(event.message);
       }
     });
-  }, [refresh]);
+  }, [applySnapshot, refresh]);
+
+  useEffect(() => {
+    activeConversationIdRef.current = activeConversationId;
+    setHistoryLoading(false);
+    if (!activeConversationId || snapshot?.activeConversationId === activeConversationId) {
+      return;
+    }
+    let canceled = false;
+    void window.supbot.snapshot(activeConversationId).then((next) => {
+      if (!canceled) {
+        applySnapshot(next);
+      }
+    });
+    return () => {
+      canceled = true;
+    };
+  }, [activeConversationId, applySnapshot, snapshot?.activeConversationId]);
 
   useEffect(() => {
     let mounted = true;
@@ -212,7 +372,7 @@ function App() {
       okText: chinese ? "立即升级" : "Upgrade now",
       cancelText: chinese ? "稍后" : "Later",
       icon: <DownloadOutlined />,
-      onOk: () => startHBClientUpdate()
+      onOk: () => startHBClientUpdate(),
     });
   }, [
     language,
@@ -220,7 +380,7 @@ function App() {
     startHBClientUpdate,
     updateState.availableVersion,
     updateState.currentVersion,
-    updateState.status
+    updateState.status,
   ]);
 
   useEffect(() => {
@@ -233,34 +393,6 @@ function App() {
   }, [activeConversationId, scrollMessagesToBottom, view]);
 
   useEffect(() => {
-    if (view !== "chat") {
-      return;
-    }
-    const scrollElement = scrollRef.current;
-    const stackElement = messageStackRef.current;
-    if (!scrollElement || !stackElement || typeof ResizeObserver === "undefined") {
-      return;
-    }
-    let frame = 0;
-    const keepPinned = () => {
-      if (shouldStickToBottomRef.current) {
-        scrollElement.scrollTop = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
-      }
-    };
-    const schedulePin = () => {
-      window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(keepPinned);
-    };
-    const observer = new ResizeObserver(schedulePin);
-    observer.observe(stackElement);
-    schedulePin();
-    return () => {
-      window.cancelAnimationFrame(frame);
-      observer.disconnect();
-    };
-  }, [activeConversationId, view]);
-
-  useEffect(() => {
     if (!shouldStickToBottomRef.current) {
       return;
     }
@@ -270,25 +402,57 @@ function App() {
 
   const activeConversation = useMemo(
     () => snapshot?.conversations.find((item) => item.id === activeConversationId) || snapshot?.conversations[0],
-    [snapshot?.conversations, activeConversationId]
+    [snapshot?.conversations, activeConversationId],
   );
+  const hasOlderMessages = Boolean(
+    activeConversation && activeConversation.messages.length < (activeConversation.messageCount || 0),
+  );
+  const loadOlderMessages = useCallback(async () => {
+    if (!activeConversation || historyLoading || !hasOlderMessages) {
+      return;
+    }
+    setHistoryLoading(true);
+    try {
+      const page = await window.supbot.loadConversationHistory(
+        activeConversation.id,
+        activeConversation.messages[0]?.id,
+        50,
+      );
+      setSnapshot((current) => {
+        if (!current) {
+          return current;
+        }
+        return {
+          ...current,
+          conversations: current.conversations.map((conversation) => {
+            if (conversation.id !== page.conversationId) {
+              return conversation;
+            }
+            const messages = mergeMessages(page.messages, conversation.messages);
+            return { ...conversation, messages, messageCount: Math.max(page.total, messages.length) };
+          }),
+        };
+      });
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [activeConversation, hasOlderMessages, historyLoading, messageApi]);
   useEffect(() => {
     if (activeConversation) {
       setActiveProjectId(activeConversation.projectId || "");
     }
   }, [activeConversation?.id, activeConversation?.projectId]);
-  const runningJob = useMemo(
-    () => {
-      const conversationId = activeConversation?.id || activeConversationId;
-      if (!conversationId) {
-        return undefined;
-      }
-      return snapshot?.jobs.find((job) =>
-        job.conversationId === conversationId && (job.status === "queued" || job.status === "running")
-      );
-    },
-    [activeConversation?.id, activeConversationId, snapshot?.jobs]
-  );
+  const runningJob = useMemo(() => {
+    const conversationId = activeConversation?.id || activeConversationId;
+    if (!conversationId) {
+      return undefined;
+    }
+    return snapshot?.jobs.find(
+      (job) => job.conversationId === conversationId && (job.status === "queued" || job.status === "running"),
+    );
+  }, [activeConversation?.id, activeConversationId, snapshot?.jobs]);
   const startNewConversation = async (projectId?: string | null) => {
     const targetProjectId = projectId === undefined ? activeProjectId || undefined : projectId || undefined;
     const conversation = await window.supbot.createConversation({ projectId: targetProjectId });
@@ -327,7 +491,7 @@ function App() {
     if (!text || sending) {
       return false;
     }
-    if (text.startsWith("/") && await runSlashAction(text)) {
+    if (text.startsWith("/") && (await runSlashAction(text))) {
       return true;
     }
     setSending(true);
@@ -337,7 +501,7 @@ function App() {
         conversationId: activeConversation?.id,
         projectId: activeProjectId || undefined,
         prompt: text,
-        attachments
+        attachments,
       });
       setActiveConversationId(result.conversation.id);
       await refresh();
@@ -358,23 +522,29 @@ function App() {
     await refresh();
   };
 
-  const approveToolPermission = useCallback(async (id: string) => {
-    try {
-      await window.supbot.approveToolPermission(id);
-      await refresh();
-    } catch (error) {
-      messageApi.error((error as Error).message);
-    }
-  }, [messageApi, refresh]);
+  const approveToolPermission = useCallback(
+    async (id: string) => {
+      try {
+        await window.supbot.approveToolPermission(id);
+        await refresh();
+      } catch (error) {
+        messageApi.error((error as Error).message);
+      }
+    },
+    [messageApi, refresh],
+  );
 
-  const denyToolPermission = useCallback(async (id: string) => {
-    try {
-      await window.supbot.denyToolPermission(id);
-      await refresh();
-    } catch (error) {
-      messageApi.error((error as Error).message);
-    }
-  }, [messageApi, refresh]);
+  const denyToolPermission = useCallback(
+    async (id: string) => {
+      try {
+        await window.supbot.denyToolPermission(id);
+        await refresh();
+      } catch (error) {
+        messageApi.error((error as Error).message);
+      }
+    },
+    [messageApi, refresh],
+  );
 
   const pickAttachments = async () => {
     const picked = await window.supbot.pickAttachments();
@@ -391,35 +561,41 @@ function App() {
     messageApi.success(t("Copied latest response."));
   };
 
-  const copySelectedText = useCallback(async (text: string) => {
-    try {
-      await writeClipboardText(text);
-      messageApi.success(t("已复制选中文本。"));
-    } catch (error) {
-      messageApi.error((error as Error).message);
-    }
-  }, [messageApi, t]);
+  const copySelectedText = useCallback(
+    async (text: string) => {
+      try {
+        await writeClipboardText(text);
+        messageApi.success(t("已复制选中文本。"));
+      } catch (error) {
+        messageApi.error((error as Error).message);
+      }
+    },
+    [messageApi, t],
+  );
 
-  const addSelectedTextToMemory = useCallback(async (text: string) => {
-    const content = text.trim();
-    if (!content) {
-      return;
-    }
-    try {
-      await window.supbot.addMemory({
-        type: "fact",
-        scope: "global",
-        title: selectionMemoryTitle(content),
-        content,
-        source: "chat-selection",
-        kind: "fact"
-      });
-      messageApi.success(t("Memory saved."));
-      await refresh();
-    } catch (error) {
-      messageApi.error((error as Error).message);
-    }
-  }, [messageApi, refresh, t]);
+  const addSelectedTextToMemory = useCallback(
+    async (text: string) => {
+      const content = text.trim();
+      if (!content) {
+        return;
+      }
+      try {
+        await window.supbot.addMemory({
+          type: "fact",
+          scope: "global",
+          title: selectionMemoryTitle(content),
+          content,
+          source: "chat-selection",
+          kind: "fact",
+        });
+        messageApi.success(t("Memory saved."));
+        await refresh();
+      } catch (error) {
+        messageApi.error((error as Error).message);
+      }
+    },
+    [messageApi, refresh, t],
+  );
 
   const compactActiveConversation = useCallback(async () => {
     if (!activeConversation) {
@@ -452,7 +628,9 @@ function App() {
         {contextHolder}
         {modalContextHolder}
         <div className="boot-screen">
-          <div className="brand-mark"><RobotOutlined /></div>
+          <div className="brand-mark">
+            <RobotOutlined />
+          </div>
           <Typography.Title level={3}>{t("Starting HBClient")}</Typography.Title>
         </div>
       </ConfigProvider>
@@ -479,7 +657,9 @@ function App() {
           startUpdate={startHBClientUpdate}
         />
         {view === "chat" ? (
-          <section className={`workspace-grid ${leftCollapsed ? "left-collapsed" : ""} ${rightCollapsed ? "right-collapsed" : ""}`}>
+          <section
+            className={`workspace-grid ${leftCollapsed ? "left-collapsed" : ""} ${rightCollapsed ? "right-collapsed" : ""}`}
+          >
             <LeftPanel
               snapshot={snapshot}
               activeConversationId={activeConversation?.id || ""}
@@ -508,8 +688,10 @@ function App() {
               addSelectedTextToMemory={addSelectedTextToMemory}
               compactConversation={compactActiveConversation}
               loadTranscript={loadActiveTranscript}
+              loadOlderMessages={loadOlderMessages}
+              hasOlderMessages={hasOlderMessages}
+              historyLoading={historyLoading}
               scrollRef={scrollRef}
-              messageStackRef={messageStackRef}
               onMessageScroll={updateMessageStickiness}
               t={t}
               slashCommands={slashCommandList}
@@ -601,7 +783,7 @@ function ServerAgentWorkspace({
   snapshot,
   refreshRuntime,
   copySelectedText,
-  t
+  t,
 }: {
   snapshot: RuntimeSnapshot;
   refreshRuntime: () => Promise<void>;
@@ -636,57 +818,61 @@ function ServerAgentWorkspace({
   const activeProjectId = draftConversation ? draftProjectId : activeConversation?.projectId || "";
   const activeProject = remote?.projects.find((project) => project.id === activeProjectId);
   const activeConversationJobs = useMemo(
-    () => draftConversation ? [] : servstationJobsForConversation(remote?.jobs || [], activeConversation?.id),
-    [activeConversation?.id, draftConversation, remote?.jobs]
+    () => (draftConversation ? [] : servstationJobsForConversation(remote?.jobs || [], activeConversation?.id)),
+    [activeConversation?.id, draftConversation, remote?.jobs],
   );
   const activeConversationMessages = useMemo(
-    () => draftConversation ? [] : servstationMessagesForConversation(remote?.conversations || [], activeConversation?.id),
-    [activeConversation?.id, draftConversation, remote?.conversations]
+    () =>
+      draftConversation ? [] : servstationMessagesForConversation(remote?.conversations || [], activeConversation?.id),
+    [activeConversation?.id, draftConversation, remote?.conversations],
   );
   const messages = useMemo(
     () => servstationMessagesFromTranscript(activeConversationMessages, activeConversationJobs),
-    [activeConversationJobs, activeConversationMessages]
+    [activeConversationJobs, activeConversationMessages],
   );
   const runningJob = useMemo(
     () => [...activeConversationJobs].reverse().find((job) => !servstationJobIsTerminal(job)),
-    [activeConversationJobs]
+    [activeConversationJobs],
   );
   const autopilotRunId = remote?.autopilotRun?.id || "";
   const autopilotActive = servstationAutopilotIsActive(remote?.autopilotRun);
   const hasRunningJob = Boolean(runningJob);
 
-  const loadRemote = useCallback(async (conversationId?: string, silent = false, preserveDraft = false) => {
-    const requestedConversationId = conversationId || "";
-    if (requestedConversationId !== selectedConversationRef.current) {
-      return;
-    }
-    const requestId = ++remoteRequestRef.current;
-    if (!silent) {
-      setLoading(true);
-    }
-    try {
-      const next = await window.supbot.getServstationClientSnapshot({ conversationId });
-      if (requestId !== remoteRequestRef.current || requestedConversationId !== selectedConversationRef.current) {
+  const loadRemote = useCallback(
+    async (conversationId?: string, silent = false, preserveDraft = false) => {
+      const requestedConversationId = conversationId || "";
+      if (requestedConversationId !== selectedConversationRef.current) {
         return;
       }
-      setRemote(next);
-      if (!preserveDraft) {
-        const selected = next.activeConversationId || next.conversations[0]?.id || "";
-        selectedConversationRef.current = selected;
-        setActiveConversationId(selected);
-        setDraftConversation(false);
-        setDraftProjectId("");
+      const requestId = ++remoteRequestRef.current;
+      if (!silent) {
+        setLoading(true);
       }
-    } catch (error) {
-      if (requestId === remoteRequestRef.current) {
-        messageApi.error((error as Error).message);
+      try {
+        const next = await window.supbot.getServstationClientSnapshot({ conversationId });
+        if (requestId !== remoteRequestRef.current || requestedConversationId !== selectedConversationRef.current) {
+          return;
+        }
+        setRemote(next);
+        if (!preserveDraft) {
+          const selected = next.activeConversationId || next.conversations[0]?.id || "";
+          selectedConversationRef.current = selected;
+          setActiveConversationId(selected);
+          setDraftConversation(false);
+          setDraftProjectId("");
+        }
+      } catch (error) {
+        if (requestId === remoteRequestRef.current) {
+          messageApi.error((error as Error).message);
+        }
+      } finally {
+        if (!silent && requestId === remoteRequestRef.current) {
+          setLoading(false);
+        }
       }
-    } finally {
-      if (!silent && requestId === remoteRequestRef.current) {
-        setLoading(false);
-      }
-    }
-  }, [messageApi]);
+    },
+    [messageApi],
+  );
 
   useEffect(() => {
     void loadRemote(activeConversationId || undefined);
@@ -709,9 +895,11 @@ function ServerAgentWorkspace({
     }
     let refreshTimer: number | undefined;
     const unsubscribe = window.supbot.onServstationAutopilotEvent(autopilotRunId, (event) => {
-      setRemote((current) => current?.autopilotRun?.id === autopilotRunId
-        ? { ...current, autopilotEvents: mergeServstationAutopilotEvent(current.autopilotEvents, event) }
-        : current);
+      setRemote((current) =>
+        current?.autopilotRun?.id === autopilotRunId
+          ? { ...current, autopilotEvents: mergeServstationAutopilotEvent(current.autopilotEvents, event) }
+          : current,
+      );
       if (refreshTimer !== undefined) {
         window.clearTimeout(refreshTimer);
       }
@@ -730,7 +918,11 @@ function ServerAgentWorkspace({
   const connectRemote = async () => {
     setConnecting(true);
     try {
-      await ensureServstationOidcSession(snapshot.servstationA2A.config, snapshot.identityContext, snapshot.servstationA2A.config.staffAgentAccount);
+      await ensureServstationOidcSession(
+        snapshot.servstationA2A.config,
+        snapshot.identityContext,
+        snapshot.servstationA2A.config.staffAgentAccount,
+      );
       await window.supbot.connectServstationReverseBridge();
       await refreshRuntime();
       await loadRemote(activeConversationId || undefined);
@@ -781,9 +973,11 @@ function ServerAgentWorkspace({
     setBusyId("project:create");
     try {
       const project = await window.supbot.createServstationProject(name);
-      setRemote((current) => current
-        ? { ...current, projects: [project, ...current.projects.filter((item) => item.id !== project.id)] }
-        : current);
+      setRemote((current) =>
+        current
+          ? { ...current, projects: [project, ...current.projects.filter((item) => item.id !== project.id)] }
+          : current,
+      );
       messageApi.success(t("Project created."));
       return true;
     } catch (error) {
@@ -798,16 +992,18 @@ function ServerAgentWorkspace({
     setBusyId(`project:rename:${project.id}`);
     try {
       const updated = await window.supbot.updateServstationProject(project.id, name);
-      setRemote((current) => current
-        ? {
-            ...current,
-            projects: current.projects.map((item) => item.id === updated.id ? { ...item, ...updated } : item),
-            conversations: current.conversations.map((conversation) =>
-              conversation.projectId === updated.id ? { ...conversation, projectName: updated.name } : conversation
-            )
-          }
-        : current);
-      setSelectedProject((current) => current?.id === updated.id ? { ...current, ...updated } : current);
+      setRemote((current) =>
+        current
+          ? {
+              ...current,
+              projects: current.projects.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)),
+              conversations: current.conversations.map((conversation) =>
+                conversation.projectId === updated.id ? { ...conversation, projectName: updated.name } : conversation,
+              ),
+            }
+          : current,
+      );
+      setSelectedProject((current) => (current?.id === updated.id ? { ...current, ...updated } : current));
       messageApi.success(t("Project renamed."));
       return true;
     } catch (error) {
@@ -822,18 +1018,20 @@ function ServerAgentWorkspace({
     setBusyId(`project:delete:${project.id}`);
     try {
       await window.supbot.deleteServstationProject(project.id);
-      setRemote((current) => current
-        ? {
-            ...current,
-            projects: current.projects.filter((item) => item.id !== project.id),
-            conversations: current.conversations.map((conversation) =>
-              conversation.projectId === project.id
-                ? { ...conversation, projectId: undefined, projectName: undefined }
-                : conversation
-            )
-          }
-        : current);
-      setDraftProjectId((current) => current === project.id ? "" : current);
+      setRemote((current) =>
+        current
+          ? {
+              ...current,
+              projects: current.projects.filter((item) => item.id !== project.id),
+              conversations: current.conversations.map((conversation) =>
+                conversation.projectId === project.id
+                  ? { ...conversation, projectId: undefined, projectName: undefined }
+                  : conversation,
+              ),
+            }
+          : current,
+      );
+      setDraftProjectId((current) => (current === project.id ? "" : current));
       if (selectedProject?.id === project.id) {
         setProjectResourcesOpen(false);
         setSelectedProject(null);
@@ -868,16 +1066,18 @@ function ServerAgentWorkspace({
     try {
       await window.supbot.deleteServstationProjectResource(selectedProject.id, resource.id);
       setProjectResources((items) => items.filter((item) => item.id !== resource.id));
-      setRemote((current) => current
-        ? {
-            ...current,
-            projects: current.projects.map((project) =>
-              project.id === selectedProject.id
-                ? { ...project, resourceCount: Math.max((project.resourceCount || 0) - 1, 0) }
-                : project
-            )
-          }
-        : current);
+      setRemote((current) =>
+        current
+          ? {
+              ...current,
+              projects: current.projects.map((project) =>
+                project.id === selectedProject.id
+                  ? { ...project, resourceCount: Math.max((project.resourceCount || 0) - 1, 0) }
+                  : project,
+              ),
+            }
+          : current,
+      );
       messageApi.success(t("Resource deleted."));
     } catch (error) {
       messageApi.error((error as Error).message);
@@ -898,7 +1098,7 @@ function ServerAgentWorkspace({
       const result = await window.supbot.sendServstationPrompt({
         ...servstationPromptTarget(activeConversation?.id, draftConversation ? draftProjectId : undefined),
         prompt: text,
-        attachments
+        attachments,
       });
       remoteRequestRef.current += 1;
       selectedConversationRef.current = result.conversation.id;
@@ -937,11 +1137,17 @@ function ServerAgentWorkspace({
     setAttachments((items) => [...items, ...picked]);
   };
 
-  const saveSchedule = async (input: { title?: string; prompt: string; scheduleKind: string; runAt?: string; cronExpr?: string }) => {
+  const saveSchedule = async (input: {
+    title?: string;
+    prompt: string;
+    scheduleKind: string;
+    runAt?: string;
+    cronExpr?: string;
+  }) => {
     await window.supbot.createServstationScheduledJob({
       ...input,
       conversationId: activeConversation?.id,
-      enabled: true
+      enabled: true,
     });
     setScheduleOpen(false);
     await loadRemote(activeConversation?.id);
@@ -981,7 +1187,7 @@ function ServerAgentWorkspace({
       await window.supbot.startServstationAutopilotRun({
         conversationId: activeConversation?.id,
         prompt: text,
-        requestId: `hbclient-autopilot-${Date.now().toString(36)}`
+        requestId: `hbclient-autopilot-${Date.now().toString(36)}`,
       });
       setAutopilotPrompt("");
       await loadRemote(activeConversation?.id);
@@ -1011,12 +1217,36 @@ function ServerAgentWorkspace({
   const tabBarExtra = (
     <div className="server-agent-tab-extra">
       <div className="tag-row">
-        <Tag color={connected ? "green" : reverseStatus === "error" ? "red" : "default"}>{t(`reverse:${reverseStatus}`)}</Tag>
-        <Tag>{remote?.baseUrl || snapshot.servstationA2A.config.baseUrl || snapshot.identityContext?.servstationUrl || t("No Servstation URL")}</Tag>
+        <Tag color={connected ? "green" : reverseStatus === "error" ? "red" : "default"}>
+          {t(`reverse:${reverseStatus}`)}
+        </Tag>
+        <Tag>
+          {remote?.baseUrl ||
+            snapshot.servstationA2A.config.baseUrl ||
+            snapshot.identityContext?.servstationUrl ||
+            t("No Servstation URL")}
+        </Tag>
         {remote?.identity?.userId ? <Tag>{remote.identity.userId}</Tag> : null}
       </div>
-      <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={() => void loadRemote(activeConversation?.id, false, draftConversation)}>{t("Refresh")}</Button>
-      {connected ? null : <Button size="small" type="primary" icon={<ApiOutlined />} loading={connecting} onClick={() => void connectRemote()}>{t("Connect server Agent")}</Button>}
+      <Button
+        size="small"
+        icon={<ReloadOutlined />}
+        loading={loading}
+        onClick={() => void loadRemote(activeConversation?.id, false, draftConversation)}
+      >
+        {t("Refresh")}
+      </Button>
+      {connected ? null : (
+        <Button
+          size="small"
+          type="primary"
+          icon={<ApiOutlined />}
+          loading={connecting}
+          onClick={() => void connectRemote()}
+        >
+          {t("Connect server Agent")}
+        </Button>
+      )}
     </div>
   );
 
@@ -1036,7 +1266,11 @@ function ServerAgentWorkspace({
         items={[
           {
             key: "messages",
-            label: <span><MessageOutlined /> {t("Conversations")}</span>,
+            label: (
+              <span>
+                <MessageOutlined /> {t("Conversations")}
+              </span>
+            ),
             children: (
               <ServerAgentMessages
                 activeConversation={activeConversation}
@@ -1071,13 +1305,15 @@ function ServerAgentWorkspace({
                 copySelectedText={copySelectedText}
                 t={t}
               />
-            )
+            ),
           },
           {
             key: "flow",
             label: (
               <Badge count={flowPendingCount} size="small" offset={[8, -4]}>
-                <span><OrderedListOutlined /> {t("Flows")}</span>
+                <span>
+                  <OrderedListOutlined /> {t("Flows")}
+                </span>
               </Badge>
             ),
             children: (
@@ -1088,11 +1324,15 @@ function ServerAgentWorkspace({
                 onPendingCountChange={setFlowPendingCount}
                 t={t}
               />
-            )
+            ),
           },
           {
             key: "schedule",
-            label: <span><CalendarOutlined /> {t("Schedule")}</span>,
+            label: (
+              <span>
+                <CalendarOutlined /> {t("Schedule")}
+              </span>
+            ),
             children: (
               <ServerAgentFlows
                 scheduledJobs={remote?.scheduledJobs || []}
@@ -1110,11 +1350,15 @@ function ServerAgentWorkspace({
                 onUpdateAutopilot={updateAutopilot}
                 t={t}
               />
-            )
+            ),
           },
           {
             key: "mail",
-            label: <span><MailOutlined /> {t("Messages/Mail")}</span>,
+            label: (
+              <span>
+                <MailOutlined /> {t("Messages/Mail")}
+              </span>
+            ),
             children: (
               <ServerAgentMailWorkspace
                 connected={connected}
@@ -1122,8 +1366,8 @@ function ServerAgentWorkspace({
                 identity={remote?.identity || snapshot.identityContext}
                 t={t}
               />
-            )
-          }
+            ),
+          },
         ]}
       />
       <RemoteScheduleModal
@@ -1142,7 +1386,7 @@ function ServerAgentWorkspace({
           setSelectedProject(null);
           setProjectResources([]);
         }}
-        footer={(
+        footer={
           <Button
             icon={<ReloadOutlined />}
             loading={projectResourcesLoading}
@@ -1154,7 +1398,7 @@ function ServerAgentWorkspace({
           >
             {t("Refresh")}
           </Button>
-        )}
+        }
       >
         <div className="server-agent-resource-list" data-testid="server-agent-project-resource-list">
           {projectResources.map((resource) => (
@@ -1171,7 +1415,9 @@ function ServerAgentWorkspace({
                   <span>{formatDateTime(resource.createdAt)}</span>
                 </div>
                 {resource.summary ? <p className="server-agent-resource-summary">{resource.summary}</p> : null}
-                {resource.relativePath ? <code className="server-agent-resource-path">{resource.relativePath}</code> : null}
+                {resource.relativePath ? (
+                  <code className="server-agent-resource-path">{resource.relativePath}</code>
+                ) : null}
               </div>
               <Popconfirm title={t("Delete project resource?")} onConfirm={() => void deleteProjectResource(resource)}>
                 <Button
@@ -1187,9 +1433,11 @@ function ServerAgentWorkspace({
             </div>
           ))}
           {!projectResources.length ? (
-            projectResourcesLoading
-              ? <div className="server-agent-resource-empty">{t("Loading...")}</div>
-              : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("No project resources")} />
+            projectResourcesLoading ? (
+              <div className="server-agent-resource-empty">{t("Loading...")}</div>
+            ) : (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("No project resources")} />
+            )
           ) : null}
         </div>
       </Modal>
@@ -1228,7 +1476,7 @@ function ServerAgentMessages({
   onSend,
   onCancelRunning,
   copySelectedText,
-  t
+  t,
 }: {
   activeConversation?: ServstationConversation;
   activeProject?: ServstationProject;
@@ -1275,19 +1523,19 @@ function ServerAgentMessages({
   const [promptAction, setPromptAction] = useState<"copy" | "paste" | null>(null);
   const projectGroups = useMemo(
     () => groupServstationConversations(projects, conversations),
-    [conversations, projects]
+    [conversations, projects],
   );
   const effectiveServices = useMemo(
     () => buildEffectiveServstationServices(services, localCapabilities),
-    [localCapabilities, services]
+    [localCapabilities, services],
   );
   const visibleCapabilities = useMemo(
     () => buildVisibleServstationCapabilities(effectiveServices),
-    [effectiveServices]
+    [effectiveServices],
   );
   const filteredCapabilities = useMemo(
     () => filterVisibleServstationCapabilities(visibleCapabilities, capabilitySearch),
-    [capabilitySearch, visibleCapabilities]
+    [capabilitySearch, visibleCapabilities],
   );
   const capabilityCounts = useMemo(() => {
     let skills = 0;
@@ -1302,106 +1550,121 @@ function ServerAgentMessages({
     return { skills, mcps };
   }, [visibleCapabilities]);
 
-  const insertCapability = useCallback((item: ServstationVisibleCapability) => {
-    const directive = formatServstationCapabilityPromptDirective(item);
-    const textArea = promptInputRef.current?.resizableTextArea?.textArea;
-    const currentValue = textArea?.value ?? prompt;
-    const fallbackPosition = currentValue.length;
-    const start = Math.max(0, Math.min(textArea?.selectionStart ?? fallbackPosition, currentValue.length));
-    const end = Math.max(start, Math.min(textArea?.selectionEnd ?? start, currentValue.length));
-    const nextPrompt = `${currentValue.slice(0, start)}${directive}${currentValue.slice(end)}`;
-    const caret = start + directive.length;
-    setPrompt(nextPrompt);
-    setCapabilityOpen(false);
-    window.requestAnimationFrame(() => {
-      const nextTextArea = promptInputRef.current?.resizableTextArea?.textArea;
-      nextTextArea?.focus();
-      nextTextArea?.setSelectionRange(caret, caret);
-    });
-  }, [prompt, setPrompt]);
+  const insertCapability = useCallback(
+    (item: ServstationVisibleCapability) => {
+      const directive = formatServstationCapabilityPromptDirective(item);
+      const textArea = promptInputRef.current?.resizableTextArea?.textArea;
+      const currentValue = textArea?.value ?? prompt;
+      const fallbackPosition = currentValue.length;
+      const start = Math.max(0, Math.min(textArea?.selectionStart ?? fallbackPosition, currentValue.length));
+      const end = Math.max(start, Math.min(textArea?.selectionEnd ?? start, currentValue.length));
+      const nextPrompt = `${currentValue.slice(0, start)}${directive}${currentValue.slice(end)}`;
+      const caret = start + directive.length;
+      setPrompt(nextPrompt);
+      setCapabilityOpen(false);
+      window.requestAnimationFrame(() => {
+        const nextTextArea = promptInputRef.current?.resizableTextArea?.textArea;
+        nextTextArea?.focus();
+        nextTextArea?.setSelectionRange(caret, caret);
+      });
+    },
+    [prompt, setPrompt],
+  );
 
   const closeSelectionMenu = useCallback(() => setSelectionMenu(null), []);
   const closePromptMenu = useCallback(() => setPromptMenu(null), []);
 
-  const openSelectionMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    const text = selectedTextWithin(event.currentTarget);
-    if (!text) {
-      setSelectionMenu(null);
-      return;
-    }
-    event.preventDefault();
-    closePromptMenu();
-    const menuWidth = 176;
-    const menuHeight = 52;
-    setSelectionMenu({
-      x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
-      y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
-      text
-    });
-  }, [closePromptMenu]);
-
-  const openPromptMenu = useCallback((event: React.MouseEvent<HTMLTextAreaElement>) => {
-    event.preventDefault();
-    closeSelectionMenu();
-    const target = event.currentTarget;
-    const selectionStart = target.selectionStart ?? prompt.length;
-    const selectionEnd = target.selectionEnd ?? selectionStart;
-    const start = Math.min(selectionStart, selectionEnd);
-    const end = Math.max(selectionStart, selectionEnd);
-    const menuWidth = 176;
-    const menuHeight = 92;
-    setPromptMenu({
-      x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
-      y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
-      selectionStart: start,
-      selectionEnd: end,
-      selectedText: prompt.slice(start, end)
-    });
-  }, [closeSelectionMenu, prompt]);
-
-  const runSelectionAction = useCallback(async (action: "copy") => {
-    if (!selectionMenu) {
-      return;
-    }
-    setSelectionAction(action);
-    try {
-      await copySelectedText(selectionMenu.text);
-      closeSelectionMenu();
-    } finally {
-      setSelectionAction(null);
-    }
-  }, [closeSelectionMenu, copySelectedText, selectionMenu]);
-
-  const runPromptAction = useCallback(async (action: "copy" | "paste") => {
-    if (!promptMenu) {
-      return;
-    }
-    setPromptAction(action);
-    try {
-      if (action === "copy") {
-        if (promptMenu.selectedText) {
-          await copySelectedText(promptMenu.selectedText);
-        }
-        closePromptMenu();
+  const openSelectionMenu = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      const text = selectedTextWithin(event.currentTarget);
+      if (!text) {
+        setSelectionMenu(null);
         return;
       }
-      const clipboardText = await readClipboardText();
-      const nextPrompt = `${prompt.slice(0, promptMenu.selectionStart)}${clipboardText}${prompt.slice(promptMenu.selectionEnd)}`;
-      const caret = promptMenu.selectionStart + clipboardText.length;
-      setPrompt(nextPrompt);
+      event.preventDefault();
       closePromptMenu();
-      window.requestAnimationFrame(() => {
-        const textarea = promptInputRef.current?.resizableTextArea?.textArea;
-        textarea?.focus();
-        textarea?.setSelectionRange(caret, caret);
+      const menuWidth = 176;
+      const menuHeight = 52;
+      setSelectionMenu({
+        x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+        y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
+        text,
       });
-      message.success(t("已粘贴剪贴板内容。"));
-    } catch (error) {
-      message.error((error as Error).message);
-    } finally {
-      setPromptAction(null);
-    }
-  }, [closePromptMenu, copySelectedText, prompt, promptMenu, setPrompt, t]);
+    },
+    [closePromptMenu],
+  );
+
+  const openPromptMenu = useCallback(
+    (event: React.MouseEvent<HTMLTextAreaElement>) => {
+      event.preventDefault();
+      closeSelectionMenu();
+      const target = event.currentTarget;
+      const selectionStart = target.selectionStart ?? prompt.length;
+      const selectionEnd = target.selectionEnd ?? selectionStart;
+      const start = Math.min(selectionStart, selectionEnd);
+      const end = Math.max(selectionStart, selectionEnd);
+      const menuWidth = 176;
+      const menuHeight = 92;
+      setPromptMenu({
+        x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+        y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
+        selectionStart: start,
+        selectionEnd: end,
+        selectedText: prompt.slice(start, end),
+      });
+    },
+    [closeSelectionMenu, prompt],
+  );
+
+  const runSelectionAction = useCallback(
+    async (action: "copy") => {
+      if (!selectionMenu) {
+        return;
+      }
+      setSelectionAction(action);
+      try {
+        await copySelectedText(selectionMenu.text);
+        closeSelectionMenu();
+      } finally {
+        setSelectionAction(null);
+      }
+    },
+    [closeSelectionMenu, copySelectedText, selectionMenu],
+  );
+
+  const runPromptAction = useCallback(
+    async (action: "copy" | "paste") => {
+      if (!promptMenu) {
+        return;
+      }
+      setPromptAction(action);
+      try {
+        if (action === "copy") {
+          if (promptMenu.selectedText) {
+            await copySelectedText(promptMenu.selectedText);
+          }
+          closePromptMenu();
+          return;
+        }
+        const clipboardText = await readClipboardText();
+        const nextPrompt = `${prompt.slice(0, promptMenu.selectionStart)}${clipboardText}${prompt.slice(promptMenu.selectionEnd)}`;
+        const caret = promptMenu.selectionStart + clipboardText.length;
+        setPrompt(nextPrompt);
+        closePromptMenu();
+        window.requestAnimationFrame(() => {
+          const textarea = promptInputRef.current?.resizableTextArea?.textArea;
+          textarea?.focus();
+          textarea?.setSelectionRange(caret, caret);
+        });
+        message.success(t("已粘贴剪贴板内容。"));
+      } catch (error) {
+        message.error((error as Error).message);
+      } finally {
+        setPromptAction(null);
+      }
+    },
+    [closePromptMenu, copySelectedText, prompt, promptMenu, setPrompt, t],
+  );
 
   useEffect(() => {
     if (!selectionMenu) {
@@ -1477,16 +1740,13 @@ function ServerAgentMessages({
         onChange={(event) => setCapabilitySearch(event.target.value)}
       />
       <div className="server-agent-capability-counts">
-        <Tag>{t("skill")}: {capabilityCounts.skills}</Tag>
+        <Tag>
+          {t("skill")}: {capabilityCounts.skills}
+        </Tag>
         <Tag>MCP: {capabilityCounts.mcps}</Tag>
       </div>
       {capabilityLoadError ? (
-        <Alert
-          type="warning"
-          showIcon
-          message={t("Capabilities failed to load")}
-          description={capabilityLoadError}
-        />
+        <Alert type="warning" showIcon message={t("Capabilities failed to load")} description={capabilityLoadError} />
       ) : null}
       <div className="server-agent-capability-list" role="list">
         {filteredCapabilities.map((item) => (
@@ -1516,7 +1776,9 @@ function ServerAgentMessages({
     <div className="server-agent-message-grid">
       <aside className="server-agent-conversations">
         <div className="server-agent-project-toolbar">
-          <div className="section-title"><FolderOpenOutlined /> {t("Projects")}</div>
+          <div className="section-title">
+            <FolderOpenOutlined /> {t("Projects")}
+          </div>
           <Space size={4}>
             <Tooltip title={t("Refresh")}>
               <Button
@@ -1596,7 +1858,11 @@ function ServerAgentMessages({
                   ? servstationConversationTitle(activeConversation, t("New conversation"))
                   : t("No conversation yet")}
             </strong>
-            {activeProject ? <small>{t("Project")}: {activeProject.name}</small> : null}
+            {activeProject ? (
+              <small>
+                {t("Project")}: {activeProject.name}
+              </small>
+            ) : null}
           </div>
           <div className="server-agent-chat-actions">
             <Popover
@@ -1608,9 +1874,21 @@ function ServerAgentMessages({
               destroyOnHidden
               onOpenChange={setCapabilityOpen}
             >
-              <Button size="small" icon={<ToolOutlined />} disabled={sending}>{t("Skills")}</Button>
+              <Button size="small" icon={<ToolOutlined />} disabled={sending}>
+                {t("Skills")}
+              </Button>
             </Popover>
-            {runningJob ? <Button danger size="small" icon={<StopOutlined />} loading={busyId === `job:${runningJob.id}`} onClick={() => void onCancelRunning()}>{t("Stop")}</Button> : null}
+            {runningJob ? (
+              <Button
+                danger
+                size="small"
+                icon={<StopOutlined />}
+                loading={busyId === `job:${runningJob.id}`}
+                onClick={() => void onCancelRunning()}
+              >
+                {t("Stop")}
+              </Button>
+            ) : null}
           </div>
         </div>
         <div
@@ -1696,7 +1974,11 @@ function ServerAgentMessages({
         {attachments.length ? (
           <div className="attachment-strip">
             {attachments.map((attachment) => (
-              <Tag closable key={attachment.id} onClose={() => setAttachments((items) => items.filter((item) => item.id !== attachment.id))}>
+              <Tag
+                closable
+                key={attachment.id}
+                onClose={() => setAttachments((items) => items.filter((item) => item.id !== attachment.id))}
+              >
                 {attachment.name}
               </Tag>
             ))}
@@ -1704,7 +1986,11 @@ function ServerAgentMessages({
         ) : null}
         <div className="server-agent-composer">
           <Tooltip title={t("Attach files")}>
-            <Button icon={<PaperClipOutlined />} disabled={disabled || sending} onClick={() => void onPickAttachments()} />
+            <Button
+              icon={<PaperClipOutlined />}
+              disabled={disabled || sending}
+              onClick={() => void onPickAttachments()}
+            />
           </Tooltip>
           <Input.TextArea
             ref={promptInputRef}
@@ -1721,7 +2007,15 @@ function ServerAgentMessages({
               }
             }}
           />
-          <Button type="primary" icon={<SendOutlined />} loading={sending} disabled={disabled || !prompt.trim()} onClick={() => void onSend()}>{t("Send")}</Button>
+          <Button
+            type="primary"
+            icon={<SendOutlined />}
+            loading={sending}
+            disabled={disabled || !prompt.trim()}
+            onClick={() => void onSend()}
+          >
+            {t("Send")}
+          </Button>
         </div>
       </section>
     </div>
@@ -1740,7 +2034,7 @@ function ServerAgentProjectGroup({
   onDeleteProject,
   onOpenProjectResources,
   onStartProjectConversation,
-  t
+  t,
 }: {
   group: ServstationConversationGroup;
   activeConversationId: string;
@@ -1775,7 +2069,9 @@ function ServerAgentProjectGroup({
   };
 
   return (
-    <section className={`server-agent-project-group ${projectActive ? "is-active" : ""} ${draftConversation && projectActive ? "is-draft" : ""}`}>
+    <section
+      className={`server-agent-project-group ${projectActive ? "is-active" : ""} ${draftConversation && projectActive ? "is-draft" : ""}`}
+    >
       <div className="server-agent-project-heading">
         <Tooltip title={t(collapsed ? "Expand project" : "Collapse project")}>
           <Button
@@ -1887,7 +2183,9 @@ function ServerAgentProjectGroup({
       {project && !collapsed ? (
         <div className="server-agent-project-meta">
           <span>{formatDateTime(project.updatedAt)}</span>
-          <span>{t("Resource count")}: {project.resourceCount || 0}</span>
+          <span>
+            {t("Resource count")}: {project.resourceCount || 0}
+          </span>
         </div>
       ) : null}
       {collapsed ? null : (
@@ -1916,7 +2214,13 @@ function ServerAgentProjectGroup({
   );
 }
 
-function SubagentModal({ open, subagent, onCancel, onSave, t }: {
+function SubagentModal({
+  open,
+  subagent,
+  onCancel,
+  onSave,
+  t,
+}: {
   open: boolean;
   subagent: SubagentConfig | null;
   onCancel: () => void;
@@ -1930,13 +2234,33 @@ function SubagentModal({ open, subagent, onCancel, onSave, t }: {
     }
   }, [open, subagent, form]);
   return (
-    <Modal open={open} title={subagent ? t("Edit subagent") : t("New subagent")} onCancel={onCancel} onOk={() => form.submit()} okText={t("Save")}>
-      <Form form={form} layout="vertical" onFinish={(values) => void onSave({ ...values, id: values.id || values.name })}>
-        <Form.Item label={t("ID")} name="id"><Input disabled={Boolean(subagent)} /></Form.Item>
-        <Form.Item label={t("Name")} name="name" rules={[{ required: true }]}><Input /></Form.Item>
-        <Form.Item label={t("Description")} name="description"><Input /></Form.Item>
-        <Form.Item label={t("System prompt")} name="systemPrompt"><Input.TextArea rows={5} /></Form.Item>
-        <Form.Item label={t("Enabled")} name="enabled" valuePropName="checked"><Switch /></Form.Item>
+    <Modal
+      open={open}
+      title={subagent ? t("Edit subagent") : t("New subagent")}
+      onCancel={onCancel}
+      onOk={() => form.submit()}
+      okText={t("Save")}
+    >
+      <Form
+        form={form}
+        layout="vertical"
+        onFinish={(values) => void onSave({ ...values, id: values.id || values.name })}
+      >
+        <Form.Item label={t("ID")} name="id">
+          <Input disabled={Boolean(subagent)} />
+        </Form.Item>
+        <Form.Item label={t("Name")} name="name" rules={[{ required: true }]}>
+          <Input />
+        </Form.Item>
+        <Form.Item label={t("Description")} name="description">
+          <Input />
+        </Form.Item>
+        <Form.Item label={t("System prompt")} name="systemPrompt">
+          <Input.TextArea rows={5} />
+        </Form.Item>
+        <Form.Item label={t("Enabled")} name="enabled" valuePropName="checked">
+          <Switch />
+        </Form.Item>
       </Form>
     </Modal>
   );
@@ -1947,7 +2271,7 @@ function TranscriptModal({
   result,
   loading,
   onCancel,
-  t
+  t,
 }: {
   open: boolean;
   result: TranscriptLoadResult | null;
@@ -1968,9 +2292,18 @@ function TranscriptModal({
       ) : result ? (
         <div className="transcript-summary">
           <div className="config-grid">
-            <div><span>{t("Source")}</span><strong>{t(result.source)}</strong></div>
-            <div><span>{t("Entries")}</span><strong>{result.entries.length}</strong></div>
-            <div><span>{t("Active messages")}</span><strong>{result.activeMessages.length}</strong></div>
+            <div>
+              <span>{t("Source")}</span>
+              <strong>{t(result.source)}</strong>
+            </div>
+            <div>
+              <span>{t("Entries")}</span>
+              <strong>{result.entries.length}</strong>
+            </div>
+            <div>
+              <span>{t("Active messages")}</span>
+              <strong>{result.activeMessages.length}</strong>
+            </div>
           </div>
           {result.compactBoundary ? (
             <div className="compact-history-item">
@@ -1978,7 +2311,9 @@ function TranscriptModal({
                 <strong>{t("Latest compact boundary")}</strong>
                 <Tag>{formatDateTime(result.compactBoundary.createdAt)}</Tag>
               </div>
-              <div className="muted">{result.compactBoundary.originalMessageCount} {t("messages before compact")}</div>
+              <div className="muted">
+                {result.compactBoundary.originalMessageCount} {t("messages before compact")}
+              </div>
               <pre>{result.compactBoundary.summary.slice(0, 1600)}</pre>
             </div>
           ) : (
@@ -1991,13 +2326,17 @@ function TranscriptModal({
                   key={`${diagnostic.createdAt}-${index}`}
                   type={diagnostic.level === "error" ? "error" : "warning"}
                   showIcon
-                  message={diagnostic.line ? `${diagnostic.message} (${t("line")} ${diagnostic.line})` : diagnostic.message}
+                  message={
+                    diagnostic.line ? `${diagnostic.message} (${t("line")} ${diagnostic.line})` : diagnostic.message
+                  }
                 />
               ))}
             </div>
           ) : null}
           <div className="transcript-active-list">
-            <div className="section-title"><FileTextOutlined /> {t("Recoverable active context")}</div>
+            <div className="section-title">
+              <FileTextOutlined /> {t("Recoverable active context")}
+            </div>
             {result.activeMessages.slice(-8).map((item) => (
               <div className="transcript-message-preview" key={item.id}>
                 <Tag>{t(item.role)}</Tag>
@@ -2014,7 +2353,14 @@ function TranscriptModal({
   );
 }
 
-function ScheduleModal({ open, projects, defaultProjectId, onCancel, onSave, t }: {
+function ScheduleModal({
+  open,
+  projects,
+  defaultProjectId,
+  onCancel,
+  onSave,
+  t,
+}: {
   open: boolean;
   projects: Project[];
   defaultProjectId?: string;
@@ -2029,10 +2375,25 @@ function ScheduleModal({ open, projects, defaultProjectId, onCancel, onSave, t }
     }
   }, [defaultProjectId, form, open]);
   return (
-    <Modal open={open} title={t("New scheduled prompt")} onCancel={onCancel} onOk={() => form.submit()} okText={t("Create")}>
-      <Form form={form} layout="vertical" initialValues={{ scheduleKind: "once", enabled: true }} onFinish={(values) => void onSave(values)}>
-        <Form.Item label={t("Title")} name="title" rules={[{ required: true }]}><Input /></Form.Item>
-        <Form.Item label={t("Prompt")} name="prompt" rules={[{ required: true }]}><Input.TextArea rows={4} /></Form.Item>
+    <Modal
+      open={open}
+      title={t("New scheduled prompt")}
+      onCancel={onCancel}
+      onOk={() => form.submit()}
+      okText={t("Create")}
+    >
+      <Form
+        form={form}
+        layout="vertical"
+        initialValues={{ scheduleKind: "once", enabled: true }}
+        onFinish={(values) => void onSave(values)}
+      >
+        <Form.Item label={t("Title")} name="title" rules={[{ required: true }]}>
+          <Input />
+        </Form.Item>
+        <Form.Item label={t("Prompt")} name="prompt" rules={[{ required: true }]}>
+          <Input.TextArea rows={4} />
+        </Form.Item>
         <Form.Item label={t("Project")} name="projectId">
           <Select
             allowClear
@@ -2040,14 +2401,28 @@ function ScheduleModal({ open, projects, defaultProjectId, onCancel, onSave, t }
             options={projects.map((project) => ({
               value: project.id,
               label: project.name,
-              disabled: project.status === "archived"
+              disabled: project.status === "archived",
             }))}
           />
         </Form.Item>
-        <Form.Item label={t("Kind")} name="scheduleKind"><Select options={[{ value: "once", label: t("Once") }, { value: "daily", label: t("Daily") }, { value: "cron", label: t("Cron") }]} /></Form.Item>
-        <Form.Item label={t("Run at ISO time")} name="runAt"><Input placeholder={new Date(Date.now() + 3600000).toISOString()} /></Form.Item>
-        <Form.Item label={t("Cron expression")} name="cronExpr"><Input placeholder="0 9 * * 1-5" /></Form.Item>
-        <Form.Item label={t("Enabled")} name="enabled" valuePropName="checked"><Switch /></Form.Item>
+        <Form.Item label={t("Kind")} name="scheduleKind">
+          <Select
+            options={[
+              { value: "once", label: t("Once") },
+              { value: "daily", label: t("Daily") },
+              { value: "cron", label: t("Cron") },
+            ]}
+          />
+        </Form.Item>
+        <Form.Item label={t("Run at ISO time")} name="runAt">
+          <Input placeholder={new Date(Date.now() + 3600000).toISOString()} />
+        </Form.Item>
+        <Form.Item label={t("Cron expression")} name="cronExpr">
+          <Input placeholder="0 9 * * 1-5" />
+        </Form.Item>
+        <Form.Item label={t("Enabled")} name="enabled" valuePropName="checked">
+          <Switch />
+        </Form.Item>
       </Form>
     </Modal>
   );

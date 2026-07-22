@@ -46,13 +46,18 @@ export function getFlowInputFields(schema?: FlowJsonSchema): FlowInputField[] {
         required: required.includes(name),
         schema: fieldSchema,
         kind,
-        enumValues: Array.isArray(fieldSchema.enum) ? fieldSchema.enum as FlowInputField["enumValues"] : undefined
+        enumValues: Array.isArray(fieldSchema.enum) ? (fieldSchema.enum as FlowInputField["enumValues"]) : undefined,
       };
     });
 }
 
 export function getSchemaProperties(schema?: FlowJsonSchema): Record<string, FlowJsonSchema> {
-  if (!schema || typeof schema.properties !== "object" || schema.properties === null || Array.isArray(schema.properties)) {
+  if (
+    !schema ||
+    typeof schema.properties !== "object" ||
+    schema.properties === null ||
+    Array.isArray(schema.properties)
+  ) {
     return {};
   }
   return schema.properties as Record<string, FlowJsonSchema>;
@@ -84,7 +89,7 @@ export function buildDefaultFlowInput(schema?: FlowJsonSchema) {
   return Object.fromEntries(
     getFlowInputFields(schema)
       .map((field) => [field.name, getSchemaDefaultValue(field.schema)])
-      .filter(([, value]) => value !== undefined)
+      .filter(([, value]) => value !== undefined),
   );
 }
 

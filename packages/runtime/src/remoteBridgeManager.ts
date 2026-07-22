@@ -10,7 +10,7 @@ import type {
   RuntimeSnapshot,
   SendPromptInput,
   TranscriptLoadResult,
-  WorktreeDiffSummary
+  WorktreeDiffSummary,
 } from "@supbot/shared";
 
 const maxRequestBodyBytes = 64 * 1024;
@@ -43,7 +43,11 @@ export class RemoteBridgeManager {
     sessions: RemoteBridgeSession[];
     audit: RemoteBridgeAuditRecord[];
   }): Promise<void> {
-    this.config = { ...input.config, host: normalizeHost(input.config.host, input.config.allowRemoteBind), tokenSaved: Boolean(input.token) };
+    this.config = {
+      ...input.config,
+      host: normalizeHost(input.config.host, input.config.allowRemoteBind),
+      tokenSaved: Boolean(input.token),
+    };
     this.token = input.token;
     this.sessions = [...input.sessions];
     this.audit = [...input.audit];
@@ -56,11 +60,13 @@ export class RemoteBridgeManager {
     return {
       config: { ...this.config, tokenSaved: Boolean(this.token) },
       sessions: this.sessions.map((item) => ({ ...item })),
-      audit: this.audit.map((item) => ({ ...item }))
+      audit: this.audit.map((item) => ({ ...item })),
     };
   }
 
-  async update(update: Partial<RemoteBridgeConfig> & { token?: string; clearToken?: boolean }): Promise<{ config: RemoteBridgeConfig; token?: string }> {
+  async update(
+    update: Partial<RemoteBridgeConfig> & { token?: string; clearToken?: boolean },
+  ): Promise<{ config: RemoteBridgeConfig; token?: string }> {
     const nextToken = update.clearToken ? undefined : update.token?.trim() || this.token || createBridgeToken();
     const allowRemoteBind = update.allowRemoteBind ?? this.config.allowRemoteBind;
     this.config = {
@@ -71,7 +77,7 @@ export class RemoteBridgeManager {
       allowRemoteBind,
       tokenSaved: Boolean(nextToken),
       pairingCode: update.enabled ? shortPairingCode(nextToken) : undefined,
-      updatedAt: this.host.nowIso()
+      updatedAt: this.host.nowIso(),
     };
     delete (this.config as RemoteBridgeConfig & { token?: string; clearToken?: boolean }).token;
     delete (this.config as RemoteBridgeConfig & { token?: string; clearToken?: boolean }).clearToken;
@@ -83,7 +89,7 @@ export class RemoteBridgeManager {
     }
     await this.host.onEvent(this.config.enabled ? "Remote bridge enabled" : "Remote bridge disabled", {
       host: this.config.host,
-      port: this.config.port
+      port: this.config.port,
     });
     return { config: { ...this.config, tokenSaved: Boolean(this.token) }, token: this.token };
   }
@@ -94,7 +100,7 @@ export class RemoteBridgeManager {
     }
     const current = this.server;
     this.server = undefined;
-    await new Promise<void>((resolve, reject) => current.close((error) => error ? reject(error) : resolve()));
+    await new Promise<void>((resolve, reject) => current.close((error) => (error ? reject(error) : resolve())));
   }
 
   listSessions(): RemoteBridgeSession[] {
@@ -170,10 +176,10 @@ export class RemoteBridgeManager {
       if (method === "PUT" && path === "/identity") {
         const body = await readJson(request);
         caller = callerMetadataFromRequest(request, body);
-        const identity = body.identityContext && typeof body.identityContext === "object"
-          ? body.identityContext
-          : body;
-        return this.sendJson(response, { identityContext: await this.host.updateIdentityContext(identity as IdentityContext) });
+        const identity = body.identityContext && typeof body.identityContext === "object" ? body.identityContext : body;
+        return this.sendJson(response, {
+          identityContext: await this.host.updateIdentityContext(identity as IdentityContext),
+        });
       }
       if (method === "GET" && path.startsWith("/transcript/")) {
         const conversationId = decodeURIComponent(path.slice("/transcript/".length));
@@ -190,12 +196,15 @@ export class RemoteBridgeManager {
         if (!prompt.trim()) {
           throw httpError(400, "prompt is required");
         }
-        return this.sendJson(response, await this.host.sendRemotePrompt({
-          conversationId: typeof body.conversationId === "string" ? body.conversationId : undefined,
-          prompt,
-          workspaceMode: "readOnly",
-          remoteCaller: caller
-        } as SendPromptInput));
+        return this.sendJson(
+          response,
+          await this.host.sendRemotePrompt({
+            conversationId: typeof body.conversationId === "string" ? body.conversationId : undefined,
+            prompt,
+            workspaceMode: "readOnly",
+            remoteCaller: caller,
+          } as SendPromptInput),
+        );
       }
       throw httpError(404, "Not found");
     } catch (error) {
@@ -216,7 +225,7 @@ export class RemoteBridgeManager {
         agentInstanceId: caller.agentInstanceId,
         peerId: caller.peerId,
         caller,
-        identity: this.host.getIdentityContext()
+        identity: this.host.getIdentityContext(),
       });
       await this.host.onAudit(record);
     }
@@ -233,7 +242,7 @@ export class RemoteBridgeManager {
     const current = this.sessions.find((session) => session.tokenPrefix === tokenPrefix && !session.revokedAt);
     if (current) {
       const next = { ...current, lastSeenAt: now };
-      this.sessions = this.sessions.map((item) => item.id === next.id ? next : item);
+      this.sessions = this.sessions.map((item) => (item.id === next.id ? next : item));
       return next;
     }
     const session: RemoteBridgeSession = {
@@ -241,7 +250,7 @@ export class RemoteBridgeManager {
       name: "Remote bridge client",
       tokenPrefix,
       createdAt: now,
-      lastSeenAt: now
+      lastSeenAt: now,
     };
     this.sessions = [session, ...this.sessions].slice(0, 50);
     return session;
@@ -254,7 +263,7 @@ export class RemoteBridgeManager {
       pendingToolPermissions: [],
       permissionRules: [],
       modelConfig: { ...snapshot.modelConfig, apiKeySaved: snapshot.modelConfig.apiKeySaved },
-      toolMarketConfig: { ...snapshot.toolMarketConfig }
+      toolMarketConfig: { ...snapshot.toolMarketConfig },
     };
   }
 
@@ -269,7 +278,7 @@ export class RemoteBridgeManager {
     const record: RemoteBridgeAuditRecord = {
       id: this.host.randomId("remote_audit"),
       createdAt: this.host.nowIso(),
-      ...input
+      ...input,
     };
     this.audit = [record, ...this.audit].slice(0, 300);
     return record;
@@ -282,7 +291,7 @@ export function defaultRemoteBridgeConfig(tokenSaved: boolean): RemoteBridgeConf
     host: "127.0.0.1",
     port: 47831,
     tokenSaved,
-    allowRemoteBind: false
+    allowRemoteBind: false,
   };
 }
 
@@ -306,7 +315,7 @@ async function readJson(request: IncomingMessage): Promise<Record<string, unknow
     raw += text;
   }
   try {
-    const parsed = raw.trim() ? JSON.parse(raw) as unknown : {};
+    const parsed = raw.trim() ? (JSON.parse(raw) as unknown) : {};
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       throw httpError(400, "JSON body must be an object");
     }
@@ -332,17 +341,25 @@ function normalizeHost(value: unknown, allowRemoteBind = false): string {
   return allowRemoteBind ? host : "127.0.0.1";
 }
 
-function callerMetadataFromRequest(request: IncomingMessage, body?: Record<string, unknown>): RemoteBridgeCallerMetadata {
-  const bodyUserContext = body?.userContext && typeof body.userContext === "object" ? body.userContext as Partial<IdentityContext> : undefined;
+function callerMetadataFromRequest(
+  request: IncomingMessage,
+  body?: Record<string, unknown>,
+): RemoteBridgeCallerMetadata {
+  const bodyUserContext =
+    body?.userContext && typeof body.userContext === "object"
+      ? (body.userContext as Partial<IdentityContext>)
+      : undefined;
   const headerUserContext = identityContextFromHeaders(request);
   return {
-    requestId: firstString(body?.requestId) ?? headerValue(request, "x-a2a-request-id") ?? headerValue(request, "x-request-id"),
-    agentInstanceId: firstString(body?.agentInstanceId) ?? headerValue(request, "x-servstation-agent-id") ?? headerValue(request, "x-agent-instance-id"),
+    requestId:
+      firstString(body?.requestId) ?? headerValue(request, "x-a2a-request-id") ?? headerValue(request, "x-request-id"),
+    agentInstanceId:
+      firstString(body?.agentInstanceId) ??
+      headerValue(request, "x-servstation-agent-id") ??
+      headerValue(request, "x-agent-instance-id"),
     peerId: firstString(body?.peerId) ?? headerValue(request, "x-a2a-peer-id"),
     clientId: firstString(body?.clientId) ?? headerValue(request, "x-a2a-client-id"),
-    userContext: bodyUserContext
-      ? identityContextFromObject(bodyUserContext)
-      : headerUserContext
+    userContext: bodyUserContext ? identityContextFromObject(bodyUserContext) : headerUserContext,
   };
 }
 
@@ -352,8 +369,11 @@ function identityContextFromHeaders(request: IncomingMessage): IdentityContext |
     organizationId: headerValue(request, "x-organization-id"),
     departmentId: headerValue(request, "x-department-id"),
     userId: headerValue(request, "x-user-id"),
-    roleIds: headerValue(request, "x-role-ids")?.split(",").map((item) => item.trim()).filter(Boolean),
-    source: "servstation"
+    roleIds: headerValue(request, "x-role-ids")
+      ?.split(",")
+      .map((item) => item.trim())
+      .filter(Boolean),
+    source: "servstation",
   });
   return context;
 }
@@ -371,11 +391,15 @@ function identityContextFromObject(value: Partial<IdentityContext>): IdentityCon
     organizationId,
     departmentId,
     userId,
-    roleIds: Array.isArray(value.roleIds) ? value.roleIds.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim()) : [],
+    roleIds: Array.isArray(value.roleIds)
+      ? value.roleIds
+          .filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
+          .map((item) => item.trim())
+      : [],
     source: value.source === "manual" ? "manual" : "servstation",
     agentInstanceId: firstString(value.agentInstanceId),
     servstationUrl: firstString(value.servstationUrl),
-    updatedAt: firstString(value.updatedAt)
+    updatedAt: firstString(value.updatedAt),
   };
 }
 

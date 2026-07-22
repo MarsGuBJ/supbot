@@ -341,9 +341,11 @@ export interface McpServerPreset {
 export interface McpConfigTransfer {
   version: 1;
   exportedAt: string;
-  servers: Array<Omit<McpServerConfig, "env"> & {
-    env?: Record<string, { redacted: true }>;
-  }>;
+  servers: Array<
+    Omit<McpServerConfig, "env"> & {
+      env?: Record<string, { redacted: true }>;
+    }
+  >;
   permissionRules: Array<Pick<PermissionRule, "toolName" | "behavior">>;
 }
 
@@ -976,8 +978,7 @@ export interface ServstationSendDirectMessageInput {
   attachments?: ServstationMessageAttachmentUpload[];
 }
 
-export type ServstationMessageEvent =
-  | { type: "messages.unread"; data: ServstationMessageUnreadSummary };
+export type ServstationMessageEvent = { type: "messages.unread"; data: ServstationMessageUnreadSummary };
 
 export interface ServstationClientSnapshot {
   connected: boolean;
@@ -1349,7 +1350,13 @@ export interface MemoryImportResult {
 
 export type ChatMessageBlock =
   | { type: "text"; text: string }
-  | { type: "tool_use"; toolCallId: string; toolName: string; input: unknown; status: "pending" | "running" | "completed" | "failed" | "denied" }
+  | {
+      type: "tool_use";
+      toolCallId: string;
+      toolName: string;
+      input: unknown;
+      status: "pending" | "running" | "completed" | "failed" | "denied";
+    }
   | {
       type: "tool_result";
       toolCallId: string;
@@ -1544,6 +1551,13 @@ export interface TranscriptLoadResult {
   diagnostics: TranscriptDiagnostic[];
 }
 
+export interface TranscriptPage {
+  conversationId: string;
+  messages: ChatMessage[];
+  hasMore: boolean;
+  total: number;
+}
+
 export interface Conversation {
   id: string;
   projectId?: string;
@@ -1551,6 +1565,8 @@ export interface Conversation {
   createdAt: string;
   updatedAt: string;
   lastMessageAt?: string;
+  messageCount?: number;
+  lastMessagePreview?: string;
   messages: ChatMessage[];
 }
 
@@ -1661,7 +1677,8 @@ export interface AutopilotWritePolicy {
   maxRetries: number;
 }
 
-export type AutopilotRunStatus = "queued" | "planning" | "running" | "paused" | "blocked" | "reviewing" | "completed" | "failed" | "canceled";
+export type AutopilotRunStatus =
+  "queued" | "planning" | "running" | "paused" | "blocked" | "reviewing" | "completed" | "failed" | "canceled";
 
 export type AutopilotTaskStatus = "queued" | "running" | "completed" | "failed" | "blocked" | "skipped";
 
@@ -1759,6 +1776,7 @@ export interface RuntimeSnapshot {
   personality: PersonalityConfig;
   capabilities: CapabilityDefinition[];
   subagents: SubagentConfig[];
+  activeConversationId?: string;
   conversations: Conversation[];
   jobs: AgentJob[];
   scheduledJobs: ScheduledJob[];
@@ -1790,14 +1808,7 @@ export interface RuntimeSnapshot {
 }
 
 export type HBClientUpdateStatus =
-  | "idle"
-  | "checking"
-  | "available"
-  | "not_available"
-  | "downloading"
-  | "downloaded"
-  | "installing"
-  | "error";
+  "idle" | "checking" | "available" | "not_available" | "downloading" | "downloaded" | "installing" | "error";
 
 export interface HBClientUpdateProgress {
   percent: number;
@@ -1877,7 +1888,7 @@ export const defaultModelConfig: ModelConfig = {
   model: "gpt-4.1-mini",
   temperature: 0.2,
   maxTokens: 4096,
-  apiKeySaved: false
+  apiKeySaved: false,
 };
 
 export const defaultModelProviderConfig: ModelProviderConfig = {
@@ -1889,7 +1900,7 @@ export const defaultModelProviderConfig: ModelProviderConfig = {
   maxTokens: defaultModelConfig.maxTokens,
   apiKeySaved: false,
   createdAt: "1970-01-01T00:00:00.000Z",
-  updatedAt: "1970-01-01T00:00:00.000Z"
+  updatedAt: "1970-01-01T00:00:00.000Z",
 };
 
 export const defaultToolMarketConfig: ToolMarketConfig = {
@@ -1897,13 +1908,13 @@ export const defaultToolMarketConfig: ToolMarketConfig = {
   apiUrl: defaultToolMarketApiUrl,
   accountEmail: "subscriber@toolsmarket.local",
   accessTokenSaved: false,
-  passwordSaved: false
+  passwordSaved: false,
 };
 
 export const defaultPersonality: PersonalityConfig = {
   summary: "A careful local desktop agent for coding, documents, and day-to-day automation.",
   traits: ["precise", "calm", "proactive"],
-  instructions: "Work locally, explain important actions, and keep user data on this machine."
+  instructions: "Work locally, explain important actions, and keep user data on this machine.",
 };
 
 export function clampNumber(value: number, min: number, max: number): number {
@@ -1935,9 +1946,21 @@ export const slashCommandTemplates: SlashCommand[] = [
   { command: "/model", action: "model", title: "Model", description: "Jump to model settings." },
   { command: "/clear", action: "clear", title: "Clear", description: "Create a clean chat." },
   { command: "/copy", action: "copy", title: "Copy latest", description: "Copy the newest assistant response." },
-  { command: "/read", action: "tool", title: "Read file", description: "Read a local UTF-8 text file.", template: "/read " },
-  { command: "/write", action: "tool", title: "Write file", description: "Create a generated local text file.", template: "/write note.txt\n" },
-  { command: "/shell", action: "tool", title: "Shell", description: "Run a local shell command.", template: "/shell " }
+  {
+    command: "/read",
+    action: "tool",
+    title: "Read file",
+    description: "Read a local UTF-8 text file.",
+    template: "/read ",
+  },
+  {
+    command: "/write",
+    action: "tool",
+    title: "Write file",
+    description: "Create a generated local text file.",
+    template: "/write note.txt\n",
+  },
+  { command: "/shell", action: "tool", title: "Shell", description: "Run a local shell command.", template: "/shell " },
 ];
 
 export const slashCommands = slashCommandTemplates;
@@ -1946,7 +1969,7 @@ export function buildSlashCommands(t: (key: string) => string): SlashCommand[] {
   return slashCommandTemplates.map((item) => ({
     ...item,
     title: t(item.title),
-    description: t(item.description)
+    description: t(item.description),
   }));
 }
 
@@ -1956,7 +1979,11 @@ export function resolveSlashCommand(input: string): SlashCommand | undefined {
 }
 
 export function conversationTitle(conversation: Conversation, fallback = "New conversation"): string {
-  return conversation.title || conversation.messages.find((message) => message.role === "user")?.text.slice(0, 60) || fallback;
+  return (
+    conversation.title ||
+    conversation.messages.find((message) => message.role === "user")?.text.slice(0, 60) ||
+    fallback
+  );
 }
 
 export function latestAssistantMessage(messages: ChatMessage[]): ChatMessage | undefined {
@@ -2005,19 +2032,26 @@ export function formatDateTime(value?: string): string {
     month: "short",
     day: "2-digit",
     hour: "2-digit",
-    minute: "2-digit"
+    minute: "2-digit",
   }).format(new Date(value));
 }
 
-export function formatSchedule(job: ScheduledJob, t: (key: string, vars?: Record<string, string | number>) => string = (key, vars) => {
-  if (!vars) return key;
-  return Object.entries(vars).reduce((text, [name, value]) => text.replace(`{${name}}`, String(value)), key);
-}): string {
+export function formatSchedule(
+  job: ScheduledJob,
+  t: (key: string, vars?: Record<string, string | number>) => string = (key, vars) => {
+    if (!vars) return key;
+    return Object.entries(vars).reduce((text, [name, value]) => text.replace(`{${name}}`, String(value)), key);
+  },
+): string {
   if (job.scheduleKind === "once") {
     return job.runAt ? t("Once at {time}", { time: formatDateTime(job.runAt) }) : t("One-time task");
   }
   if (job.scheduleKind === "daily") {
-    return job.runAt ? t("Daily around {time}", { time: new Date(job.runAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }) : t("Daily");
+    return job.runAt
+      ? t("Daily around {time}", {
+          time: new Date(job.runAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        })
+      : t("Daily");
   }
   return job.cronExpr ? t("Cron {expr}", { expr: job.cronExpr }) : t("Cron");
 }

@@ -43,11 +43,11 @@ import type {
   HBClientUpdateState,
   SupbotEvent,
   ToolMarketConfigUpdate,
-  ToolMarketQuery
+  ToolMarketQuery,
 } from "@supbot/shared";
 
 const api = {
-  snapshot: () => ipcRenderer.invoke("snapshot"),
+  snapshot: (activeConversationId?: string) => ipcRenderer.invoke("snapshot", activeConversationId),
   getHBClientUpdateState: () => ipcRenderer.invoke("hbclient:update:getState"),
   checkHBClientUpdate: () => ipcRenderer.invoke("hbclient:update:check"),
   downloadHBClientUpdate: () => ipcRenderer.invoke("hbclient:update:download"),
@@ -65,10 +65,13 @@ const api = {
   approveToolPermission: (id: string) => ipcRenderer.invoke("tool:approve", id),
   denyToolPermission: (id: string) => ipcRenderer.invoke("tool:deny", id),
   setPermissionMode: (mode: PermissionMode) => ipcRenderer.invoke("permission:setMode", mode),
-  addPermissionRule: (rule: Omit<PermissionRule, "id" | "createdAt" | "scope"> & { id?: string }) => ipcRenderer.invoke("permission:addRule", rule),
+  addPermissionRule: (rule: Omit<PermissionRule, "id" | "createdAt" | "scope"> & { id?: string }) =>
+    ipcRenderer.invoke("permission:addRule", rule),
   removePermissionRule: (id: string) => ipcRenderer.invoke("permission:removeRule", id),
   compactConversation: (id: string) => ipcRenderer.invoke("conversation:compact", id),
   loadTranscript: (id: string) => ipcRenderer.invoke("conversation:loadTranscript", id),
+  loadConversationHistory: (id: string, beforeMessageId?: string, limit?: number) =>
+    ipcRenderer.invoke("conversation:loadHistory", id, beforeMessageId, limit),
   createProjectFromFolder: (input: ProjectCreateInput) => ipcRenderer.invoke("project:createFromFolder", input),
   createProjectFromName: (input: ProjectCreateFromNameInput) => ipcRenderer.invoke("project:createFromName", input),
   listProjects: () => ipcRenderer.invoke("project:list"),
@@ -86,34 +89,45 @@ const api = {
   discardWorktree: (id: string) => ipcRenderer.invoke("worktree:discard", id),
   openWorktreeFolder: (id: string) => ipcRenderer.invoke("worktree:openFolder", id),
   getRemoteBridgeConfig: () => ipcRenderer.invoke("remoteBridge:getConfig"),
-  updateRemoteBridgeConfig: (input: Partial<RemoteBridgeConfig> & { token?: string; clearToken?: boolean }) => ipcRenderer.invoke("remoteBridge:updateConfig", input),
+  updateRemoteBridgeConfig: (input: Partial<RemoteBridgeConfig> & { token?: string; clearToken?: boolean }) =>
+    ipcRenderer.invoke("remoteBridge:updateConfig", input),
   listRemoteBridgeSessions: () => ipcRenderer.invoke("remoteBridge:listSessions"),
   revokeRemoteBridgeSession: (id: string) => ipcRenderer.invoke("remoteBridge:revokeSession", id),
   listRemoteBridgeAudit: () => ipcRenderer.invoke("remoteBridge:listAudit"),
   getIdentityContext: () => ipcRenderer.invoke("identity:get"),
   updateIdentityContext: (input: IdentityContext) => ipcRenderer.invoke("identity:update", input),
   getServstationA2AConfig: () => ipcRenderer.invoke("servstationA2A:getConfig"),
-  updateServstationA2AConfig: (input: ServstationA2AConfigUpdate) => ipcRenderer.invoke("servstationA2A:updateConfig", input),
+  updateServstationA2AConfig: (input: ServstationA2AConfigUpdate) =>
+    ipcRenderer.invoke("servstationA2A:updateConfig", input),
   loginServstationOidc: (input?: ServstationA2AOidcLoginInput) => ipcRenderer.invoke("servstationA2A:loginOidc", input),
   refreshServstationOidc: () => ipcRenderer.invoke("servstationA2A:refreshOidc"),
   logoutServstationOidc: () => ipcRenderer.invoke("servstationA2A:logoutOidc"),
   connectServstationReverseBridge: () => ipcRenderer.invoke("servstationA2A:connectReverse"),
   disconnectServstationReverseBridge: () => ipcRenderer.invoke("servstationA2A:disconnectReverse"),
-  getServstationClientSnapshot: (query?: ServstationClientSnapshotQuery) => ipcRenderer.invoke("servstationClient:snapshot", query),
+  getServstationClientSnapshot: (query?: ServstationClientSnapshotQuery) =>
+    ipcRenderer.invoke("servstationClient:snapshot", query),
   createServstationProject: (name: string) => ipcRenderer.invoke("servstationClient:createProject", name),
-  updateServstationProject: (id: string, name: string) => ipcRenderer.invoke("servstationClient:updateProject", id, name),
+  updateServstationProject: (id: string, name: string) =>
+    ipcRenderer.invoke("servstationClient:updateProject", id, name),
   deleteServstationProject: (id: string) => ipcRenderer.invoke("servstationClient:deleteProject", id),
   listServstationProjectResources: (id: string) => ipcRenderer.invoke("servstationClient:listProjectResources", id),
-  deleteServstationProjectResource: (projectId: string, resourceId: string) => ipcRenderer.invoke("servstationClient:deleteProjectResource", projectId, resourceId),
-  createServstationConversation: (title?: string, projectId?: string) => ipcRenderer.invoke("servstationClient:createConversation", title, projectId),
+  deleteServstationProjectResource: (projectId: string, resourceId: string) =>
+    ipcRenderer.invoke("servstationClient:deleteProjectResource", projectId, resourceId),
+  createServstationConversation: (title?: string, projectId?: string) =>
+    ipcRenderer.invoke("servstationClient:createConversation", title, projectId),
   deleteServstationConversation: (id: string) => ipcRenderer.invoke("servstationClient:deleteConversation", id),
-  sendServstationPrompt: (input: ServstationSendPromptInput) => ipcRenderer.invoke("servstationClient:sendPrompt", input),
+  sendServstationPrompt: (input: ServstationSendPromptInput) =>
+    ipcRenderer.invoke("servstationClient:sendPrompt", input),
   cancelServstationJob: (id: string) => ipcRenderer.invoke("servstationClient:cancelJob", id),
-  createServstationScheduledJob: (input: ServstationScheduledJobInput) => ipcRenderer.invoke("servstationClient:createScheduledJob", input),
-  updateServstationScheduledJob: (id: string, input: Partial<ServstationScheduledJobInput>) => ipcRenderer.invoke("servstationClient:updateScheduledJob", id, input),
+  createServstationScheduledJob: (input: ServstationScheduledJobInput) =>
+    ipcRenderer.invoke("servstationClient:createScheduledJob", input),
+  updateServstationScheduledJob: (id: string, input: Partial<ServstationScheduledJobInput>) =>
+    ipcRenderer.invoke("servstationClient:updateScheduledJob", id, input),
   deleteServstationScheduledJob: (id: string) => ipcRenderer.invoke("servstationClient:deleteScheduledJob", id),
-  startServstationAutopilotRun: (input: ServstationAutopilotStartInput) => ipcRenderer.invoke("servstationClient:startAutopilotRun", input),
-  updateServstationAutopilotRun: (input: ServstationAutopilotStatusUpdate) => ipcRenderer.invoke("servstationClient:updateAutopilotRun", input),
+  startServstationAutopilotRun: (input: ServstationAutopilotStartInput) =>
+    ipcRenderer.invoke("servstationClient:startAutopilotRun", input),
+  updateServstationAutopilotRun: (input: ServstationAutopilotStatusUpdate) =>
+    ipcRenderer.invoke("servstationClient:updateAutopilotRun", input),
   onServstationAutopilotEvent: (runId: string, listener: (event: ServstationAutopilotEvent) => void) => {
     const subscriptionId = `autopilot_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const channel = `servstationClient:autopilotEvent:${subscriptionId}`;
@@ -126,27 +140,38 @@ const api = {
     };
   },
   getServstationFlowEngineSnapshot: () => ipcRenderer.invoke("servstationClient:getFlowEngineSnapshot"),
-  launchServstationFlowEngineWorkflow: (input: ServstationFlowEngineLaunchInput) => ipcRenderer.invoke("servstationClient:launchFlowEngineWorkflow", input),
+  launchServstationFlowEngineWorkflow: (input: ServstationFlowEngineLaunchInput) =>
+    ipcRenderer.invoke("servstationClient:launchFlowEngineWorkflow", input),
   getServstationFlowEngineExecution: (id: string) => ipcRenderer.invoke("servstationClient:getFlowEngineExecution", id),
-  getServstationFlowEngineExecutionEvents: (id: string) => ipcRenderer.invoke("servstationClient:getFlowEngineExecutionEvents", id),
-  decideServstationFlowEngineApproval: (input: ServstationFlowEngineApprovalDecisionInput) => ipcRenderer.invoke("servstationClient:decideFlowEngineApproval", input),
-  listServstationMessages: (folder: ServstationMessageFolder, unreadOnly?: boolean) => ipcRenderer.invoke("servstationClient:listMessages", folder, unreadOnly),
+  getServstationFlowEngineExecutionEvents: (id: string) =>
+    ipcRenderer.invoke("servstationClient:getFlowEngineExecutionEvents", id),
+  decideServstationFlowEngineApproval: (input: ServstationFlowEngineApprovalDecisionInput) =>
+    ipcRenderer.invoke("servstationClient:decideFlowEngineApproval", input),
+  listServstationMessages: (folder: ServstationMessageFolder, unreadOnly?: boolean) =>
+    ipcRenderer.invoke("servstationClient:listMessages", folder, unreadOnly),
   getServstationUnreadMessages: () => ipcRenderer.invoke("servstationClient:getUnreadMessages"),
   getServstationMessage: (id: string) => ipcRenderer.invoke("servstationClient:getMessage", id),
   markServstationMessageRead: (id: string) => ipcRenderer.invoke("servstationClient:markMessageRead", id),
-  setServstationMessageFavorite: (id: string, favorited: boolean) => ipcRenderer.invoke("servstationClient:setMessageFavorite", id, favorited),
+  setServstationMessageFavorite: (id: string, favorited: boolean) =>
+    ipcRenderer.invoke("servstationClient:setMessageFavorite", id, favorited),
   trashServstationMessage: (id: string) => ipcRenderer.invoke("servstationClient:trashMessage", id),
   restoreServstationMessage: (id: string) => ipcRenderer.invoke("servstationClient:restoreMessage", id),
   deleteServstationMessage: (id: string) => ipcRenderer.invoke("servstationClient:deleteMessage", id),
-  fetchServstationMessageAttachment: (messageId: string, attachmentId: string) => ipcRenderer.invoke("servstationClient:fetchMessageAttachment", messageId, attachmentId),
-  sendServstationAgentMessage: (input: ServstationSendAgentMessageInput) => ipcRenderer.invoke("servstationClient:sendAgentMessage", input),
-  sendServstationDirectMessage: (input: ServstationSendDirectMessageInput) => ipcRenderer.invoke("servstationClient:sendDirectMessage", input),
+  fetchServstationMessageAttachment: (messageId: string, attachmentId: string) =>
+    ipcRenderer.invoke("servstationClient:fetchMessageAttachment", messageId, attachmentId),
+  sendServstationAgentMessage: (input: ServstationSendAgentMessageInput) =>
+    ipcRenderer.invoke("servstationClient:sendAgentMessage", input),
+  sendServstationDirectMessage: (input: ServstationSendDirectMessageInput) =>
+    ipcRenderer.invoke("servstationClient:sendDirectMessage", input),
   listServstationMailAccounts: () => ipcRenderer.invoke("servstationClient:listMailAccounts"),
-  createServstationMailAccount: (input: ServstationMailAccountDraft) => ipcRenderer.invoke("servstationClient:createMailAccount", input),
-  updateServstationMailAccount: (id: string, input: ServstationMailAccountDraft) => ipcRenderer.invoke("servstationClient:updateMailAccount", id, input),
+  createServstationMailAccount: (input: ServstationMailAccountDraft) =>
+    ipcRenderer.invoke("servstationClient:createMailAccount", input),
+  updateServstationMailAccount: (id: string, input: ServstationMailAccountDraft) =>
+    ipcRenderer.invoke("servstationClient:updateMailAccount", id, input),
   deleteServstationMailAccount: (id: string) => ipcRenderer.invoke("servstationClient:deleteMailAccount", id),
   setDefaultServstationMailAccount: (id: string) => ipcRenderer.invoke("servstationClient:setDefaultMailAccount", id),
-  testServstationMailAccountConnection: (id: string) => ipcRenderer.invoke("servstationClient:testMailAccountConnection", id),
+  testServstationMailAccountConnection: (id: string) =>
+    ipcRenderer.invoke("servstationClient:testMailAccountConnection", id),
   syncServstationMailAccountNow: (id: string) => ipcRenderer.invoke("servstationClient:syncMailAccountNow", id),
   onServstationMessageEvent: (listener: (event: ServstationMessageEvent) => void) => {
     const subscriptionId = `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -176,10 +201,12 @@ const api = {
   updateModelConfig: (input: ModelConfigUpdate) => ipcRenderer.invoke("model:update", input),
   testModelConfig: (input?: Partial<ModelConfigUpdate>) => ipcRenderer.invoke("model:test", input),
   createModelProvider: (input: ModelProviderUpdate) => ipcRenderer.invoke("modelProvider:create", input),
-  updateModelProvider: (id: string, input: ModelProviderUpdate) => ipcRenderer.invoke("modelProvider:update", id, input),
+  updateModelProvider: (id: string, input: ModelProviderUpdate) =>
+    ipcRenderer.invoke("modelProvider:update", id, input),
   deleteModelProvider: (id: string) => ipcRenderer.invoke("modelProvider:delete", id),
   setActiveModelProvider: (id: string) => ipcRenderer.invoke("modelProvider:setActive", id),
-  testModelProvider: (id?: string, input?: Partial<ModelProviderUpdate>) => ipcRenderer.invoke("modelProvider:test", id, input),
+  testModelProvider: (id?: string, input?: Partial<ModelProviderUpdate>) =>
+    ipcRenderer.invoke("modelProvider:test", id, input),
   updateToolMarketConfig: (input: ToolMarketConfigUpdate) => ipcRenderer.invoke("market-config:update", input),
   updatePersonality: (input: PersonalityConfig) => ipcRenderer.invoke("personality:update", input),
   updateCapability: (id: string, input: CapabilityUpdateInput) => ipcRenderer.invoke("capability:update", id, input),
@@ -202,7 +229,8 @@ const api = {
   importMcpConfig: (input: McpConfigTransfer) => ipcRenderer.invoke("mcp:import", input),
   diagnoseMcpServer: (input: McpServerInput) => ipcRenderer.invoke("mcp:diagnoseServer", input),
   createScheduledJob: (input: ScheduledJobInput) => ipcRenderer.invoke("schedule:create", input),
-  updateScheduledJob: (id: string, input: Partial<ScheduledJobInput>) => ipcRenderer.invoke("schedule:update", id, input),
+  updateScheduledJob: (id: string, input: Partial<ScheduledJobInput>) =>
+    ipcRenderer.invoke("schedule:update", id, input),
   deleteScheduledJob: (id: string) => ipcRenderer.invoke("schedule:delete", id),
   pickAttachments: () => ipcRenderer.invoke("attachment:pick"),
   openFile: (filePath: string) => ipcRenderer.invoke("file:open", filePath),
@@ -211,7 +239,7 @@ const api = {
     const wrapped = (_event: unknown, payload: SupbotEvent) => listener(payload);
     ipcRenderer.on("supbot:event", wrapped);
     return () => ipcRenderer.off("supbot:event", wrapped);
-  }
+  },
 };
 
 contextBridge.exposeInMainWorld("supbot", api);

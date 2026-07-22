@@ -17,7 +17,7 @@ interface HBClientUpdateManagerOptions {
 export class HBClientUpdateManager {
   private state: HBClientUpdateState = {
     status: "idle",
-    currentVersion: app.getVersion()
+    currentVersion: app.getVersion(),
   };
   private interval?: NodeJS.Timeout;
   private checkPromise?: Promise<HBClientUpdateState>;
@@ -39,7 +39,7 @@ export class HBClientUpdateManager {
         availableVersion: info.version,
         progress: undefined,
         error: undefined,
-        checkedAt: new Date().toISOString()
+        checkedAt: new Date().toISOString(),
       });
     });
     autoUpdater.on("update-not-available", () => {
@@ -48,14 +48,14 @@ export class HBClientUpdateManager {
         availableVersion: undefined,
         progress: undefined,
         error: undefined,
-        checkedAt: new Date().toISOString()
+        checkedAt: new Date().toISOString(),
       });
     });
     autoUpdater.on("download-progress", (progress) => {
       this.setState({
         status: "downloading",
         progress: normalizeProgress(progress),
-        error: undefined
+        error: undefined,
       });
     });
     autoUpdater.on("update-downloaded", (info) => {
@@ -63,7 +63,7 @@ export class HBClientUpdateManager {
         status: "downloaded",
         availableVersion: info.version || this.state.availableVersion,
         progress: this.state.progress ? { ...this.state.progress, percent: 100 } : undefined,
-        error: undefined
+        error: undefined,
       });
     });
     autoUpdater.on("error", (error) => {
@@ -73,7 +73,7 @@ export class HBClientUpdateManager {
           availableVersion: undefined,
           progress: undefined,
           error: undefined,
-          checkedAt: new Date().toISOString()
+          checkedAt: new Date().toISOString(),
         });
         return;
       }
@@ -127,7 +127,7 @@ export class HBClientUpdateManager {
     } catch (error) {
       const message = errorMessage(error);
       this.setState({ status: "error", error: message });
-      throw new Error(message);
+      throw new Error(message, { cause: error });
     }
   }
 
@@ -152,14 +152,14 @@ export class HBClientUpdateManager {
           availableVersion: undefined,
           progress: undefined,
           error: undefined,
-          checkedAt: new Date().toISOString()
+          checkedAt: new Date().toISOString(),
         });
         return this.getState();
       }
       const message = errorMessage(error);
       this.setState(manual ? { status: "error", error: message } : { status: "idle", error: undefined });
       if (manual) {
-        throw new Error(message);
+        throw new Error(message, { cause: error });
       }
       return this.getState();
     }
@@ -168,8 +168,11 @@ export class HBClientUpdateManager {
   private async withAuthenticatedFeed<T>(action: () => Promise<T>): Promise<T> {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const context = await this.options.getFeedContext(attempt > 0);
-      const configuredUrl = process.env.HBCLIENT_UPDATE_FEED_URL?.trim() || `${context.baseUrl.replace(/\/$/, "")}/api/v1/hbclient/updates/stable/win32-x64`;
-      autoUpdater.setFeedURL({ provider: "generic", url: configuredUrl, useMultipleRangeRequest: false });
+      const configuredUrl =
+        process.env.HBCLIENT_UPDATE_FEED_URL?.trim() ||
+        `${context.baseUrl.replace(/\/$/, "")}/api/v1/hbclient/updates/stable/win32-x64`;
+      const feedUrl = requireHttpsUpdateFeedUrl(configuredUrl);
+      autoUpdater.setFeedURL({ provider: "generic", url: feedUrl, useMultipleRangeRequest: false });
       autoUpdater.requestHeaders = context.accessToken ? { Authorization: `Bearer ${context.accessToken}` } : {};
       try {
         return await action();
@@ -184,7 +187,11 @@ export class HBClientUpdateManager {
   }
 
   private isEnabled(): boolean {
-    return process.platform === "win32" && process.arch === "x64" && (app.isPackaged || process.env.HBCLIENT_ENABLE_DEV_UPDATES === "1");
+    return (
+      process.platform === "win32" &&
+      process.arch === "x64" &&
+      (app.isPackaged || process.env.HBCLIENT_ENABLE_DEV_UPDATES === "1")
+    );
   }
 
   private setState(patch: Partial<HBClientUpdateState>): void {
@@ -193,12 +200,32 @@ export class HBClientUpdateManager {
   }
 }
 
-function normalizeProgress(progress: { percent: number; bytesPerSecond: number; transferred: number; total: number }): HBClientUpdateProgress {
+export function requireHttpsUpdateFeedUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch (error) {
+    throw new Error("HBClient update feed URL is invalid.", { cause: error });
+  }
+  if (url.protocol !== "https:") {
+    throw new Error("HBClient update feed requires HTTPS; refusing an unencrypted update channel.");
+  }
+  url.username = "";
+  url.password = "";
+  return url.toString().replace(/\/+$/, "");
+}
+
+function normalizeProgress(progress: {
+  percent: number;
+  bytesPerSecond: number;
+  transferred: number;
+  total: number;
+}): HBClientUpdateProgress {
   return {
     percent: Number.isFinite(progress.percent) ? Math.max(0, Math.min(100, progress.percent)) : 0,
     bytesPerSecond: Math.max(0, progress.bytesPerSecond || 0),
     transferred: Math.max(0, progress.transferred || 0),
-    total: Math.max(0, progress.total || 0)
+    total: Math.max(0, progress.total || 0),
   };
 }
 

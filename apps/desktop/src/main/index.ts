@@ -3,9 +3,69 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
 import { cp, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { hostname, userInfo } from "node:os";
 import { isAbsolute, join, normalize, relative, resolve } from "node:path";
-import { JsonFileStorage, SupbotRuntime, ensureRuntimeDirs, identityContextFromAccessToken, oidcTokenSetFromTokenResponse, type RuntimeState, type StorageAdapter } from "@supbot/runtime";
-import type { AutopilotStartDataRunInput, CapabilityUpdateInput, CreateConversationInput, DataSourceSpec, IdentityContext, McpConfigTransfer, McpServerInput, McpServerUpdate, MemoryAddInput, MemoryImportInput, MemoryRecallFeedbackInput, MemoryReplayRecallInput, MemorySearchQuery, MemoryUpdateInput, ModelConfigUpdate, ModelProviderUpdate, PermissionMode, PermissionRule, PersonalityConfig, ProjectCreateFromNameInput, ProjectCreateInput, ProjectUpdateInput, RemoteBridgeConfig, ScheduledJobInput, SendPromptInput, ServstationA2AConfigUpdate, ServstationA2AOidcLoginInput, ServstationA2AOidcLoginResult, ServstationAutopilotStartInput, ServstationAutopilotStatusUpdate, ServstationClientSnapshotQuery, ServstationFlowEngineApprovalDecisionInput, ServstationFlowEngineLaunchInput, ServstationMailAccountDraft, ServstationMessageAttachmentUpload, ServstationMessageFolder, ServstationMessageAccountRef, ServstationScheduledJobInput, ServstationSendAgentMessageInput, ServstationSendDirectMessageInput, ServstationSendPromptInput, SubagentConfig, ToolMarketConfigUpdate, ToolMarketQuery } from "@supbot/shared";
-import { defaultServstationBaseUrl, defaultServstationClientId, defaultServstationIssuerUrl, defaultServstationRedirectUri, defaultServstationScope, defaultServstationUser } from "@supbot/shared";
+import {
+  JsonFileStorage,
+  SupbotRuntime,
+  ensureRuntimeDirs,
+  identityContextFromAccessToken,
+  oidcTokenSetFromTokenResponse,
+  type RuntimeState,
+  type StorageAdapter,
+} from "@supbot/runtime";
+import type {
+  AutopilotStartDataRunInput,
+  CapabilityUpdateInput,
+  CreateConversationInput,
+  DataSourceSpec,
+  IdentityContext,
+  McpConfigTransfer,
+  McpServerInput,
+  McpServerUpdate,
+  MemoryAddInput,
+  MemoryImportInput,
+  MemoryRecallFeedbackInput,
+  MemoryReplayRecallInput,
+  MemorySearchQuery,
+  MemoryUpdateInput,
+  ModelConfigUpdate,
+  ModelProviderUpdate,
+  PermissionMode,
+  PermissionRule,
+  PersonalityConfig,
+  ProjectCreateFromNameInput,
+  ProjectCreateInput,
+  ProjectUpdateInput,
+  RemoteBridgeConfig,
+  ScheduledJobInput,
+  SendPromptInput,
+  ServstationA2AConfigUpdate,
+  ServstationA2AOidcLoginInput,
+  ServstationA2AOidcLoginResult,
+  ServstationAutopilotStartInput,
+  ServstationAutopilotStatusUpdate,
+  ServstationClientSnapshotQuery,
+  ServstationFlowEngineApprovalDecisionInput,
+  ServstationFlowEngineLaunchInput,
+  ServstationMailAccountDraft,
+  ServstationMessageAttachmentUpload,
+  ServstationMessageFolder,
+  ServstationMessageAccountRef,
+  ServstationScheduledJobInput,
+  ServstationSendAgentMessageInput,
+  ServstationSendDirectMessageInput,
+  ServstationSendPromptInput,
+  SubagentConfig,
+  ToolMarketConfigUpdate,
+  ToolMarketQuery,
+} from "@supbot/shared";
+import {
+  defaultServstationBaseUrl,
+  defaultServstationClientId,
+  defaultServstationIssuerUrl,
+  defaultServstationRedirectUri,
+  defaultServstationScope,
+  defaultServstationUser,
+} from "@supbot/shared";
 import { HBClientUpdateManager } from "./updateManager";
 
 let mainWindow: BrowserWindow | null = null;
@@ -18,7 +78,8 @@ const appDisplayName = "HBClient";
 // Dev-only fallback password for the local Botstation login form autofill.
 const defaultBotstationPassword = "dev-user";
 const allowedDevServerOrigin = "http://127.0.0.1:5173";
-const productionCsp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'none'";
+const productionCsp =
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'none'";
 const appIconPath = join(__dirname, "../../build/icon.ico");
 let productionCspInstalled = false;
 
@@ -26,14 +87,15 @@ app.setName(appDisplayName);
 app.setAppUserModelId("local.hbclient.desktop");
 
 async function createRuntime(): Promise<SupbotRuntime> {
-  const userDataPath = process.env.HBCLIENT_USER_DATA_DIR || process.env.SUPBOT_USER_DATA_DIR || app.getPath("userData");
+  const userDataPath =
+    process.env.HBCLIENT_USER_DATA_DIR || process.env.SUPBOT_USER_DATA_DIR || app.getPath("userData");
   const dataDir = join(userDataPath, "data");
   await ensureRuntimeDirs(dataDir);
   await seedBundledDefaultData(dataDir);
   const storage = new EncryptedStorage(new JsonFileStorage(dataDir), userDataPath);
   const service = new SupbotRuntime(storage, {
     secretStorageKind: storage.secretStorageKind(),
-    marketSecretStorageKind: storage.secretStorageKind()
+    marketSecretStorageKind: storage.secretStorageKind(),
   });
   await service.init();
   service.startScheduler();
@@ -62,16 +124,13 @@ async function seedBundledDefaultData(dataDir: string): Promise<void> {
   const marker = {
     seededAt: new Date().toISOString(),
     source: bundledDataDir,
-    manifest: manifestRaw ? JSON.parse(manifestRaw) : undefined
+    manifest: manifestRaw ? JSON.parse(manifestRaw) : undefined,
   };
   await writeFile(markerPath, `${JSON.stringify(marker, null, 2)}\n`, "utf8");
 }
 
 async function resolveBundledDefaultDataDir(): Promise<string | undefined> {
-  const candidates = [
-    join(process.resourcesPath, "default-data"),
-    join(app.getAppPath(), "build", "default-data")
-  ];
+  const candidates = [join(process.resourcesPath, "default-data"), join(app.getAppPath(), "build", "default-data")];
   for (const candidate of candidates) {
     if (await pathExists(join(candidate, "skills"))) {
       return candidate;
@@ -107,7 +166,10 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 class EncryptedStorage implements StorageAdapter {
-  constructor(private readonly inner: JsonFileStorage, private readonly userDataPath: string) {}
+  constructor(
+    private readonly inner: JsonFileStorage,
+    private readonly userDataPath: string,
+  ) {}
 
   getDataDir(): string {
     return this.inner.getDataDir();
@@ -152,7 +214,7 @@ class EncryptedStorage implements StorageAdapter {
       state.servstationA2AOidcSecret = decoded.value;
       state.servstationA2AConfig.oidc = {
         ...(state.servstationA2AConfig.oidc || { refreshTokenSaved: false }),
-        refreshTokenSaved: true
+        refreshTokenSaved: true,
       };
     }
     if (state.servstationA2AStaffAgentPasswordSecret) {
@@ -171,8 +233,8 @@ class EncryptedStorage implements StorageAdapter {
       toolMarketConfig: { ...state.toolMarketConfig },
       servstationA2AConfig: {
         ...state.servstationA2AConfig,
-        oidc: state.servstationA2AConfig.oidc ? { ...state.servstationA2AConfig.oidc } : undefined
-      }
+        oidc: state.servstationA2AConfig.oidc ? { ...state.servstationA2AConfig.oidc } : undefined,
+      },
     };
     for (const provider of copy.modelProviders) {
       if (provider.apiKeySecret) {
@@ -207,7 +269,7 @@ class EncryptedStorage implements StorageAdapter {
       copy.servstationA2AOidcSecret = encoded.value;
       copy.servstationA2AConfig.oidc = {
         ...(copy.servstationA2AConfig.oidc || { refreshTokenSaved: false }),
-        refreshTokenSaved: true
+        refreshTokenSaved: true,
       };
     }
     if (copy.servstationA2AStaffAgentPasswordSecret) {
@@ -223,7 +285,7 @@ class EncryptedStorage implements StorageAdapter {
     if (safeStorage.isEncryptionAvailable()) {
       return {
         value: `safe:v1:${Buffer.from(safeStorage.encryptString(secret)).toString("base64")}`,
-        kind: "safeStorage"
+        kind: "safeStorage",
       };
     }
     const iv = randomBytes(12);
@@ -232,7 +294,7 @@ class EncryptedStorage implements StorageAdapter {
     const tag = cipher.getAuthTag();
     return {
       value: `file:v1:${Buffer.concat([iv, tag, encrypted]).toString("base64")}`,
-      kind: "file"
+      kind: "file",
     };
   }
 
@@ -240,7 +302,7 @@ class EncryptedStorage implements StorageAdapter {
     if (secret.startsWith("safe:v1:")) {
       return {
         value: safeStorage.decryptString(Buffer.from(secret.slice("safe:v1:".length), "base64")),
-        kind: "safeStorage"
+        kind: "safeStorage",
       };
     }
     if (secret.startsWith("file:v1:")) {
@@ -252,7 +314,7 @@ class EncryptedStorage implements StorageAdapter {
       decipher.setAuthTag(tag);
       return {
         value: Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8"),
-        kind: "file"
+        kind: "file",
       };
     }
     return { value: secret, kind: "file" };
@@ -298,14 +360,48 @@ async function loginServstationOidc(input: ServstationA2AOidcLoginInput): Promis
   const service = getRuntime();
   const currentConfig = await service.servstationA2AConfig();
   const currentIdentity = await service.identityContext();
-  const baseUrl = normalizeOidcUrl(input.baseUrl || currentConfig.baseUrl || currentIdentity?.servstationUrl || process.env.HBCLIENT_BOTSTATION_BASE_URL || defaultServstationBaseUrl, "Botstation base URL");
-  const issuerUrl = normalizeOidcUrl(input.issuerUrl || currentConfig.oidc?.issuerUrl || process.env.HBCLIENT_BOTSTATION_ISSUER_URL || defaultServstationIssuerUrl, "Botstation OIDC issuer URL");
-  const clientId = requiredString(input.clientId || currentConfig.oidc?.clientId || process.env.HBCLIENT_BOTSTATION_CLIENT_ID || defaultServstationClientId, "Botstation OIDC client id");
-  const scope = input.scope || currentConfig.oidc?.scope || process.env.HBCLIENT_BOTSTATION_SCOPE || defaultServstationScope;
-  const redirectUri = normalizeOidcUrl(input.redirectUri || currentConfig.oidc?.redirectUri || process.env.HBCLIENT_BOTSTATION_REDIRECT_URI || defaultServstationRedirectUri, "Botstation OIDC redirect URI");
-  const loginHint = input.loginHint || currentConfig.staffAgentAccount || process.env.HBCLIENT_BOTSTATION_USERNAME || defaultServstationUser;
+  const baseUrl = normalizeOidcUrl(
+    input.baseUrl ||
+      currentConfig.baseUrl ||
+      currentIdentity?.servstationUrl ||
+      process.env.HBCLIENT_BOTSTATION_BASE_URL ||
+      defaultServstationBaseUrl,
+    "Botstation base URL",
+  );
+  const issuerUrl = normalizeOidcUrl(
+    input.issuerUrl ||
+      currentConfig.oidc?.issuerUrl ||
+      process.env.HBCLIENT_BOTSTATION_ISSUER_URL ||
+      defaultServstationIssuerUrl,
+    "Botstation OIDC issuer URL",
+  );
+  const clientId = requiredString(
+    input.clientId ||
+      currentConfig.oidc?.clientId ||
+      process.env.HBCLIENT_BOTSTATION_CLIENT_ID ||
+      defaultServstationClientId,
+    "Botstation OIDC client id",
+  );
+  const scope =
+    input.scope || currentConfig.oidc?.scope || process.env.HBCLIENT_BOTSTATION_SCOPE || defaultServstationScope;
+  const redirectUri = normalizeOidcUrl(
+    input.redirectUri ||
+      currentConfig.oidc?.redirectUri ||
+      process.env.HBCLIENT_BOTSTATION_REDIRECT_URI ||
+      defaultServstationRedirectUri,
+    "Botstation OIDC redirect URI",
+  );
+  const loginHint =
+    input.loginHint ||
+    currentConfig.staffAgentAccount ||
+    process.env.HBCLIENT_BOTSTATION_USERNAME ||
+    defaultServstationUser;
   const savedPassword = await service.servstationA2AStaffAgentPassword();
-  const autoLogin = localBotstationAutoLogin(issuerUrl, loginHint, savedPassword || process.env.HBCLIENT_BOTSTATION_PASSWORD);
+  const autoLogin = localBotstationAutoLogin(
+    issuerUrl,
+    loginHint,
+    savedPassword || process.env.HBCLIENT_BOTSTATION_PASSWORD,
+  );
   const discovery = await discoverOidcDocument(issuerUrl);
   if (!discovery.authorization_endpoint || !discovery.token_endpoint) {
     throw new Error("Servstation OIDC discovery document is missing required endpoints.");
@@ -334,23 +430,26 @@ async function loginServstationOidc(input: ServstationA2AOidcLoginInput): Promis
       client_id: clientId,
       redirect_uri: redirectUri,
       code: codeResult.code,
-      code_verifier: verifier
-    })
+      code_verifier: verifier,
+    }),
   });
-  const tokenPayload = await tokenResponse.json().catch(() => ({})) as Parameters<typeof oidcTokenSetFromTokenResponse>[0] & { error?: string; error_description?: string };
+  const tokenPayload = (await tokenResponse.json().catch(() => ({}))) as Parameters<
+    typeof oidcTokenSetFromTokenResponse
+  >[0] & { error?: string; error_description?: string };
   if (!tokenResponse.ok) {
-    const message = typeof tokenPayload.error_description === "string"
-      ? tokenPayload.error_description
-      : typeof tokenPayload.error === "string"
-        ? tokenPayload.error
-        : `HTTP ${tokenResponse.status}`;
+    const message =
+      typeof tokenPayload.error_description === "string"
+        ? tokenPayload.error_description
+        : typeof tokenPayload.error === "string"
+          ? tokenPayload.error
+          : `HTTP ${tokenResponse.status}`;
     throw new Error(`Servstation OIDC token exchange failed: ${message}`);
   }
   const tokens = oidcTokenSetFromTokenResponse(tokenPayload, { issuerUrl, clientId });
   const identityContext = identityContextFromAccessToken(tokens.accessToken, {
     ...(currentIdentity || {}),
     servstationUrl: baseUrl,
-    agentInstanceId: currentConfig.agentInstanceId || currentIdentity?.agentInstanceId
+    agentInstanceId: currentConfig.agentInstanceId || currentIdentity?.agentInstanceId,
   });
   const config = await service.updateServstationA2AOidcSession({
     baseUrl,
@@ -359,21 +458,26 @@ async function loginServstationOidc(input: ServstationA2AOidcLoginInput): Promis
     scope,
     redirectUri,
     tokens,
-    identityContext
+    identityContext,
   });
   return { config, identityContext };
 }
 
 async function discoverOidcDocument(issuerUrl: string): Promise<OidcDiscoveryDocument> {
   const response = await fetch(`${issuerUrl}/.well-known/openid-configuration`);
-  const payload = await response.json().catch(() => ({})) as OidcDiscoveryDocument;
+  const payload = (await response.json().catch(() => ({}))) as OidcDiscoveryDocument;
   if (!response.ok) {
     throw new Error(`Servstation OIDC discovery failed: HTTP ${response.status}`);
   }
   return payload;
 }
 
-function openOidcLoginWindow(authorizationUrl: string, redirectUri: string, expectedState: string, autoLogin?: OidcAutoLogin): Promise<OidcCodeResult> {
+function openOidcLoginWindow(
+  authorizationUrl: string,
+  redirectUri: string,
+  expectedState: string,
+  autoLogin?: OidcAutoLogin,
+): Promise<OidcCodeResult> {
   return new Promise((resolve, reject) => {
     const authWindow = new BrowserWindow({
       parent: mainWindow || undefined,
@@ -390,8 +494,8 @@ function openOidcLoginWindow(authorizationUrl: string, redirectUri: string, expe
         nodeIntegration: false,
         sandbox: true,
         webSecurity: true,
-        allowRunningInsecureContent: false
-      }
+        allowRunningInsecureContent: false,
+      },
     });
     authWindow.removeMenu();
     authWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -484,7 +588,11 @@ function openOidcLoginWindow(authorizationUrl: string, redirectUri: string, expe
   });
 }
 
-function localBotstationAutoLogin(issuerUrl: string, userId: string | undefined, password: string | undefined): OidcAutoLogin | undefined {
+function localBotstationAutoLogin(
+  issuerUrl: string,
+  userId: string | undefined,
+  password: string | undefined,
+): OidcAutoLogin | undefined {
   if (!userId?.trim()) {
     return undefined;
   }
@@ -492,14 +600,15 @@ function localBotstationAutoLogin(issuerUrl: string, userId: string | undefined,
   if (!isLoopbackHost(issuer.hostname)) {
     return undefined;
   }
-  const resolvedPassword = password?.trim() || (isDev && userId.trim() === defaultServstationUser ? defaultBotstationPassword : "");
+  const resolvedPassword =
+    password?.trim() || (isDev && userId.trim() === defaultServstationUser ? defaultBotstationPassword : "");
   if (!resolvedPassword) {
     return undefined;
   }
   return {
     userId: userId.trim(),
     password: resolvedPassword,
-    issuerOrigin: issuer.origin
+    issuerOrigin: issuer.origin,
   };
 }
 
@@ -538,7 +647,7 @@ function normalizeOidcUrl(value: string, label: string): string {
     if (error instanceof Error && error.message.includes("http or https")) {
       throw error;
     }
-    throw new Error(`${label} is invalid.`);
+    throw new Error(`${label} is invalid.`, { cause: error });
   }
 }
 
@@ -567,8 +676,8 @@ function installProductionCsp(webContents: WebContents): void {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
-        "Content-Security-Policy": [productionCsp]
-      }
+        "Content-Security-Policy": [productionCsp],
+      },
     });
   });
 }
@@ -601,14 +710,14 @@ async function createWindow(): Promise<void> {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
-      allowRunningInsecureContent: false
-    }
+      allowRunningInsecureContent: false,
+    },
   });
   hardenWebContents(mainWindow.webContents);
   updateManager?.stop();
   updateManager = new HBClientUpdateManager({
     getFeedContext: hbClientUpdateFeedContext,
-    emitState: (state) => mainWindow?.webContents.send("hbclient:updateState", state)
+    emitState: (state) => mainWindow?.webContents.send("hbclient:updateState", state),
   });
 
   const devServerUrl = process.env.HBCLIENT_DEV_SERVER_URL || process.env.SUPBOT_DEV_SERVER_URL;
@@ -637,7 +746,8 @@ async function createWindow(): Promise<void> {
 async function hbClientUpdateFeedContext(forceRefresh: boolean): Promise<{ baseUrl: string; accessToken?: string }> {
   const service = getRuntime();
   const [config, identity] = await Promise.all([service.servstationA2AConfig(), service.identityContext()]);
-  const baseUrl = config.baseUrl || identity?.servstationUrl || process.env.HBCLIENT_BOTSTATION_BASE_URL || defaultServstationBaseUrl;
+  const baseUrl =
+    config.baseUrl || identity?.servstationUrl || process.env.HBCLIENT_BOTSTATION_BASE_URL || defaultServstationBaseUrl;
   let accessToken: string | undefined;
   try {
     accessToken = await service.servstationA2AAccessToken(undefined, forceRefresh);
@@ -655,7 +765,11 @@ async function autoConnectLocalBotstation(): Promise<void> {
   }
   const service = getRuntime();
   const config = await service.servstationA2AConfig();
-  if (!isLocalBotstationConfig(config) || config.reverse?.status === "connected" || config.reverse?.status === "connecting") {
+  if (
+    !isLocalBotstationConfig(config) ||
+    config.reverse?.status === "connected" ||
+    config.reverse?.status === "connecting"
+  ) {
     return;
   }
   try {
@@ -664,11 +778,19 @@ async function autoConnectLocalBotstation(): Promise<void> {
     }
     await service.connectServstationReverseBridge();
   } catch (error) {
-    console.warn("HBClient local Botstation auto-connect failed:", error instanceof Error ? error.message : String(error));
+    console.warn(
+      "HBClient local Botstation auto-connect failed:",
+      error instanceof Error ? error.message : String(error),
+    );
   }
 }
 
-function isLocalBotstationConfig(config: ServstationA2AConfigUpdate & { oidc?: { issuerUrl?: string; accessTokenExpiresAt?: string }; reverse?: { status?: string } }): boolean {
+function isLocalBotstationConfig(
+  config: ServstationA2AConfigUpdate & {
+    oidc?: { issuerUrl?: string; accessTokenExpiresAt?: string };
+    reverse?: { status?: string };
+  },
+): boolean {
   const baseUrl = config.baseUrl || defaultServstationBaseUrl;
   const issuerUrl = config.oidc?.issuerUrl || defaultServstationIssuerUrl;
   try {
@@ -678,7 +800,9 @@ function isLocalBotstationConfig(config: ServstationA2AConfigUpdate & { oidc?: {
   }
 }
 
-function hasUsableBotstationOidcSession(config: { oidc?: { accessTokenExpiresAt?: string; refreshTokenSaved?: boolean } }): boolean {
+function hasUsableBotstationOidcSession(config: {
+  oidc?: { accessTokenExpiresAt?: string; refreshTokenSaved?: boolean };
+}): boolean {
   if (config.oidc?.refreshTokenSaved) {
     return true;
   }
@@ -689,29 +813,64 @@ function hasUsableBotstationOidcSession(config: { oidc?: { accessTokenExpiresAt?
 }
 
 function registerIpc(): void {
-  ipcMain.handle("snapshot", () => getRuntime().snapshot());
+  ipcMain.handle("snapshot", (_event, activeConversationId?: string) =>
+    getRuntime().snapshot(optionalString(activeConversationId, "active conversation id")),
+  );
   ipcMain.handle("hbclient:update:getState", () => updateManager?.getState());
   ipcMain.handle("hbclient:update:check", () => updateManager?.check(true));
   ipcMain.handle("hbclient:update:download", () => updateManager?.download());
   ipcMain.handle("hbclient:update:install", () => updateManager?.install());
-  ipcMain.handle("conversation:create", (_event, input?: string | CreateConversationInput) => getRuntime().createConversation(validateCreateConversationInput(input)));
-  ipcMain.handle("conversation:delete", (_event, id: string) => getRuntime().deleteConversation(requiredString(id, "conversation id")));
-  ipcMain.handle("prompt:send", (_event, input: SendPromptInput) => getRuntime().sendPrompt(validateSendPromptInput(input)));
+  ipcMain.handle("conversation:create", (_event, input?: string | CreateConversationInput) =>
+    getRuntime().createConversation(validateCreateConversationInput(input)),
+  );
+  ipcMain.handle("conversation:delete", (_event, id: string) =>
+    getRuntime().deleteConversation(requiredString(id, "conversation id")),
+  );
+  ipcMain.handle("prompt:send", (_event, input: SendPromptInput) =>
+    getRuntime().sendPrompt(validateSendPromptInput(input)),
+  );
   ipcMain.handle("clipboard:readText", () => clipboard.readText());
   ipcMain.handle("job:cancel", (_event, id: string) => getRuntime().cancelJob(requiredString(id, "job id")));
-  ipcMain.handle("tool:approve", (_event, id: string) => getRuntime().approveToolPermission(requiredString(id, "permission id")));
-  ipcMain.handle("tool:deny", (_event, id: string) => getRuntime().denyToolPermission(requiredString(id, "permission id")));
-  ipcMain.handle("permission:setMode", (_event, mode: PermissionMode) => getRuntime().setPermissionMode(validateRendererPermissionMode(mode)));
-  ipcMain.handle("permission:addRule", (_event, rule: Omit<PermissionRule, "id" | "createdAt" | "scope"> & { id?: string }) => getRuntime().addPermissionRule(validatePermissionRuleInput(rule)));
-  ipcMain.handle("permission:removeRule", (_event, id: string) => getRuntime().removePermissionRule(requiredString(id, "permission rule id")));
-  ipcMain.handle("conversation:compact", (_event, id: string) => getRuntime().compactConversation(requiredString(id, "conversation id")));
-  ipcMain.handle("conversation:loadTranscript", (_event, id: string) => getRuntime().loadTranscript(requiredString(id, "conversation id")));
-  ipcMain.handle("project:createFromFolder", (_event, input: ProjectCreateInput) => getRuntime().createProjectFromFolder(validateProjectCreateInput(input)));
-  ipcMain.handle("project:createFromName", (_event, input: ProjectCreateFromNameInput) => getRuntime().createProjectFromName(validateProjectCreateFromNameInput(input)));
+  ipcMain.handle("tool:approve", (_event, id: string) =>
+    getRuntime().approveToolPermission(requiredString(id, "permission id")),
+  );
+  ipcMain.handle("tool:deny", (_event, id: string) =>
+    getRuntime().denyToolPermission(requiredString(id, "permission id")),
+  );
+  ipcMain.handle("permission:setMode", (_event, mode: PermissionMode) =>
+    getRuntime().setPermissionMode(validateRendererPermissionMode(mode)),
+  );
+  ipcMain.handle(
+    "permission:addRule",
+    (_event, rule: Omit<PermissionRule, "id" | "createdAt" | "scope"> & { id?: string }) =>
+      getRuntime().addPermissionRule(validatePermissionRuleInput(rule)),
+  );
+  ipcMain.handle("permission:removeRule", (_event, id: string) =>
+    getRuntime().removePermissionRule(requiredString(id, "permission rule id")),
+  );
+  ipcMain.handle("conversation:compact", (_event, id: string) =>
+    getRuntime().compactConversation(requiredString(id, "conversation id")),
+  );
+  ipcMain.handle("conversation:loadTranscript", (_event, id: string) =>
+    getRuntime().loadTranscript(requiredString(id, "conversation id")),
+  );
+  ipcMain.handle("conversation:loadHistory", (_event, id: string, beforeMessageId?: string, limit?: number) =>
+    getRuntime().loadConversationHistory(
+      requiredString(id, "conversation id"),
+      optionalString(beforeMessageId, "before message id"),
+      transcriptPageLimit(limit),
+    ),
+  );
+  ipcMain.handle("project:createFromFolder", (_event, input: ProjectCreateInput) =>
+    getRuntime().createProjectFromFolder(validateProjectCreateInput(input)),
+  );
+  ipcMain.handle("project:createFromName", (_event, input: ProjectCreateFromNameInput) =>
+    getRuntime().createProjectFromName(validateProjectCreateFromNameInput(input)),
+  );
   ipcMain.handle("project:list", () => getRuntime().listProjects());
   ipcMain.handle("project:pickFolder", async () => {
     const result = await dialog.showOpenDialog(mainWindow!, {
-      properties: ["openDirectory", "createDirectory"]
+      properties: ["openDirectory", "createDirectory"],
     });
     return result.canceled ? "" : result.filePaths[0] || "";
   });
@@ -720,16 +879,34 @@ function registerIpc(): void {
     await shell.openPath(project.rootPath);
     return project;
   });
-  ipcMain.handle("project:update", (_event, id: string, input: ProjectUpdateInput) => getRuntime().updateProject(requiredString(id, "project id"), validateProjectUpdateInput(input)));
-  ipcMain.handle("autopilot:startDataRun", (_event, input: AutopilotStartDataRunInput) => getRuntime().startDataRun(validateAutopilotStartInput(input)));
-  ipcMain.handle("autopilot:pause", (_event, id: string) => getRuntime().pauseAutopilotRun(requiredString(id, "autopilot run id")));
-  ipcMain.handle("autopilot:resume", (_event, id: string) => getRuntime().resumeAutopilotRun(requiredString(id, "autopilot run id")));
-  ipcMain.handle("autopilot:cancel", (_event, id: string) => getRuntime().cancelAutopilotRun(requiredString(id, "autopilot run id")));
-  ipcMain.handle("autopilot:getRunReport", (_event, id: string) => getRuntime().getAutopilotRunReport(requiredString(id, "autopilot run id")));
+  ipcMain.handle("project:update", (_event, id: string, input: ProjectUpdateInput) =>
+    getRuntime().updateProject(requiredString(id, "project id"), validateProjectUpdateInput(input)),
+  );
+  ipcMain.handle("autopilot:startDataRun", (_event, input: AutopilotStartDataRunInput) =>
+    getRuntime().startDataRun(validateAutopilotStartInput(input)),
+  );
+  ipcMain.handle("autopilot:pause", (_event, id: string) =>
+    getRuntime().pauseAutopilotRun(requiredString(id, "autopilot run id")),
+  );
+  ipcMain.handle("autopilot:resume", (_event, id: string) =>
+    getRuntime().resumeAutopilotRun(requiredString(id, "autopilot run id")),
+  );
+  ipcMain.handle("autopilot:cancel", (_event, id: string) =>
+    getRuntime().cancelAutopilotRun(requiredString(id, "autopilot run id")),
+  );
+  ipcMain.handle("autopilot:getRunReport", (_event, id: string) =>
+    getRuntime().getAutopilotRunReport(requiredString(id, "autopilot run id")),
+  );
   ipcMain.handle("worktree:list", () => getRuntime().listWorktrees());
-  ipcMain.handle("worktree:getDiff", (_event, id: string) => getRuntime().getWorktreeDiff(requiredString(id, "worktree id")));
-  ipcMain.handle("worktree:apply", (_event, id: string) => getRuntime().applyWorktree(requiredString(id, "worktree id")));
-  ipcMain.handle("worktree:discard", (_event, id: string) => getRuntime().discardWorktree(requiredString(id, "worktree id")));
+  ipcMain.handle("worktree:getDiff", (_event, id: string) =>
+    getRuntime().getWorktreeDiff(requiredString(id, "worktree id")),
+  );
+  ipcMain.handle("worktree:apply", (_event, id: string) =>
+    getRuntime().applyWorktree(requiredString(id, "worktree id")),
+  );
+  ipcMain.handle("worktree:discard", (_event, id: string) =>
+    getRuntime().discardWorktree(requiredString(id, "worktree id")),
+  );
   ipcMain.handle("worktree:openFolder", async (_event, id: string) => {
     const worktree = (await getRuntime().listWorktrees()).find((item) => item.id === requiredString(id, "worktree id"));
     if (!worktree) {
@@ -738,14 +915,24 @@ function registerIpc(): void {
     await shell.openPath(worktree.path);
   });
   ipcMain.handle("remoteBridge:getConfig", () => getRuntime().remoteBridgeConfig());
-  ipcMain.handle("remoteBridge:updateConfig", (_event, input: Partial<RemoteBridgeConfig> & { token?: string; clearToken?: boolean }) => getRuntime().updateRemoteBridgeConfig(validateRemoteBridgeUpdate(input)));
+  ipcMain.handle(
+    "remoteBridge:updateConfig",
+    (_event, input: Partial<RemoteBridgeConfig> & { token?: string; clearToken?: boolean }) =>
+      getRuntime().updateRemoteBridgeConfig(validateRemoteBridgeUpdate(input)),
+  );
   ipcMain.handle("remoteBridge:listSessions", () => getRuntime().listRemoteBridgeSessions());
-  ipcMain.handle("remoteBridge:revokeSession", (_event, id: string) => getRuntime().revokeRemoteBridgeSession(requiredString(id, "remote bridge session id")));
+  ipcMain.handle("remoteBridge:revokeSession", (_event, id: string) =>
+    getRuntime().revokeRemoteBridgeSession(requiredString(id, "remote bridge session id")),
+  );
   ipcMain.handle("remoteBridge:listAudit", () => getRuntime().listRemoteBridgeAudit());
   ipcMain.handle("identity:get", () => getRuntime().identityContext());
-  ipcMain.handle("identity:update", (_event, input: IdentityContext) => getRuntime().updateIdentityContext(validateIdentityContext(input)));
+  ipcMain.handle("identity:update", (_event, input: IdentityContext) =>
+    getRuntime().updateIdentityContext(validateIdentityContext(input)),
+  );
   ipcMain.handle("servstationA2A:getConfig", () => getRuntime().servstationA2AConfig());
-  ipcMain.handle("servstationA2A:updateConfig", (_event, input: ServstationA2AConfigUpdate) => getRuntime().updateServstationA2AConfig(validateServstationA2AConfigUpdate(input)));
+  ipcMain.handle("servstationA2A:updateConfig", (_event, input: ServstationA2AConfigUpdate) =>
+    getRuntime().updateServstationA2AConfig(validateServstationA2AConfigUpdate(input)),
+  );
   ipcMain.handle("servstationA2A:loginOidc", async (_event, input?: ServstationA2AOidcLoginInput) => {
     const result = await loginServstationOidc(validateServstationA2AOidcLoginInput(input));
     void updateManager?.check(false);
@@ -763,21 +950,65 @@ function registerIpc(): void {
     return result;
   });
   ipcMain.handle("servstationA2A:disconnectReverse", () => getRuntime().disconnectServstationReverseBridge());
-  ipcMain.handle("servstationClient:snapshot", (_event, input?: ServstationClientSnapshotQuery) => getRuntime().getServstationClientSnapshot(validateServstationClientSnapshotQuery(input)));
-  ipcMain.handle("servstationClient:createProject", (_event, name: string) => getRuntime().createServstationProject(requiredString(name, "servstation project name")));
-  ipcMain.handle("servstationClient:updateProject", (_event, id: string, name: string) => getRuntime().updateServstationProject(requiredString(id, "servstation project id"), requiredString(name, "servstation project name")));
-  ipcMain.handle("servstationClient:deleteProject", (_event, id: string) => getRuntime().deleteServstationProject(requiredString(id, "servstation project id")));
-  ipcMain.handle("servstationClient:listProjectResources", (_event, id: string) => getRuntime().listServstationProjectResources(requiredString(id, "servstation project id")));
-  ipcMain.handle("servstationClient:deleteProjectResource", (_event, projectId: string, resourceId: string) => getRuntime().deleteServstationProjectResource(requiredString(projectId, "servstation project id"), requiredString(resourceId, "servstation project resource id")));
-  ipcMain.handle("servstationClient:createConversation", (_event, title?: string, projectId?: string) => getRuntime().createServstationConversation(optionalString(title, "servstation conversation title"), optionalString(projectId, "servstation project id")));
-  ipcMain.handle("servstationClient:deleteConversation", (_event, id: string) => getRuntime().deleteServstationConversation(requiredString(id, "servstation conversation id")));
-  ipcMain.handle("servstationClient:sendPrompt", (_event, input: ServstationSendPromptInput) => getRuntime().sendServstationPrompt(validateServstationSendPromptInput(input)));
-  ipcMain.handle("servstationClient:cancelJob", (_event, id: string) => getRuntime().cancelServstationJob(requiredString(id, "servstation job id")));
-  ipcMain.handle("servstationClient:createScheduledJob", (_event, input: ServstationScheduledJobInput) => getRuntime().createServstationScheduledJob(validateServstationScheduledJobInput(input)));
-  ipcMain.handle("servstationClient:updateScheduledJob", (_event, id: string, input: Partial<ServstationScheduledJobInput>) => getRuntime().updateServstationScheduledJob(requiredString(id, "servstation scheduled job id"), validateServstationScheduledJobUpdate(input)));
-  ipcMain.handle("servstationClient:deleteScheduledJob", (_event, id: string) => getRuntime().deleteServstationScheduledJob(requiredString(id, "servstation scheduled job id")));
-  ipcMain.handle("servstationClient:startAutopilotRun", (_event, input: ServstationAutopilotStartInput) => getRuntime().startServstationAutopilotRun(validateServstationAutopilotStartInput(input)));
-  ipcMain.handle("servstationClient:updateAutopilotRun", (_event, input: ServstationAutopilotStatusUpdate) => getRuntime().updateServstationAutopilotRun(validateServstationAutopilotStatusUpdate(input)));
+  ipcMain.handle("servstationClient:snapshot", (_event, input?: ServstationClientSnapshotQuery) =>
+    getRuntime().getServstationClientSnapshot(validateServstationClientSnapshotQuery(input)),
+  );
+  ipcMain.handle("servstationClient:createProject", (_event, name: string) =>
+    getRuntime().createServstationProject(requiredString(name, "servstation project name")),
+  );
+  ipcMain.handle("servstationClient:updateProject", (_event, id: string, name: string) =>
+    getRuntime().updateServstationProject(
+      requiredString(id, "servstation project id"),
+      requiredString(name, "servstation project name"),
+    ),
+  );
+  ipcMain.handle("servstationClient:deleteProject", (_event, id: string) =>
+    getRuntime().deleteServstationProject(requiredString(id, "servstation project id")),
+  );
+  ipcMain.handle("servstationClient:listProjectResources", (_event, id: string) =>
+    getRuntime().listServstationProjectResources(requiredString(id, "servstation project id")),
+  );
+  ipcMain.handle("servstationClient:deleteProjectResource", (_event, projectId: string, resourceId: string) =>
+    getRuntime().deleteServstationProjectResource(
+      requiredString(projectId, "servstation project id"),
+      requiredString(resourceId, "servstation project resource id"),
+    ),
+  );
+  ipcMain.handle("servstationClient:createConversation", (_event, title?: string, projectId?: string) =>
+    getRuntime().createServstationConversation(
+      optionalString(title, "servstation conversation title"),
+      optionalString(projectId, "servstation project id"),
+    ),
+  );
+  ipcMain.handle("servstationClient:deleteConversation", (_event, id: string) =>
+    getRuntime().deleteServstationConversation(requiredString(id, "servstation conversation id")),
+  );
+  ipcMain.handle("servstationClient:sendPrompt", (_event, input: ServstationSendPromptInput) =>
+    getRuntime().sendServstationPrompt(validateServstationSendPromptInput(input)),
+  );
+  ipcMain.handle("servstationClient:cancelJob", (_event, id: string) =>
+    getRuntime().cancelServstationJob(requiredString(id, "servstation job id")),
+  );
+  ipcMain.handle("servstationClient:createScheduledJob", (_event, input: ServstationScheduledJobInput) =>
+    getRuntime().createServstationScheduledJob(validateServstationScheduledJobInput(input)),
+  );
+  ipcMain.handle(
+    "servstationClient:updateScheduledJob",
+    (_event, id: string, input: Partial<ServstationScheduledJobInput>) =>
+      getRuntime().updateServstationScheduledJob(
+        requiredString(id, "servstation scheduled job id"),
+        validateServstationScheduledJobUpdate(input),
+      ),
+  );
+  ipcMain.handle("servstationClient:deleteScheduledJob", (_event, id: string) =>
+    getRuntime().deleteServstationScheduledJob(requiredString(id, "servstation scheduled job id")),
+  );
+  ipcMain.handle("servstationClient:startAutopilotRun", (_event, input: ServstationAutopilotStartInput) =>
+    getRuntime().startServstationAutopilotRun(validateServstationAutopilotStartInput(input)),
+  );
+  ipcMain.handle("servstationClient:updateAutopilotRun", (_event, input: ServstationAutopilotStatusUpdate) =>
+    getRuntime().updateServstationAutopilotRun(validateServstationAutopilotStatusUpdate(input)),
+  );
   ipcMain.handle("servstationClient:subscribeAutopilotEvents", (event, id: string, runId: string) => {
     const subscriptionId = requiredString(id, "servstation autopilot event subscription id");
     const resolvedRunId = requiredString(runId, "servstation autopilot run id");
@@ -785,15 +1016,22 @@ function registerIpc(): void {
     const controller = new AbortController();
     servstationAutopilotEventSubscriptions.set(subscriptionId, controller);
     const channel = `servstationClient:autopilotEvent:${subscriptionId}`;
-    void getRuntime().streamServstationAutopilotEvents(resolvedRunId, (payload) => {
-      if (!controller.signal.aborted && !event.sender.isDestroyed()) {
-        event.sender.send(channel, payload);
-      }
-    }, controller.signal).catch(() => undefined).finally(() => {
-      if (servstationAutopilotEventSubscriptions.get(subscriptionId) === controller) {
-        servstationAutopilotEventSubscriptions.delete(subscriptionId);
-      }
-    });
+    void getRuntime()
+      .streamServstationAutopilotEvents(
+        resolvedRunId,
+        (payload) => {
+          if (!controller.signal.aborted && !event.sender.isDestroyed()) {
+            event.sender.send(channel, payload);
+          }
+        },
+        controller.signal,
+      )
+      .catch(() => undefined)
+      .finally(() => {
+        if (servstationAutopilotEventSubscriptions.get(subscriptionId) === controller) {
+          servstationAutopilotEventSubscriptions.delete(subscriptionId);
+        }
+      });
     event.sender.once("destroyed", () => {
       controller.abort();
       servstationAutopilotEventSubscriptions.delete(subscriptionId);
@@ -806,43 +1044,100 @@ function registerIpc(): void {
     servstationAutopilotEventSubscriptions.delete(subscriptionId);
   });
   ipcMain.handle("servstationClient:getFlowEngineSnapshot", () => getRuntime().getServstationFlowEngineSnapshot());
-  ipcMain.handle("servstationClient:launchFlowEngineWorkflow", (_event, input: ServstationFlowEngineLaunchInput) => getRuntime().launchServstationFlowEngineWorkflow(validateServstationFlowEngineLaunchInput(input)));
-  ipcMain.handle("servstationClient:getFlowEngineExecution", (_event, id: string) => getRuntime().getServstationFlowEngineExecution(requiredString(id, "servstation flow execution id")));
-  ipcMain.handle("servstationClient:getFlowEngineExecutionEvents", (_event, id: string) => getRuntime().getServstationFlowEngineExecutionEvents(requiredString(id, "servstation flow execution id")));
-  ipcMain.handle("servstationClient:decideFlowEngineApproval", (_event, input: ServstationFlowEngineApprovalDecisionInput) => getRuntime().decideServstationFlowEngineApproval(validateServstationFlowEngineApprovalDecisionInput(input)));
-  ipcMain.handle("servstationClient:listMessages", (_event, folder: ServstationMessageFolder, unreadOnly?: boolean) => getRuntime().listServstationMessages(validateServstationMessageFolder(folder), optionalBoolean(unreadOnly, "servstation unread only") ?? false));
+  ipcMain.handle("servstationClient:launchFlowEngineWorkflow", (_event, input: ServstationFlowEngineLaunchInput) =>
+    getRuntime().launchServstationFlowEngineWorkflow(validateServstationFlowEngineLaunchInput(input)),
+  );
+  ipcMain.handle("servstationClient:getFlowEngineExecution", (_event, id: string) =>
+    getRuntime().getServstationFlowEngineExecution(requiredString(id, "servstation flow execution id")),
+  );
+  ipcMain.handle("servstationClient:getFlowEngineExecutionEvents", (_event, id: string) =>
+    getRuntime().getServstationFlowEngineExecutionEvents(requiredString(id, "servstation flow execution id")),
+  );
+  ipcMain.handle(
+    "servstationClient:decideFlowEngineApproval",
+    (_event, input: ServstationFlowEngineApprovalDecisionInput) =>
+      getRuntime().decideServstationFlowEngineApproval(validateServstationFlowEngineApprovalDecisionInput(input)),
+  );
+  ipcMain.handle("servstationClient:listMessages", (_event, folder: ServstationMessageFolder, unreadOnly?: boolean) =>
+    getRuntime().listServstationMessages(
+      validateServstationMessageFolder(folder),
+      optionalBoolean(unreadOnly, "servstation unread only") ?? false,
+    ),
+  );
   ipcMain.handle("servstationClient:getUnreadMessages", () => getRuntime().getServstationUnreadMessages());
-  ipcMain.handle("servstationClient:getMessage", (_event, id: string) => getRuntime().getServstationMessage(requiredString(id, "servstation message id")));
-  ipcMain.handle("servstationClient:markMessageRead", (_event, id: string) => getRuntime().markServstationMessageRead(requiredString(id, "servstation message id")));
-  ipcMain.handle("servstationClient:setMessageFavorite", (_event, id: string, favorited: boolean) => getRuntime().setServstationMessageFavorite(requiredString(id, "servstation message id"), optionalBoolean(favorited, "servstation message favorite") ?? false));
-  ipcMain.handle("servstationClient:trashMessage", (_event, id: string) => getRuntime().trashServstationMessage(requiredString(id, "servstation message id")));
-  ipcMain.handle("servstationClient:restoreMessage", (_event, id: string) => getRuntime().restoreServstationMessage(requiredString(id, "servstation message id")));
-  ipcMain.handle("servstationClient:deleteMessage", (_event, id: string) => getRuntime().deleteServstationMessage(requiredString(id, "servstation message id")));
-  ipcMain.handle("servstationClient:fetchMessageAttachment", (_event, messageId: string, attachmentId: string) => getRuntime().fetchServstationMessageAttachment(requiredString(messageId, "servstation message id"), requiredString(attachmentId, "servstation attachment id")));
-  ipcMain.handle("servstationClient:sendAgentMessage", (_event, input: ServstationSendAgentMessageInput) => getRuntime().sendServstationAgentMessage(validateServstationSendAgentMessageInput(input)));
-  ipcMain.handle("servstationClient:sendDirectMessage", (_event, input: ServstationSendDirectMessageInput) => getRuntime().sendServstationDirectMessage(validateServstationSendDirectMessageInput(input)));
+  ipcMain.handle("servstationClient:getMessage", (_event, id: string) =>
+    getRuntime().getServstationMessage(requiredString(id, "servstation message id")),
+  );
+  ipcMain.handle("servstationClient:markMessageRead", (_event, id: string) =>
+    getRuntime().markServstationMessageRead(requiredString(id, "servstation message id")),
+  );
+  ipcMain.handle("servstationClient:setMessageFavorite", (_event, id: string, favorited: boolean) =>
+    getRuntime().setServstationMessageFavorite(
+      requiredString(id, "servstation message id"),
+      optionalBoolean(favorited, "servstation message favorite") ?? false,
+    ),
+  );
+  ipcMain.handle("servstationClient:trashMessage", (_event, id: string) =>
+    getRuntime().trashServstationMessage(requiredString(id, "servstation message id")),
+  );
+  ipcMain.handle("servstationClient:restoreMessage", (_event, id: string) =>
+    getRuntime().restoreServstationMessage(requiredString(id, "servstation message id")),
+  );
+  ipcMain.handle("servstationClient:deleteMessage", (_event, id: string) =>
+    getRuntime().deleteServstationMessage(requiredString(id, "servstation message id")),
+  );
+  ipcMain.handle("servstationClient:fetchMessageAttachment", (_event, messageId: string, attachmentId: string) =>
+    getRuntime().fetchServstationMessageAttachment(
+      requiredString(messageId, "servstation message id"),
+      requiredString(attachmentId, "servstation attachment id"),
+    ),
+  );
+  ipcMain.handle("servstationClient:sendAgentMessage", (_event, input: ServstationSendAgentMessageInput) =>
+    getRuntime().sendServstationAgentMessage(validateServstationSendAgentMessageInput(input)),
+  );
+  ipcMain.handle("servstationClient:sendDirectMessage", (_event, input: ServstationSendDirectMessageInput) =>
+    getRuntime().sendServstationDirectMessage(validateServstationSendDirectMessageInput(input)),
+  );
   ipcMain.handle("servstationClient:listMailAccounts", () => getRuntime().listServstationMailAccounts());
-  ipcMain.handle("servstationClient:createMailAccount", (_event, input: ServstationMailAccountDraft) => getRuntime().createServstationMailAccount(validateServstationMailAccountDraft(input)));
-  ipcMain.handle("servstationClient:updateMailAccount", (_event, id: string, input: ServstationMailAccountDraft) => getRuntime().updateServstationMailAccount(requiredString(id, "servstation mail account id"), validateServstationMailAccountDraft(input)));
-  ipcMain.handle("servstationClient:deleteMailAccount", (_event, id: string) => getRuntime().deleteServstationMailAccount(requiredString(id, "servstation mail account id")));
-  ipcMain.handle("servstationClient:setDefaultMailAccount", (_event, id: string) => getRuntime().setDefaultServstationMailAccount(requiredString(id, "servstation mail account id")));
-  ipcMain.handle("servstationClient:testMailAccountConnection", (_event, id: string) => getRuntime().testServstationMailAccountConnection(requiredString(id, "servstation mail account id")));
-  ipcMain.handle("servstationClient:syncMailAccountNow", (_event, id: string) => getRuntime().syncServstationMailAccountNow(requiredString(id, "servstation mail account id")));
+  ipcMain.handle("servstationClient:createMailAccount", (_event, input: ServstationMailAccountDraft) =>
+    getRuntime().createServstationMailAccount(validateServstationMailAccountDraft(input)),
+  );
+  ipcMain.handle("servstationClient:updateMailAccount", (_event, id: string, input: ServstationMailAccountDraft) =>
+    getRuntime().updateServstationMailAccount(
+      requiredString(id, "servstation mail account id"),
+      validateServstationMailAccountDraft(input),
+    ),
+  );
+  ipcMain.handle("servstationClient:deleteMailAccount", (_event, id: string) =>
+    getRuntime().deleteServstationMailAccount(requiredString(id, "servstation mail account id")),
+  );
+  ipcMain.handle("servstationClient:setDefaultMailAccount", (_event, id: string) =>
+    getRuntime().setDefaultServstationMailAccount(requiredString(id, "servstation mail account id")),
+  );
+  ipcMain.handle("servstationClient:testMailAccountConnection", (_event, id: string) =>
+    getRuntime().testServstationMailAccountConnection(requiredString(id, "servstation mail account id")),
+  );
+  ipcMain.handle("servstationClient:syncMailAccountNow", (_event, id: string) =>
+    getRuntime().syncServstationMailAccountNow(requiredString(id, "servstation mail account id")),
+  );
   ipcMain.handle("servstationClient:subscribeMessageEvents", (event, id: string) => {
     const subscriptionId = requiredString(id, "servstation message event subscription id");
     servstationMessageEventSubscriptions.get(subscriptionId)?.abort();
     const controller = new AbortController();
     servstationMessageEventSubscriptions.set(subscriptionId, controller);
     const channel = `servstationClient:messageEvent:${subscriptionId}`;
-    void getRuntime().streamServstationMessageEvents((payload) => {
-      if (!controller.signal.aborted && !event.sender.isDestroyed()) {
-        event.sender.send(channel, payload);
-      }
-    }, controller.signal).catch(() => undefined).finally(() => {
-      if (servstationMessageEventSubscriptions.get(subscriptionId) === controller) {
-        servstationMessageEventSubscriptions.delete(subscriptionId);
-      }
-    });
+    void getRuntime()
+      .streamServstationMessageEvents((payload) => {
+        if (!controller.signal.aborted && !event.sender.isDestroyed()) {
+          event.sender.send(channel, payload);
+        }
+      }, controller.signal)
+      .catch(() => undefined)
+      .finally(() => {
+        if (servstationMessageEventSubscriptions.get(subscriptionId) === controller) {
+          servstationMessageEventSubscriptions.delete(subscriptionId);
+        }
+      });
     event.sender.once("destroyed", () => {
       controller.abort();
       servstationMessageEventSubscriptions.delete(subscriptionId);
@@ -854,54 +1149,130 @@ function registerIpc(): void {
     servstationMessageEventSubscriptions.get(subscriptionId)?.abort();
     servstationMessageEventSubscriptions.delete(subscriptionId);
   });
-  ipcMain.handle("memory:list", (_event, query?: MemorySearchQuery) => getRuntime().listMemory(validateMemorySearchQuery(query)));
-  ipcMain.handle("memory:search", (_event, query?: MemorySearchQuery) => getRuntime().searchMemory(validateMemorySearchQuery(query)));
-  ipcMain.handle("memory:add", (_event, input: MemoryAddInput) => getRuntime().addMemory(validateMemoryAddInput(input)));
-  ipcMain.handle("memory:update", (_event, id: string, input: MemoryUpdateInput) => getRuntime().updateMemory(requiredString(id, "memory id"), validateMemoryUpdateInput(input)));
+  ipcMain.handle("memory:list", (_event, query?: MemorySearchQuery) =>
+    getRuntime().listMemory(validateMemorySearchQuery(query)),
+  );
+  ipcMain.handle("memory:search", (_event, query?: MemorySearchQuery) =>
+    getRuntime().searchMemory(validateMemorySearchQuery(query)),
+  );
+  ipcMain.handle("memory:add", (_event, input: MemoryAddInput) =>
+    getRuntime().addMemory(validateMemoryAddInput(input)),
+  );
+  ipcMain.handle("memory:update", (_event, id: string, input: MemoryUpdateInput) =>
+    getRuntime().updateMemory(requiredString(id, "memory id"), validateMemoryUpdateInput(input)),
+  );
   ipcMain.handle("memory:delete", (_event, id: string) => getRuntime().deleteMemory(requiredString(id, "memory id")));
-  ipcMain.handle("memory:approveCandidate", (_event, id: string) => getRuntime().approveMemoryCandidate(requiredString(id, "memory candidate id")));
-  ipcMain.handle("memory:denyCandidate", (_event, id: string) => getRuntime().denyMemoryCandidate(requiredString(id, "memory candidate id")));
+  ipcMain.handle("memory:approveCandidate", (_event, id: string) =>
+    getRuntime().approveMemoryCandidate(requiredString(id, "memory candidate id")),
+  );
+  ipcMain.handle("memory:denyCandidate", (_event, id: string) =>
+    getRuntime().denyMemoryCandidate(requiredString(id, "memory candidate id")),
+  );
   ipcMain.handle("memory:export", () => getRuntime().exportMemory());
-  ipcMain.handle("memory:import", (_event, input: MemoryImportInput) => getRuntime().importMemory(validateMemoryImportInput(input)));
+  ipcMain.handle("memory:import", (_event, input: MemoryImportInput) =>
+    getRuntime().importMemory(validateMemoryImportInput(input)),
+  );
   ipcMain.handle("memory:backup", () => getRuntime().backupMemory());
-  ipcMain.handle("memory:restore", (_event, filePath?: string) => getRuntime().restoreMemory(optionalSafePath(filePath)));
-  ipcMain.handle("memory:replayRecall", (_event, input: MemoryReplayRecallInput) => getRuntime().replayMemoryRecall(validateMemoryReplayInput(input)));
-  ipcMain.handle("memory:evaluateRecall", (_event, input: MemoryReplayRecallInput) => getRuntime().replayMemoryRecall(validateMemoryReplayInput(input)));
-  ipcMain.handle("memory:addRecallFeedback", (_event, input: MemoryRecallFeedbackInput) => getRuntime().addMemoryRecallFeedback(validateMemoryRecallFeedbackInput(input)));
-  ipcMain.handle("model:update", (_event, input: ModelConfigUpdate) => getRuntime().updateModelConfig(validateModelConfigUpdate(input)));
-  ipcMain.handle("model:test", (_event, input?: Partial<ModelConfigUpdate>) => getRuntime().testModelConfig(validatePartialModelConfigUpdate(input)));
-  ipcMain.handle("modelProvider:create", (_event, input: ModelProviderUpdate) => getRuntime().createModelProvider(validateModelProviderUpdate(input)));
-  ipcMain.handle("modelProvider:update", (_event, id: string, input: ModelProviderUpdate) => getRuntime().updateModelProvider(requiredString(id, "model provider id"), validateModelProviderUpdate(input)));
-  ipcMain.handle("modelProvider:delete", (_event, id: string) => getRuntime().deleteModelProvider(requiredString(id, "model provider id")));
-  ipcMain.handle("modelProvider:setActive", (_event, id: string) => getRuntime().setActiveModelProvider(requiredString(id, "model provider id")));
-  ipcMain.handle("modelProvider:test", (_event, id?: string, input?: Partial<ModelProviderUpdate>) => getRuntime().testModelProvider(optionalString(id, "model provider id"), validatePartialModelProviderUpdate(input)));
-  ipcMain.handle("market-config:update", (_event, input: ToolMarketConfigUpdate) => getRuntime().updateToolMarketConfig(validateToolMarketConfigUpdate(input)));
-  ipcMain.handle("personality:update", (_event, input: PersonalityConfig) => getRuntime().updatePersonality(validatePersonalityConfig(input)));
-  ipcMain.handle("capability:update", (_event, id: string, input: CapabilityUpdateInput) => getRuntime().updateCapability(requiredString(id, "capability id"), validateCapabilityUpdateInput(input)));
-  ipcMain.handle("capability:delete", (_event, id: string) => getRuntime().deleteCapability(requiredString(id, "capability id")));
-  ipcMain.handle("subagent:save", (_event, input: SubagentConfig) => getRuntime().saveSubagent(validateSubagentConfig(input)));
-  ipcMain.handle("subagent:delete", (_event, id: string) => getRuntime().deleteSubagent(requiredString(id, "subagent id")));
-  ipcMain.handle("market:list", (_event, query?: ToolMarketQuery) => getRuntime().listToolMarket(validateToolMarketQuery(query)));
-  ipcMain.handle("market:install", (_event, id: string) => getRuntime().installToolMarketProduct(requiredString(id, "tool market product id")));
-  ipcMain.handle("market:uninstall", (_event, id: string) => getRuntime().uninstallToolMarketProduct(requiredString(id, "tool market product id")));
+  ipcMain.handle("memory:restore", (_event, filePath?: string) =>
+    getRuntime().restoreMemory(optionalSafePath(filePath)),
+  );
+  ipcMain.handle("memory:replayRecall", (_event, input: MemoryReplayRecallInput) =>
+    getRuntime().replayMemoryRecall(validateMemoryReplayInput(input)),
+  );
+  ipcMain.handle("memory:evaluateRecall", (_event, input: MemoryReplayRecallInput) =>
+    getRuntime().replayMemoryRecall(validateMemoryReplayInput(input)),
+  );
+  ipcMain.handle("memory:addRecallFeedback", (_event, input: MemoryRecallFeedbackInput) =>
+    getRuntime().addMemoryRecallFeedback(validateMemoryRecallFeedbackInput(input)),
+  );
+  ipcMain.handle("model:update", (_event, input: ModelConfigUpdate) =>
+    getRuntime().updateModelConfig(validateModelConfigUpdate(input)),
+  );
+  ipcMain.handle("model:test", (_event, input?: Partial<ModelConfigUpdate>) =>
+    getRuntime().testModelConfig(validatePartialModelConfigUpdate(input)),
+  );
+  ipcMain.handle("modelProvider:create", (_event, input: ModelProviderUpdate) =>
+    getRuntime().createModelProvider(validateModelProviderUpdate(input)),
+  );
+  ipcMain.handle("modelProvider:update", (_event, id: string, input: ModelProviderUpdate) =>
+    getRuntime().updateModelProvider(requiredString(id, "model provider id"), validateModelProviderUpdate(input)),
+  );
+  ipcMain.handle("modelProvider:delete", (_event, id: string) =>
+    getRuntime().deleteModelProvider(requiredString(id, "model provider id")),
+  );
+  ipcMain.handle("modelProvider:setActive", (_event, id: string) =>
+    getRuntime().setActiveModelProvider(requiredString(id, "model provider id")),
+  );
+  ipcMain.handle("modelProvider:test", (_event, id?: string, input?: Partial<ModelProviderUpdate>) =>
+    getRuntime().testModelProvider(optionalString(id, "model provider id"), validatePartialModelProviderUpdate(input)),
+  );
+  ipcMain.handle("market-config:update", (_event, input: ToolMarketConfigUpdate) =>
+    getRuntime().updateToolMarketConfig(validateToolMarketConfigUpdate(input)),
+  );
+  ipcMain.handle("personality:update", (_event, input: PersonalityConfig) =>
+    getRuntime().updatePersonality(validatePersonalityConfig(input)),
+  );
+  ipcMain.handle("capability:update", (_event, id: string, input: CapabilityUpdateInput) =>
+    getRuntime().updateCapability(requiredString(id, "capability id"), validateCapabilityUpdateInput(input)),
+  );
+  ipcMain.handle("capability:delete", (_event, id: string) =>
+    getRuntime().deleteCapability(requiredString(id, "capability id")),
+  );
+  ipcMain.handle("subagent:save", (_event, input: SubagentConfig) =>
+    getRuntime().saveSubagent(validateSubagentConfig(input)),
+  );
+  ipcMain.handle("subagent:delete", (_event, id: string) =>
+    getRuntime().deleteSubagent(requiredString(id, "subagent id")),
+  );
+  ipcMain.handle("market:list", (_event, query?: ToolMarketQuery) =>
+    getRuntime().listToolMarket(validateToolMarketQuery(query)),
+  );
+  ipcMain.handle("market:install", (_event, id: string) =>
+    getRuntime().installToolMarketProduct(requiredString(id, "tool market product id")),
+  );
+  ipcMain.handle("market:uninstall", (_event, id: string) =>
+    getRuntime().uninstallToolMarketProduct(requiredString(id, "tool market product id")),
+  );
   ipcMain.handle("mcp:listServers", () => getRuntime().listMcpServers());
-  ipcMain.handle("mcp:addServer", (_event, input: McpServerInput) => getRuntime().addMcpServer(validateMcpServerInput(input)));
-  ipcMain.handle("mcp:updateServer", (_event, id: string, input: McpServerUpdate) => getRuntime().updateMcpServer(requiredString(id, "MCP server id"), validateMcpServerUpdate(input)));
-  ipcMain.handle("mcp:removeServer", (_event, id: string) => getRuntime().removeMcpServer(requiredString(id, "MCP server id")));
-  ipcMain.handle("mcp:connect", (_event, id: string) => getRuntime().connectMcpServer(requiredString(id, "MCP server id")));
-  ipcMain.handle("mcp:disconnect", (_event, id: string) => getRuntime().disconnectMcpServer(requiredString(id, "MCP server id")));
-  ipcMain.handle("mcp:refreshTools", (_event, id: string) => getRuntime().refreshMcpTools(requiredString(id, "MCP server id")));
+  ipcMain.handle("mcp:addServer", (_event, input: McpServerInput) =>
+    getRuntime().addMcpServer(validateMcpServerInput(input)),
+  );
+  ipcMain.handle("mcp:updateServer", (_event, id: string, input: McpServerUpdate) =>
+    getRuntime().updateMcpServer(requiredString(id, "MCP server id"), validateMcpServerUpdate(input)),
+  );
+  ipcMain.handle("mcp:removeServer", (_event, id: string) =>
+    getRuntime().removeMcpServer(requiredString(id, "MCP server id")),
+  );
+  ipcMain.handle("mcp:connect", (_event, id: string) =>
+    getRuntime().connectMcpServer(requiredString(id, "MCP server id")),
+  );
+  ipcMain.handle("mcp:disconnect", (_event, id: string) =>
+    getRuntime().disconnectMcpServer(requiredString(id, "MCP server id")),
+  );
+  ipcMain.handle("mcp:refreshTools", (_event, id: string) =>
+    getRuntime().refreshMcpTools(requiredString(id, "MCP server id")),
+  );
   ipcMain.handle("mcp:getLogs", (_event, id: string) => getRuntime().getMcpLogs(requiredString(id, "MCP server id")));
   ipcMain.handle("mcp:listPresets", () => getRuntime().listMcpPresets());
   ipcMain.handle("mcp:export", () => getRuntime().exportMcpConfig());
-  ipcMain.handle("mcp:import", (_event, input: McpConfigTransfer) => getRuntime().importMcpConfig(validateMcpConfigTransfer(input)));
-  ipcMain.handle("mcp:diagnoseServer", (_event, input: McpServerInput) => getRuntime().diagnoseMcpServer(validateMcpServerInput(input)));
-  ipcMain.handle("schedule:create", (_event, input: ScheduledJobInput) => getRuntime().createScheduledJob(validateScheduledJobInput(input)));
-  ipcMain.handle("schedule:update", (_event, id: string, input: Partial<ScheduledJobInput>) => getRuntime().updateScheduledJob(requiredString(id, "scheduled job id"), validateScheduledJobUpdate(input)));
-  ipcMain.handle("schedule:delete", (_event, id: string) => getRuntime().deleteScheduledJob(requiredString(id, "scheduled job id")));
+  ipcMain.handle("mcp:import", (_event, input: McpConfigTransfer) =>
+    getRuntime().importMcpConfig(validateMcpConfigTransfer(input)),
+  );
+  ipcMain.handle("mcp:diagnoseServer", (_event, input: McpServerInput) =>
+    getRuntime().diagnoseMcpServer(validateMcpServerInput(input)),
+  );
+  ipcMain.handle("schedule:create", (_event, input: ScheduledJobInput) =>
+    getRuntime().createScheduledJob(validateScheduledJobInput(input)),
+  );
+  ipcMain.handle("schedule:update", (_event, id: string, input: Partial<ScheduledJobInput>) =>
+    getRuntime().updateScheduledJob(requiredString(id, "scheduled job id"), validateScheduledJobUpdate(input)),
+  );
+  ipcMain.handle("schedule:delete", (_event, id: string) =>
+    getRuntime().deleteScheduledJob(requiredString(id, "scheduled job id")),
+  );
   ipcMain.handle("attachment:pick", async () => {
     const result = await dialog.showOpenDialog(mainWindow!, {
-      properties: ["openFile", "multiSelections"]
+      properties: ["openFile", "multiSelections"],
     });
     if (result.canceled) {
       return [];
@@ -910,13 +1281,17 @@ function registerIpc(): void {
   });
   ipcMain.handle("file:open", async (_event, filePath: string) => {
     const safePath = requiredPath(filePath, "file path");
-    const userDataPath = process.env.HBCLIENT_USER_DATA_DIR || process.env.SUPBOT_USER_DATA_DIR || app.getPath("userData");
+    const userDataPath =
+      process.env.HBCLIENT_USER_DATA_DIR || process.env.SUPBOT_USER_DATA_DIR || app.getPath("userData");
     if (!getRuntime().isKnownSafePath(safePath) && !pathIsInside(userDataPath, safePath)) {
       throw new Error("HBClient can only open files or folders it created, imported, or tracks as a worktree.");
     }
     await shell.openPath(safePath);
   });
-  ipcMain.handle("path:userData", () => process.env.HBCLIENT_USER_DATA_DIR || process.env.SUPBOT_USER_DATA_DIR || app.getPath("userData"));
+  ipcMain.handle(
+    "path:userData",
+    () => process.env.HBCLIENT_USER_DATA_DIR || process.env.SUPBOT_USER_DATA_DIR || app.getPath("userData"),
+  );
 }
 
 function validateRendererPermissionMode(mode: PermissionMode): PermissionMode {
@@ -937,7 +1312,7 @@ function validateSendPromptInput(input: SendPromptInput): SendPromptInput {
     projectId: optionalString(value.projectId, "project id"),
     prompt: requiredString(value.prompt, "prompt"),
     workspaceMode: workspaceMode as SendPromptInput["workspaceMode"],
-    attachments: Array.isArray(value.attachments) ? value.attachments.map(validateAttachment) : []
+    attachments: Array.isArray(value.attachments) ? value.attachments.map(validateAttachment) : [],
   };
 }
 
@@ -945,7 +1320,7 @@ function validateProjectCreateInput(input: ProjectCreateInput): ProjectCreateInp
   const value = object(input, "project input");
   return {
     rootPath: requiredString(value.rootPath, "project folder"),
-    name: optionalString(value.name, "project name")
+    name: optionalString(value.name, "project name"),
   };
 }
 
@@ -962,15 +1337,16 @@ function validateProjectUpdateInput(input: ProjectUpdateInput): ProjectUpdateInp
   const value = object(input, "project update");
   return {
     name: optionalString(value.name, "project name"),
-    status: optionalEnum(value.status, ["active", "archived", "error"], "project status")
+    status: optionalEnum(value.status, ["active", "archived", "error"], "project status"),
   };
 }
 
 function validateAutopilotStartInput(input: AutopilotStartDataRunInput): AutopilotStartDataRunInput {
   const value = object(input, "autopilot data run");
-  const policy = value.writePolicy && typeof value.writePolicy === "object" && !Array.isArray(value.writePolicy)
-    ? value.writePolicy as Record<string, unknown>
-    : {};
+  const policy =
+    value.writePolicy && typeof value.writePolicy === "object" && !Array.isArray(value.writePolicy)
+      ? (value.writePolicy as Record<string, unknown>)
+      : {};
   return {
     projectId: requiredString(value.projectId, "project id"),
     goal: requiredString(value.goal, "autopilot goal"),
@@ -981,8 +1357,8 @@ function validateAutopilotStartInput(input: AutopilotStartDataRunInput): Autopil
       allowMcp: optionalBoolean(policy.allowMcp, "allow MCP"),
       maxRuntimeMinutes: optionalNumber(policy.maxRuntimeMinutes, "max runtime minutes"),
       maxTasks: optionalNumber(policy.maxTasks, "max tasks"),
-      maxRetries: optionalNumber(policy.maxRetries, "max retries")
-    })
+      maxRetries: optionalNumber(policy.maxRetries, "max retries"),
+    }),
   };
 }
 
@@ -990,18 +1366,26 @@ function validateDataSourceSpec(input: unknown): DataSourceSpec {
   const value = object(input, "data source");
   return {
     id: optionalString(value.id, "data source id") || "",
-    kind: optionalEnum(value.kind, ["localFiles", "folderScan", "httpApi", "webUrl", "mcpTool", "shellCommand"], "data source kind") || "folderScan",
+    kind:
+      optionalEnum(
+        value.kind,
+        ["localFiles", "folderScan", "httpApi", "webUrl", "mcpTool", "shellCommand"],
+        "data source kind",
+      ) || "folderScan",
     label: optionalString(value.label, "data source label") || "",
     path: optionalString(value.path, "data source path"),
     paths: optionalStringArray(value.paths, "data source paths"),
     url: optionalString(value.url, "data source url"),
     method: optionalEnum(value.method, ["GET", "POST"], "HTTP method"),
-    headers: value.headers && typeof value.headers === "object" && !Array.isArray(value.headers)
-      ? Object.fromEntries(Object.entries(value.headers).filter(([key, entry]) => key.trim() && typeof entry === "string")) as Record<string, string>
-      : undefined,
+    headers:
+      value.headers && typeof value.headers === "object" && !Array.isArray(value.headers)
+        ? (Object.fromEntries(
+            Object.entries(value.headers).filter(([key, entry]) => key.trim() && typeof entry === "string"),
+          ) as Record<string, string>)
+        : undefined,
     body: optionalString(value.body, "HTTP body"),
     mcpToolName: optionalString(value.mcpToolName, "MCP tool name"),
-    shellCommand: optionalString(value.shellCommand, "shell command")
+    shellCommand: optionalString(value.shellCommand, "shell command"),
   };
 }
 
@@ -1012,7 +1396,7 @@ function validateAttachment(input: unknown) {
     name: requiredString(value.name, "attachment name"),
     path: optionalSafePath(value.path),
     size: optionalNumber(value.size, "attachment size") ?? 0,
-    mimeType: optionalString(value.mimeType, "attachment mime type")
+    mimeType: optionalString(value.mimeType, "attachment mime type"),
   };
 }
 
@@ -1025,7 +1409,7 @@ function validatePermissionRuleInput(input: Omit<PermissionRule, "id" | "created
   return {
     id: optionalString(value.id, "permission rule id"),
     toolName: requiredString(value.toolName, "permission tool name"),
-    behavior
+    behavior,
   };
 }
 
@@ -1042,7 +1426,7 @@ function validateRemoteBridgeUpdate(input: Partial<RemoteBridgeConfig> & { token
     port: optionalNumber(value.port, "remote bridge port"),
     allowRemoteBind,
     token: optionalString(value.token, "remote bridge token"),
-    clearToken: optionalBoolean(value.clearToken, "clear remote bridge token")
+    clearToken: optionalBoolean(value.clearToken, "clear remote bridge token"),
   });
 }
 
@@ -1057,7 +1441,7 @@ function validateIdentityContext(input: IdentityContext): IdentityContext {
     source: optionalEnum(value.source, ["manual", "servstation"], "identity source"),
     agentInstanceId: optionalString(value.agentInstanceId, "agent instance id"),
     servstationUrl: optionalString(value.servstationUrl, "servstation url"),
-    updatedAt: optionalString(value.updatedAt, "identity updated at")
+    updatedAt: optionalString(value.updatedAt, "identity updated at"),
   }) as IdentityContext;
 }
 
@@ -1078,11 +1462,13 @@ function validateServstationA2AConfigUpdate(input: ServstationA2AConfigUpdate): 
     oidcScope: optionalString(value.oidcScope, "servstation OIDC scope"),
     oidcRedirectUri: optionalString(value.oidcRedirectUri, "servstation OIDC redirect URI"),
     reverseEnabled: optionalBoolean(value.reverseEnabled, "servstation reverse A2A enabled"),
-    reverseClientInstanceId: optionalString(value.reverseClientInstanceId, "servstation reverse client instance id")
+    reverseClientInstanceId: optionalString(value.reverseClientInstanceId, "servstation reverse client instance id"),
   });
 }
 
-function validateServstationA2AOidcLoginInput(input: ServstationA2AOidcLoginInput | undefined): ServstationA2AOidcLoginInput {
+function validateServstationA2AOidcLoginInput(
+  input: ServstationA2AOidcLoginInput | undefined,
+): ServstationA2AOidcLoginInput {
   if (!input) {
     return {};
   }
@@ -1093,17 +1479,19 @@ function validateServstationA2AOidcLoginInput(input: ServstationA2AOidcLoginInpu
     clientId: optionalString(value.clientId, "servstation OIDC client id"),
     scope: optionalString(value.scope, "servstation OIDC scope"),
     redirectUri: optionalString(value.redirectUri, "servstation OIDC redirect URI"),
-    loginHint: optionalString(value.loginHint, "servstation OIDC login hint")
+    loginHint: optionalString(value.loginHint, "servstation OIDC login hint"),
   });
 }
 
-function validateServstationClientSnapshotQuery(input: ServstationClientSnapshotQuery | undefined): ServstationClientSnapshotQuery {
+function validateServstationClientSnapshotQuery(
+  input: ServstationClientSnapshotQuery | undefined,
+): ServstationClientSnapshotQuery {
   if (!input) {
     return {};
   }
   const value = object(input, "servstation client snapshot query");
   return compactUndefined({
-    conversationId: optionalString(value.conversationId, "servstation conversation id")
+    conversationId: optionalString(value.conversationId, "servstation conversation id"),
   });
 }
 
@@ -1115,7 +1503,7 @@ function validateServstationSendPromptInput(input: ServstationSendPromptInput): 
     prompt: requiredString(value.prompt, "servstation prompt"),
     requestId: optionalString(value.requestId, "servstation request id"),
     attachments: Array.isArray(value.attachments) ? value.attachments.map(validateAttachment) : [],
-    allowWebSearch: optionalBoolean(value.allowWebSearch, "servstation web search")
+    allowWebSearch: optionalBoolean(value.allowWebSearch, "servstation web search"),
   });
 }
 
@@ -1128,11 +1516,13 @@ function validateServstationScheduledJobInput(input: ServstationScheduledJobInpu
     runAt: optionalString(value.runAt, "servstation scheduled job run at"),
     cronExpr: optionalString(value.cronExpr, "servstation scheduled job cron expression"),
     conversationId: optionalString(value.conversationId, "servstation scheduled job conversation id"),
-    enabled: optionalBoolean(value.enabled, "servstation scheduled job enabled")
+    enabled: optionalBoolean(value.enabled, "servstation scheduled job enabled"),
   });
 }
 
-function validateServstationScheduledJobUpdate(input: Partial<ServstationScheduledJobInput>): Partial<ServstationScheduledJobInput> {
+function validateServstationScheduledJobUpdate(
+  input: Partial<ServstationScheduledJobInput>,
+): Partial<ServstationScheduledJobInput> {
   return validatePartialObject(input, {
     title: (value) => optionalString(value, "servstation scheduled job title"),
     prompt: (value) => optionalString(value, "servstation scheduled job prompt"),
@@ -1140,7 +1530,7 @@ function validateServstationScheduledJobUpdate(input: Partial<ServstationSchedul
     runAt: (value) => optionalString(value, "servstation scheduled job run at"),
     cronExpr: (value) => optionalString(value, "servstation scheduled job cron expression"),
     conversationId: (value) => optionalString(value, "servstation scheduled job conversation id"),
-    enabled: (value) => optionalBoolean(value, "servstation scheduled job enabled")
+    enabled: (value) => optionalBoolean(value, "servstation scheduled job enabled"),
   }) as Partial<ServstationScheduledJobInput>;
 }
 
@@ -1150,11 +1540,13 @@ function validateServstationAutopilotStartInput(input: ServstationAutopilotStart
     conversationId: optionalString(value.conversationId, "servstation autopilot conversation id"),
     goal: optionalString(value.goal, "servstation autopilot goal"),
     prompt: optionalString(value.prompt, "servstation autopilot prompt"),
-    requestId: optionalString(value.requestId, "servstation autopilot request id")
+    requestId: optionalString(value.requestId, "servstation autopilot request id"),
   });
 }
 
-function validateServstationAutopilotStatusUpdate(input: ServstationAutopilotStatusUpdate): ServstationAutopilotStatusUpdate {
+function validateServstationAutopilotStatusUpdate(
+  input: ServstationAutopilotStatusUpdate,
+): ServstationAutopilotStatusUpdate {
   const value = object(input, "servstation autopilot update");
   const status = requiredString(value.status, "servstation autopilot status");
   if (status !== "paused" && status !== "watching" && status !== "stopped") {
@@ -1162,19 +1554,23 @@ function validateServstationAutopilotStatusUpdate(input: ServstationAutopilotSta
   }
   return {
     runId: requiredString(value.runId, "servstation autopilot run id"),
-    status
+    status,
   };
 }
 
-function validateServstationFlowEngineLaunchInput(input: ServstationFlowEngineLaunchInput): ServstationFlowEngineLaunchInput {
+function validateServstationFlowEngineLaunchInput(
+  input: ServstationFlowEngineLaunchInput,
+): ServstationFlowEngineLaunchInput {
   const value = object(input, "servstation flow launch");
   return {
     workflowId: requiredString(value.workflowId, "servstation flow workflow id"),
-    input: value.input === undefined ? {} : object(value.input, "servstation flow input")
+    input: value.input === undefined ? {} : object(value.input, "servstation flow input"),
   };
 }
 
-function validateServstationFlowEngineApprovalDecisionInput(input: ServstationFlowEngineApprovalDecisionInput): ServstationFlowEngineApprovalDecisionInput {
+function validateServstationFlowEngineApprovalDecisionInput(
+  input: ServstationFlowEngineApprovalDecisionInput,
+): ServstationFlowEngineApprovalDecisionInput {
   const value = object(input, "servstation flow approval decision");
   const decision = requiredString(value.decision, "servstation flow approval decision");
   if (decision !== "approved" && decision !== "rejected") {
@@ -1183,7 +1579,7 @@ function validateServstationFlowEngineApprovalDecisionInput(input: ServstationFl
   return compactUndefined({
     approvalId: requiredString(value.approvalId, "servstation flow approval id"),
     decision,
-    comment: optionalString(value.comment, "servstation flow approval comment")
+    comment: optionalString(value.comment, "servstation flow approval comment"),
   }) as ServstationFlowEngineApprovalDecisionInput;
 }
 
@@ -1197,7 +1593,7 @@ function validateServstationMessageAccountRef(input: unknown): ServstationMessag
     tenantId: requiredString(value.tenantId, "tenant id"),
     organizationId: requiredString(value.organizationId, "organization id"),
     departmentId: requiredString(value.departmentId, "department id"),
-    userId: requiredString(value.userId, "user id")
+    userId: requiredString(value.userId, "user id"),
   };
 }
 
@@ -1206,21 +1602,29 @@ function validateServstationMessageAttachmentUpload(input: unknown): Servstation
   return {
     fileName: requiredString(value.fileName, "attachment file name"),
     contentType: optionalString(value.contentType, "attachment content type") || "application/octet-stream",
-    contentBase64: requiredString(value.contentBase64, "attachment content")
+    contentBase64: requiredString(value.contentBase64, "attachment content"),
   };
 }
 
-function validateServstationSendAgentMessageInput(input: ServstationSendAgentMessageInput): ServstationSendAgentMessageInput {
+function validateServstationSendAgentMessageInput(
+  input: ServstationSendAgentMessageInput,
+): ServstationSendAgentMessageInput {
   const value = object(input, "servstation agent message");
   return {
-    recipients: requiredArray(value.recipients, "servstation message recipients").map(validateServstationMessageAccountRef),
+    recipients: requiredArray(value.recipients, "servstation message recipients").map(
+      validateServstationMessageAccountRef,
+    ),
     subject: requiredString(value.subject, "servstation message subject"),
     body: requiredString(value.body, "servstation message body"),
-    attachments: Array.isArray(value.attachments) ? value.attachments.map(validateServstationMessageAttachmentUpload) : []
+    attachments: Array.isArray(value.attachments)
+      ? value.attachments.map(validateServstationMessageAttachmentUpload)
+      : [],
   };
 }
 
-function validateServstationSendDirectMessageInput(input: ServstationSendDirectMessageInput): ServstationSendDirectMessageInput {
+function validateServstationSendDirectMessageInput(
+  input: ServstationSendDirectMessageInput,
+): ServstationSendDirectMessageInput {
   const value = object(input, "servstation direct message");
   return {
     recipients: Array.isArray(value.recipients) ? value.recipients.map(validateServstationMessageAccountRef) : [],
@@ -1228,7 +1632,9 @@ function validateServstationSendDirectMessageInput(input: ServstationSendDirectM
     senderMailAccountId: optionalString(value.senderMailAccountId, "servstation sender mail account"),
     subject: requiredString(value.subject, "servstation message subject"),
     body: requiredString(value.body, "servstation message body"),
-    attachments: Array.isArray(value.attachments) ? value.attachments.map(validateServstationMessageAttachmentUpload) : []
+    attachments: Array.isArray(value.attachments)
+      ? value.attachments.map(validateServstationMessageAttachmentUpload)
+      : [],
   };
 }
 
@@ -1248,7 +1654,7 @@ function validateServstationMailAccountDraft(input: ServstationMailAccountDraft)
     imapUsername: requiredString(value.imapUsername, "IMAP username"),
     imapPassword: optionalString(value.imapPassword, "IMAP password"),
     isDefault: optionalBoolean(value.isDefault, "mail account default") ?? false,
-    enabled: optionalBoolean(value.enabled, "mail account enabled") ?? true
+    enabled: optionalBoolean(value.enabled, "mail account enabled") ?? true,
   }) as ServstationMailAccountDraft;
 }
 
@@ -1265,7 +1671,7 @@ function validateMemorySearchQuery(input: MemorySearchQuery | undefined): Memory
     excludeSources: optionalStringArray(value.excludeSources, "excluded memory sources"),
     includeDisabled: optionalBoolean(value.includeDisabled, "include disabled memory"),
     limit: optionalNumber(value.limit, "memory limit"),
-    budgetChars: optionalNumber(value.budgetChars, "memory budget")
+    budgetChars: optionalNumber(value.budgetChars, "memory budget"),
   };
 }
 
@@ -1281,7 +1687,7 @@ function validateMemoryAddInput(input: MemoryAddInput): MemoryAddInput {
     source: optionalString(value.source, "memory source"),
     kind: optionalEnum(value.kind, ["fact", "preference", "decision", "task", "warning"], "memory kind"),
     confidence: optionalNumber(value.confidence, "memory confidence"),
-    keywords: optionalStringArray(value.keywords, "memory keywords")
+    keywords: optionalStringArray(value.keywords, "memory keywords"),
   };
 }
 
@@ -1296,7 +1702,7 @@ function validateMemoryUpdateInput(input: MemoryUpdateInput): MemoryUpdateInput 
     subagentName: optionalString(value.subagentName, "subagent name"),
     kind: optionalEnum(value.kind, ["fact", "preference", "decision", "task", "warning"], "memory kind"),
     confidence: optionalNumber(value.confidence, "memory confidence"),
-    keywords: optionalStringArray(value.keywords, "memory keywords")
+    keywords: optionalStringArray(value.keywords, "memory keywords"),
   };
 }
 
@@ -1313,7 +1719,7 @@ function validateMemoryReplayInput(input: MemoryReplayRecallInput): MemoryReplay
   return {
     ...validateMemorySearchQuery(input),
     query: requiredString(object(input, "memory replay").query, "memory replay query"),
-    recallId: optionalString(object(input, "memory replay").recallId, "recall id")
+    recallId: optionalString(object(input, "memory replay").recallId, "recall id"),
   };
 }
 
@@ -1324,7 +1730,7 @@ function validateMemoryRecallFeedbackInput(input: MemoryRecallFeedbackInput): Me
     kind: optionalEnum(value.kind, ["useful", "irrelevant", "stale", "wrong"], "feedback kind") || "useful",
     query: optionalString(value.query, "feedback query"),
     recallId: optionalString(value.recallId, "recall id"),
-    note: optionalString(value.note, "feedback note")
+    note: optionalString(value.note, "feedback note"),
   };
 }
 
@@ -1341,7 +1747,7 @@ function validateModelProviderUpdate(input: ModelProviderUpdate): ModelProviderU
     temperature: optionalNumber(value.temperature, "temperature") ?? 0.2,
     maxTokens: optionalNumber(value.maxTokens, "max tokens") ?? 4096,
     apiKey: optionalString(value.apiKey, "API key"),
-    clearApiKey: optionalBoolean(value.clearApiKey, "clear API key")
+    clearApiKey: optionalBoolean(value.clearApiKey, "clear API key"),
   };
 }
 
@@ -1355,15 +1761,19 @@ function validateCreateConversationInput(input?: string | CreateConversationInpu
   const value = object(input, "conversation input");
   return {
     title: optionalString(value.title, "title"),
-    projectId: optionalString(value.projectId, "project id")
+    projectId: optionalString(value.projectId, "project id"),
   };
 }
 
-function validatePartialModelConfigUpdate(input: Partial<ModelConfigUpdate> | undefined): Partial<ModelConfigUpdate> | undefined {
+function validatePartialModelConfigUpdate(
+  input: Partial<ModelConfigUpdate> | undefined,
+): Partial<ModelConfigUpdate> | undefined {
   return validatePartialModelProviderUpdate(input);
 }
 
-function validatePartialModelProviderUpdate(input: Partial<ModelProviderUpdate> | undefined): Partial<ModelProviderUpdate> | undefined {
+function validatePartialModelProviderUpdate(
+  input: Partial<ModelProviderUpdate> | undefined,
+): Partial<ModelProviderUpdate> | undefined {
   if (!input) {
     return undefined;
   }
@@ -1375,7 +1785,7 @@ function validatePartialModelProviderUpdate(input: Partial<ModelProviderUpdate> 
     temperature: optionalNumber(value.temperature, "temperature"),
     maxTokens: optionalNumber(value.maxTokens, "max tokens"),
     apiKey: optionalString(value.apiKey, "API key"),
-    clearApiKey: optionalBoolean(value.clearApiKey, "clear API key")
+    clearApiKey: optionalBoolean(value.clearApiKey, "clear API key"),
   };
 }
 
@@ -1388,7 +1798,7 @@ function validateToolMarketConfigUpdate(input: ToolMarketConfigUpdate): ToolMark
     accessToken: optionalString(value.accessToken, "tool market access token"),
     password: optionalString(value.password, "tool market password"),
     clearAccessToken: optionalBoolean(value.clearAccessToken, "clear access token"),
-    clearPassword: optionalBoolean(value.clearPassword, "clear password")
+    clearPassword: optionalBoolean(value.clearPassword, "clear password"),
   };
 }
 
@@ -1397,7 +1807,7 @@ function validatePersonalityConfig(input: PersonalityConfig): PersonalityConfig 
   return {
     summary: optionalString(value.summary, "personality summary") || "",
     traits: optionalStringArray(value.traits, "personality traits") || [],
-    instructions: optionalString(value.instructions, "personality instructions") || ""
+    instructions: optionalString(value.instructions, "personality instructions") || "",
   };
 }
 
@@ -1405,7 +1815,7 @@ function validateCapabilityUpdateInput(input: CapabilityUpdateInput): Capability
   return validatePartialObject(input, {
     name: (value) => optionalString(value, "capability name"),
     description: (value) => optionalString(value, "capability description"),
-    enabled: (value) => optionalBoolean(value, "capability enabled")
+    enabled: (value) => optionalBoolean(value, "capability enabled"),
   }) as CapabilityUpdateInput;
 }
 
@@ -1416,7 +1826,7 @@ function validateSubagentConfig(input: SubagentConfig): SubagentConfig {
     name: requiredString(value.name, "subagent name"),
     description: optionalString(value.description, "subagent description") || "",
     systemPrompt: optionalString(value.systemPrompt, "subagent system prompt") || "",
-    enabled: optionalBoolean(value.enabled, "subagent enabled") ?? true
+    enabled: optionalBoolean(value.enabled, "subagent enabled") ?? true,
   };
 }
 
@@ -1427,7 +1837,7 @@ function validateToolMarketQuery(input: ToolMarketQuery | undefined): ToolMarket
   const value = object(input, "tool market query");
   return {
     query: optionalString(value.query, "tool market query"),
-    type: optionalEnum(value.type, ["tool", "skill", "plugin", "mcp", "all"], "tool market type")
+    type: optionalEnum(value.type, ["tool", "skill", "plugin", "mcp", "all"], "tool market type"),
   };
 }
 
@@ -1441,7 +1851,7 @@ function validateMcpServerInput(input: McpServerInput): McpServerInput {
     env: optionalStringRecord(value.env, "MCP env"),
     requestTimeoutMs: optionalNumber(value.requestTimeoutMs, "MCP request timeout"),
     enabled: optionalBoolean(value.enabled, "MCP enabled"),
-    autoConnect: optionalBoolean(value.autoConnect, "MCP auto-connect")
+    autoConnect: optionalBoolean(value.autoConnect, "MCP auto-connect"),
   };
 }
 
@@ -1454,7 +1864,7 @@ function validateMcpServerUpdate(input: McpServerUpdate): McpServerUpdate {
     env: (value) => optionalStringRecord(value, "MCP env"),
     requestTimeoutMs: (value) => optionalNumber(value, "MCP request timeout"),
     enabled: (value) => optionalBoolean(value, "MCP enabled"),
-    autoConnect: (value) => optionalBoolean(value, "MCP auto-connect")
+    autoConnect: (value) => optionalBoolean(value, "MCP auto-connect"),
   }) as McpServerUpdate;
 }
 
@@ -1475,7 +1885,7 @@ function validateScheduledJobInput(input: ScheduledJobInput): ScheduledJobInput 
     scheduleKind: optionalEnum(value.scheduleKind, ["once", "daily", "cron"], "schedule kind") || "once",
     runAt: optionalString(value.runAt, "run at"),
     cronExpr: optionalString(value.cronExpr, "cron expression"),
-    enabled: optionalBoolean(value.enabled, "scheduled job enabled")
+    enabled: optionalBoolean(value.enabled, "scheduled job enabled"),
   };
 }
 
@@ -1487,11 +1897,14 @@ function validateScheduledJobUpdate(input: Partial<ScheduledJobInput>): Partial<
     scheduleKind: (value) => optionalEnum(value, ["once", "daily", "cron"], "schedule kind"),
     runAt: (value) => optionalString(value, "run at"),
     cronExpr: (value) => optionalString(value, "cron expression"),
-    enabled: (value) => optionalBoolean(value, "scheduled job enabled")
+    enabled: (value) => optionalBoolean(value, "scheduled job enabled"),
   }) as Partial<ScheduledJobInput>;
 }
 
-function validatePartialObject(input: unknown, validators: Record<string, (value: unknown) => unknown>): Record<string, unknown> {
+function validatePartialObject(
+  input: unknown,
+  validators: Record<string, (value: unknown) => unknown>,
+): Record<string, unknown> {
   const value = object(input, "input");
   const output: Record<string, unknown> = {};
   for (const [key, validate] of Object.entries(validators)) {
@@ -1561,6 +1974,17 @@ function optionalNumber(value: unknown, label: string): number | undefined {
   return value;
 }
 
+function transcriptPageLimit(value: unknown): number | undefined {
+  const limit = optionalNumber(value, "transcript page limit");
+  if (limit === undefined) {
+    return undefined;
+  }
+  if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+    throw new Error("transcript page limit must be an integer between 1 and 200.");
+  }
+  return limit;
+}
+
 function optionalBoolean(value: unknown, label: string): boolean | undefined {
   if (value === undefined || value === null) {
     return undefined;
@@ -1595,7 +2019,11 @@ function optionalStringRecord(value: unknown, label: string): Record<string, str
   return Object.fromEntries(entries.map(([key, item]) => [key.trim(), item.trim()]));
 }
 
-function optionalEnum<const T extends readonly string[]>(value: unknown, choices: T, label: string): T[number] | undefined {
+function optionalEnum<const T extends readonly string[]>(
+  value: unknown,
+  choices: T,
+  label: string,
+): T[number] | undefined {
   if (value === undefined || value === null || value === "") {
     return undefined;
   }
@@ -1627,18 +2055,21 @@ export function pathIsInside(parent: string, child: string): boolean {
   return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
 }
 
-app.whenReady().then(async () => {
-  registerIpc();
-  await createWindow();
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      void createWindow();
-    }
+app
+  .whenReady()
+  .then(async () => {
+    registerIpc();
+    await createWindow();
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        void createWindow();
+      }
+    });
+  })
+  .catch((error) => {
+    dialog.showErrorBox("HBClient failed to start", error instanceof Error ? error.message : String(error));
+    app.quit();
   });
-}).catch((error) => {
-  dialog.showErrorBox("HBClient failed to start", error instanceof Error ? error.message : String(error));
-  app.quit();
-});
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {

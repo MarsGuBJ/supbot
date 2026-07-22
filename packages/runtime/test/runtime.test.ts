@@ -5,7 +5,19 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, test } from "vitest";
-import { createInitialState, JsonFileStorage, MemoryManager, OpenAIChatCompletionsAdapter, buildReverseWorkspaceSnapshot, normalizeChatCompletionsUrl, resolveMentionedSubagent, SupbotRuntime, ToolExecutor, ToolRegistry, TranscriptStore } from "../src";
+import {
+  createInitialState,
+  JsonFileStorage,
+  MemoryManager,
+  OpenAIChatCompletionsAdapter,
+  buildReverseWorkspaceSnapshot,
+  normalizeChatCompletionsUrl,
+  resolveMentionedSubagent,
+  SupbotRuntime,
+  ToolExecutor,
+  ToolRegistry,
+  TranscriptStore,
+} from "../src";
 import { queryLoop } from "../src/queryLoop";
 import { normalizeMarketApiUrl } from "../src/toolMarket";
 import { defaultModelConfig } from "@supbot/shared";
@@ -61,7 +73,7 @@ async function runGit(cwd: string, args: string[]): Promise<void> {
       stderr += chunk.toString();
     });
     child.on("error", reject);
-    child.on("close", (code) => code === 0 ? resolve() : reject(new Error(stderr || `git ${args.join(" ")} failed`)));
+    child.on("close", (code) => (code === 0 ? resolve() : reject(new Error(stderr || `git ${args.join(" ")} failed`))));
   });
 }
 
@@ -189,7 +201,7 @@ function crc32(buffer: Buffer): number {
 
 async function withMockModel(
   runtime: SupbotRuntime,
-  handler: (body: string, call: number) => unknown
+  handler: (body: string, call: number) => unknown,
 ): Promise<{ close(): Promise<void>; calls(): number }> {
   let calls = 0;
   const server = createServer((request, response) => {
@@ -211,11 +223,11 @@ async function withMockModel(
     model: "mock-model",
     temperature: 0.1,
     maxTokens: 1000,
-    apiKey: "test-key"
+    apiKey: "test-key",
   });
   return {
     calls: () => calls,
-    close: () => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+    close: () => new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
   };
 }
 
@@ -235,7 +247,9 @@ async function writeMockMcpServer(mode: MockMcpMode = "ok"): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "supbot-mcp-"));
   tempDirs.push(dir);
   const filePath = join(dir, "mock-mcp.cjs");
-  await writeFile(filePath, `
+  await writeFile(
+    filePath,
+    `
 const mode = ${JSON.stringify(mode)};
 let buffer = Buffer.alloc(0);
 process.stderr.write("mock mcp stderr ready\\n");
@@ -322,15 +336,21 @@ function handle(request) {
   }
   send({ jsonrpc: "2.0", id: request.id, error: { code: -32601, message: "Unknown method" } });
 }
-`, "utf8");
+`,
+    "utf8",
+  );
   return filePath;
 }
 
 describe("model client helpers", () => {
   test("normalizes OpenAI-compatible chat completion URLs", () => {
     expect(normalizeChatCompletionsUrl("https://api.example.com")).toBe("https://api.example.com/v1/chat/completions");
-    expect(normalizeChatCompletionsUrl("https://api.example.com/v1")).toBe("https://api.example.com/v1/chat/completions");
-    expect(normalizeChatCompletionsUrl("https://api.example.com/v1/chat/completions")).toBe("https://api.example.com/v1/chat/completions");
+    expect(normalizeChatCompletionsUrl("https://api.example.com/v1")).toBe(
+      "https://api.example.com/v1/chat/completions",
+    );
+    expect(normalizeChatCompletionsUrl("https://api.example.com/v1/chat/completions")).toBe(
+      "https://api.example.com/v1/chat/completions",
+    );
   });
 
   test("parses streaming chat completion deltas and tool call fragments", async () => {
@@ -343,32 +363,40 @@ describe("model client helpers", () => {
         expect(JSON.parse(body).stream).toBe(true);
         response.writeHead(200, {
           "Content-Type": "text/event-stream; charset=utf-8",
-          "Cache-Control": "no-cache"
+          "Cache-Control": "no-cache",
         });
         const writeEvent = (event: unknown) => response.write(`data: ${JSON.stringify(event)}\n\n`);
         writeEvent({ choices: [{ delta: { content: "Hel" } }] });
         writeEvent({ choices: [{ delta: { content: "lo" } }] });
         writeEvent({
-          choices: [{
-            delta: {
-              tool_calls: [{
-                index: 0,
-                id: "call_1",
-                type: "function",
-                function: { name: "Read", arguments: "{\"path\"" }
-              }]
-            }
-          }]
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: "call_1",
+                    type: "function",
+                    function: { name: "Read", arguments: '{"path"' },
+                  },
+                ],
+              },
+            },
+          ],
         });
         writeEvent({
-          choices: [{
-            delta: {
-              tool_calls: [{
-                index: 0,
-                function: { name: "File", arguments: ":\"a.txt\"}" }
-              }]
-            }
-          }]
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    function: { name: "File", arguments: ':"a.txt"}' },
+                  },
+                ],
+              },
+            },
+          ],
         });
         response.end("data: [DONE]\n\n");
       });
@@ -383,7 +411,7 @@ describe("model client helpers", () => {
       for await (const event of adapter.stream({
         modelConfig: { ...defaultModelConfig, baseUrl: `http://127.0.0.1:${address.port}/v1` },
         apiKey: "test-key",
-        messages: [{ role: "user", content: "stream" }]
+        messages: [{ role: "user", content: "stream" }],
       })) {
         if (event.type === "message_delta") {
           deltas.push(event.delta);
@@ -391,14 +419,14 @@ describe("model client helpers", () => {
         if (event.type === "done") {
           doneText = event.result.text;
           doneTool = event.result.toolCalls[0].function.name;
-          expect(event.result.toolCalls[0].function.arguments).toBe("{\"path\":\"a.txt\"}");
+          expect(event.result.toolCalls[0].function.arguments).toBe('{"path":"a.txt"}');
         }
       }
       expect(deltas).toEqual(["Hel", "lo"]);
       expect(doneText).toBe("Hello");
       expect(doneTool).toBe("ReadFile");
     } finally {
-      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
   });
 
@@ -406,11 +434,13 @@ describe("model client helpers", () => {
     const controller = new AbortController();
     const modelResult = {
       text: "",
-      toolCalls: [{
-        id: "call_artifact",
-        type: "function" as const,
-        function: { name: "Shell", arguments: JSON.stringify({ command: "create deck" }) }
-      }]
+      toolCalls: [
+        {
+          id: "call_artifact",
+          type: "function" as const,
+          function: { name: "Shell", arguments: JSON.stringify({ command: "create deck" }) },
+        },
+      ],
     };
     const result = await queryLoop({
       jobId: "job_artifact",
@@ -421,44 +451,46 @@ describe("model client helpers", () => {
         stream: async function* () {
           yield { type: "done" as const, result: modelResult };
           return modelResult;
-        }
+        },
       },
       modelRequest: {
         modelConfig: defaultModelConfig,
         tools: [],
-        signal: controller.signal
+        signal: controller.signal,
       },
-      registry: new ToolRegistry([{
-        name: "Shell",
-        description: "fake shell",
-        risk: "read",
-        concurrency: "exclusive",
-        interruptBehavior: "cancel",
-        parameters: {
-          type: "object",
-          properties: { command: { type: "string" } },
-          required: ["command"],
-          additionalProperties: false
+      registry: new ToolRegistry([
+        {
+          name: "Shell",
+          description: "fake shell",
+          risk: "read",
+          concurrency: "exclusive",
+          interruptBehavior: "cancel",
+          parameters: {
+            type: "object",
+            properties: { command: { type: "string" } },
+            required: ["command"],
+            additionalProperties: false,
+          },
+          summarize: () => "fake shell",
+          execute: async () => ({ text: "PPT saved to: C:\\Users\\me\\Desktop\\deck.pptx" }),
         },
-        summarize: () => "fake shell",
-        execute: async () => ({ text: "PPT saved to: C:\\Users\\me\\Desktop\\deck.pptx" })
-      }]),
+      ]),
       toolContext: {
         signal: controller.signal,
         host: {
           dataDir: tempDirs[tempDirs.length - 1] || tmpdir(),
           workspacePath: tempDirs[tempDirs.length - 1] || tmpdir(),
           randomId: (prefix: string) => `${prefix}_test`,
-          nowIso: () => new Date().toISOString()
+          nowIso: () => new Date().toISOString(),
         },
         subagents: [],
-        runSubagent: async () => ({ text: "unused" })
+        runSubagent: async () => ({ text: "unused" }),
       },
       permissionMode: "bypassPermissions",
       permissionRules: [],
       maxTurns: 1,
       requestPermission: async () => "approved",
-      onEvent: () => undefined
+      onEvent: () => undefined,
     });
     expect(result.text).toContain("PPT saved to");
   });
@@ -473,7 +505,7 @@ describe("SupbotRuntime", () => {
       model: "test-model",
       temperature: 0.4,
       maxTokens: 2048,
-      apiKey: "secret-token"
+      apiKey: "secret-token",
     });
 
     expect(saved.apiKeySaved).toBe(true);
@@ -484,7 +516,7 @@ describe("SupbotRuntime", () => {
     expect(firstSnapshot.modelProviders[0]).toMatchObject({
       providerName: "Local gateway",
       model: "test-model",
-      apiKeySaved: true
+      apiKeySaved: true,
     });
     expect(firstSnapshot.activeModelProviderId).toBe(firstSnapshot.modelProviders[0].id);
     expect(JSON.stringify(firstSnapshot)).not.toContain("secret-token");
@@ -496,24 +528,26 @@ describe("SupbotRuntime", () => {
       temperature: 0.4,
       maxTokens: 2048,
       apiKey: "api key：sk-new-secret-token",
-      clearApiKey: true
+      clearApiKey: true,
     });
     expect(updated.baseUrl).toBe("https://api.deepseek.com/v1");
     expect(updated.apiKeySaved).toBe(true);
     expect(JSON.stringify(updated)).not.toContain("sk-new-secret-token");
 
-    await expect(runtime.updateModelConfig({
-      providerName: "DeepSeek",
-      baseUrl: "https://api.deepseek.com/v1",
-      model: "deepseek-v4-pro",
-      temperature: 0.4,
-      maxTokens: 2048,
-      apiKey: "加载失败"
-    })).rejects.toThrow("Model API key contains invalid characters");
+    await expect(
+      runtime.updateModelConfig({
+        providerName: "DeepSeek",
+        baseUrl: "https://api.deepseek.com/v1",
+        model: "deepseek-v4-pro",
+        temperature: 0.4,
+        maxTokens: 2048,
+        apiKey: "加载失败",
+      }),
+    ).rejects.toThrow("Model API key contains invalid characters");
 
     await expect(runtime.testModelConfig({ apiKey: "加载失败" })).resolves.toMatchObject({
       ok: false,
-      message: expect.stringContaining("Model API key contains invalid characters")
+      message: expect.stringContaining("Model API key contains invalid characters"),
     });
   });
 
@@ -522,17 +556,25 @@ describe("SupbotRuntime", () => {
     const dir = await mkdtemp(join(tmpdir(), "supbot-test-"));
     tempDirs.push(dir);
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, "state.json"), JSON.stringify({
-      modelConfig: {
-        ...defaultModelConfig,
-        providerName: "Legacy gateway",
-        baseUrl: "http://127.0.0.1:9000/v1",
-        model: "legacy-model",
-        temperature: 0.3,
-        maxTokens: 1234
-      },
-      modelSecret: "legacy-secret"
-    }, null, 2), "utf8");
+    await writeFile(
+      join(dir, "state.json"),
+      JSON.stringify(
+        {
+          modelConfig: {
+            ...defaultModelConfig,
+            providerName: "Legacy gateway",
+            baseUrl: "http://127.0.0.1:9000/v1",
+            model: "legacy-model",
+            temperature: 0.3,
+            maxTokens: 1234,
+          },
+          modelSecret: "legacy-secret",
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
 
     const runtime = new SupbotRuntime(new JsonFileStorage(dir), { rootDir });
     await runtime.init();
@@ -542,7 +584,7 @@ describe("SupbotRuntime", () => {
     expect(snapshot.modelConfig).toMatchObject({
       providerName: "Legacy gateway",
       model: "legacy-model",
-      apiKeySaved: true
+      apiKeySaved: true,
     });
     expect(JSON.stringify(snapshot)).not.toContain("legacy-secret");
 
@@ -561,7 +603,7 @@ describe("SupbotRuntime", () => {
       model: "model-b",
       temperature: 0.2,
       maxTokens: 2048,
-      apiKey: "secret-b"
+      apiKey: "secret-b",
     });
     expect(runtime.snapshot().activeModelProviderId).toBe(initial.id);
 
@@ -571,7 +613,7 @@ describe("SupbotRuntime", () => {
       providerName: "Provider B",
       baseUrl: "http://127.0.0.1:9002/v1",
       model: "model-b",
-      apiKeySaved: true
+      apiKeySaved: true,
     });
     expect(JSON.stringify(snapshot)).not.toContain("secret-b");
 
@@ -581,7 +623,7 @@ describe("SupbotRuntime", () => {
       model: "model-c",
       temperature: 0.6,
       maxTokens: 4096,
-      apiKey: "secret-c"
+      apiKey: "secret-c",
     });
     await runtime.updateModelProvider(initial.id, {
       providerName: "Provider A edited",
@@ -589,7 +631,7 @@ describe("SupbotRuntime", () => {
       model: "model-a2",
       temperature: 0.1,
       maxTokens: 1024,
-      apiKey: "inactive-secret"
+      apiKey: "inactive-secret",
     });
     snapshot = runtime.snapshot();
     expect(snapshot.activeModelProviderId).toBe(secondary.id);
@@ -633,7 +675,7 @@ describe("SupbotRuntime", () => {
       title: "Project codename",
       content: "The Supbot memory MVP project codename is Lantern.",
       kind: "fact",
-      keywords: ["lantern", "memory"]
+      keywords: ["lantern", "memory"],
     });
     await runtime.addMemory({
       type: "fact",
@@ -642,7 +684,7 @@ describe("SupbotRuntime", () => {
       title: "Research-only detail",
       content: "Research-only memory should not appear in main agent recall.",
       kind: "fact",
-      keywords: ["lantern", "research-only"]
+      keywords: ["lantern", "research-only"],
     });
     const mock = await withMockModel(runtime, (body) => {
       const parsed = JSON.parse(body);
@@ -653,7 +695,10 @@ describe("SupbotRuntime", () => {
       return { choices: [{ message: { content: "Memory used." } }] };
     });
     try {
-      const result = await runtime.sendPrompt({ conversationId: conversation.id, prompt: "What is the Lantern memory codename?" });
+      const result = await runtime.sendPrompt({
+        conversationId: conversation.id,
+        prompt: "What is the Lantern memory codename?",
+      });
       await waitForJob(runtime, result.job.id);
       expect(runtime.snapshot().runtimeEvents.some((event) => event.kind === "memory_recall")).toBe(true);
       const recalled = runtime.snapshot().memory.facts.find((fact) => fact.title === "Project codename");
@@ -673,7 +718,7 @@ describe("SupbotRuntime", () => {
       conversationId: conversation.id,
       title: "Disabled memory",
       content: "The hidden keyword is Moonstone.",
-      keywords: ["moonstone"]
+      keywords: ["moonstone"],
     });
     const deleted = await runtime.addMemory({
       type: "fact",
@@ -681,7 +726,7 @@ describe("SupbotRuntime", () => {
       conversationId: conversation.id,
       title: "Deleted memory",
       content: "The deleted keyword is Sunstone.",
-      keywords: ["sunstone"]
+      keywords: ["sunstone"],
     });
     await runtime.updateMemory(disabled.id, { status: "disabled" });
     await runtime.deleteMemory(deleted.id);
@@ -710,7 +755,7 @@ describe("SupbotRuntime", () => {
       conversationId: conversation.id,
       title: "Keyword page",
       content: "This page contains the durable keyword Amberline.",
-      keywords: ["amberline"]
+      keywords: ["amberline"],
     });
     const disabled = await runtime.addMemory({
       type: "fact",
@@ -718,7 +763,7 @@ describe("SupbotRuntime", () => {
       conversationId: conversation.id,
       title: "Disabled keyword",
       content: "Disabled Amberline item.",
-      keywords: ["amberline"]
+      keywords: ["amberline"],
     });
     await runtime.updateMemory(disabled.id, { status: "disabled" });
 
@@ -726,7 +771,11 @@ describe("SupbotRuntime", () => {
     expect(activeOnly.map((item) => item.id)).toContain(active.id);
     expect(activeOnly.map((item) => item.id)).not.toContain(disabled.id);
 
-    const all = await runtime.listMemory({ query: "Amberline", conversationId: conversation.id, includeDisabled: true });
+    const all = await runtime.listMemory({
+      query: "Amberline",
+      conversationId: conversation.id,
+      includeDisabled: true,
+    });
     expect(all.map((item) => item.id)).toEqual(expect.arrayContaining([active.id, disabled.id]));
     expect(all.find((item) => item.id === active.id)?.matchedKeywords).toContain("amberline");
     expect(all.find((item) => item.id === active.id)?.reason).toContain("amberline");
@@ -734,7 +783,10 @@ describe("SupbotRuntime", () => {
   });
 
   test("trims recalled memory to the budget while keeping higher-scored items", async () => {
-    const manager = new MemoryManager({ randomId: (prefix) => `${prefix}_${Math.random().toString(36).slice(2)}`, nowIso: () => "2026-06-21T00:00:00.000Z" });
+    const manager = new MemoryManager({
+      randomId: (prefix) => `${prefix}_${Math.random().toString(36).slice(2)}`,
+      nowIso: () => "2026-06-21T00:00:00.000Z",
+    });
     let memory = {
       pages: [],
       facts: [],
@@ -742,24 +794,29 @@ describe("SupbotRuntime", () => {
       links: [],
       candidates: [],
       recallHistory: [],
-      recallFeedback: []
+      recallFeedback: [],
     };
     memory = manager.add(memory, {
       type: "fact",
       scope: "global",
       title: "High priority Codename",
       content: "Codename Quasar is the durable high priority memory.",
-      keywords: ["codename", "quasar", "priority"]
+      keywords: ["codename", "quasar", "priority"],
     }).memory;
     memory = manager.add(memory, {
       type: "fact",
       scope: "global",
       title: "Long lower priority Codename",
       content: `Codename filler ${"low value ".repeat(120)}`,
-      keywords: ["codename"]
+      keywords: ["codename"],
     }).memory;
 
-    const recall = manager.recall(memory, { query: "quasar codename priority", scope: "all", limit: 5, budgetChars: 360 });
+    const recall = manager.recall(memory, {
+      query: "quasar codename priority",
+      scope: "all",
+      limit: 5,
+      budgetChars: 360,
+    });
     expect(recall.usedChars).toBeLessThanOrEqual(360);
     expect(recall.results[0]?.title).toBe("High priority Codename");
     expect(recall.block).toContain("Quasar");
@@ -774,10 +831,13 @@ describe("SupbotRuntime", () => {
       conversationId: conversation.id,
       title: "Release branch",
       content: "The release branch for the memory project is v3-memory-mvp.",
-      keywords: ["release", "branch", "memory"]
+      keywords: ["release", "branch", "memory"],
     });
 
-    const result = await runtime.sendPrompt({ conversationId: conversation.id, prompt: "Remember that the release branch for memory also requires candidate merge review." });
+    const result = await runtime.sendPrompt({
+      conversationId: conversation.id,
+      prompt: "Remember that the release branch for memory also requires candidate merge review.",
+    });
     await waitForJob(runtime, result.job.id);
     const boundary = await runtime.compactConversation(conversation.id);
     const candidate = runtime.snapshot().memory.candidates.find((item) => item.source === `compact:${boundary.id}`);
@@ -796,7 +856,7 @@ describe("SupbotRuntime", () => {
       scope: "global",
       title: "Export marker",
       content: "Memory export marker is Citrine.",
-      keywords: ["citrine"]
+      keywords: ["citrine"],
     });
     const transfer = await runtime.exportMemory();
     expect(transfer.version).toBe(1);
@@ -824,17 +884,22 @@ describe("SupbotRuntime", () => {
       scope: "global",
       title: "Replay high marker",
       content: "Replay keyword Zircon should fit into the memory replay preview.",
-      keywords: ["zircon", "replay"]
+      keywords: ["zircon", "replay"],
     });
     await runtime.addMemory({
       type: "fact",
       scope: "global",
       title: "Replay overflow marker",
       content: `Replay keyword overflow ${"long text ".repeat(120)}`,
-      keywords: ["replay"]
+      keywords: ["replay"],
     });
 
-    const replay = await runtime.replayMemoryRecall({ query: "Zircon replay", scope: "all", limit: 10, budgetChars: 360 });
+    const replay = await runtime.replayMemoryRecall({
+      query: "Zircon replay",
+      scope: "all",
+      limit: 10,
+      budgetChars: 360,
+    });
     expect(replay.results[0]?.title).toBe("Replay high marker");
     expect(replay.excludedResults.length).toBeGreaterThanOrEqual(1);
     expect(replay.blockPreview).toContain("<memory>");
@@ -847,14 +912,14 @@ describe("SupbotRuntime", () => {
       scope: "global",
       title: "Atlas old answer",
       content: "Atlas answer is stale and should move down after feedback.",
-      keywords: ["atlas", "answer"]
+      keywords: ["atlas", "answer"],
     });
     const useful = await runtime.addMemory({
       type: "fact",
       scope: "global",
       title: "Atlas useful answer",
       content: "Atlas answer is useful and should move up after feedback.",
-      keywords: ["atlas", "answer"]
+      keywords: ["atlas", "answer"],
     });
 
     await runtime.addMemoryRecallFeedback({ memoryId: stale.id, kind: "wrong", query: "Atlas answer" });
@@ -876,14 +941,14 @@ describe("SupbotRuntime", () => {
       scope: "global",
       title: "Hidden useful replay",
       content: "Hidden keyword Onyx should not replay when disabled.",
-      keywords: ["onyx"]
+      keywords: ["onyx"],
     });
     const deleted = await runtime.addMemory({
       type: "fact",
       scope: "global",
       title: "Deleted useful replay",
       content: "Deleted keyword Garnet should not replay when deleted.",
-      keywords: ["garnet"]
+      keywords: ["garnet"],
     });
     await runtime.addMemoryRecallFeedback({ memoryId: disabled.id, kind: "useful", query: "Onyx Garnet" });
     await runtime.addMemoryRecallFeedback({ memoryId: deleted.id, kind: "useful", query: "Onyx Garnet" });
@@ -904,12 +969,22 @@ describe("SupbotRuntime", () => {
       subagentName: "research",
       title: "Research replay secret",
       content: "Research replay secret keyword is Heliodor.",
-      keywords: ["heliodor"]
+      keywords: ["heliodor"],
     });
 
-    const main = await runtime.replayMemoryRecall({ query: "Heliodor", scope: "all", conversationId: conversation.id, limit: 5 });
+    const main = await runtime.replayMemoryRecall({
+      query: "Heliodor",
+      scope: "all",
+      conversationId: conversation.id,
+      limit: 5,
+    });
     expect(main.results.map((item) => item.title)).not.toContain("Research replay secret");
-    const subagent = await runtime.replayMemoryRecall({ query: "Heliodor", scope: "subagent", subagentName: "research", limit: 5 });
+    const subagent = await runtime.replayMemoryRecall({
+      query: "Heliodor",
+      scope: "subagent",
+      subagentName: "research",
+      limit: 5,
+    });
     expect(subagent.results.map((item) => item.title)).toContain("Research replay secret");
   });
 
@@ -932,12 +1007,22 @@ describe("SupbotRuntime", () => {
     const localToolDir = join(dataDir, "tools", "shell-runner");
     const localManifestPath = join(localToolDir, "supbot-local-tool.json");
     const receiptPath = join(dataDir, "tool-market", "local", "shell-runner", "supbot-market-install.json");
-    const manifest = JSON.parse(await readFile(localManifestPath, "utf8")) as { product: { id: string }; deployment: { kind: string }; localPath: string };
+    const manifest = JSON.parse(await readFile(localManifestPath, "utf8")) as {
+      product: { id: string };
+      deployment: { kind: string };
+      localPath: string;
+    };
     expect(manifest.product.id).toBe("shell-runner");
     expect(manifest.deployment.kind).toBe("tool");
     expect(manifest.localPath).toBe(localToolDir);
-    expect(JSON.parse(await readFile(join(localToolDir, "supbot-tool.json"), "utf8"))).toMatchObject({ id: "shell-runner", kind: "tool" });
-    expect(JSON.parse(await readFile(receiptPath, "utf8"))).toMatchObject({ product: { id: "shell-runner" }, localPath: localToolDir });
+    expect(JSON.parse(await readFile(join(localToolDir, "supbot-tool.json"), "utf8"))).toMatchObject({
+      id: "shell-runner",
+      kind: "tool",
+    });
+    expect(JSON.parse(await readFile(receiptPath, "utf8"))).toMatchObject({
+      product: { id: "shell-runner" },
+      localPath: localToolDir,
+    });
 
     const uninstalled = await runtime.uninstallToolMarketProduct("shell-runner");
     expect(uninstalled.installed).toBe(false);
@@ -957,7 +1042,7 @@ describe("SupbotRuntime", () => {
       name: "Seed Skill",
       kind: "skill",
       description: "Bundled seed skill.",
-      enabled: true
+      enabled: true,
     };
     const manifest = {
       version: 1,
@@ -972,14 +1057,14 @@ describe("SupbotRuntime", () => {
         description: "Bundled seed skill.",
         tags: ["seed"],
         free: true,
-        purchased: true
+        purchased: true,
       },
       deployment: {
         kind: "skill",
         capability,
         commandTemplates: [],
-        files: [{ path: "SKILL.md", encoding: "utf8" }]
-      }
+        files: [{ path: "SKILL.md", encoding: "utf8" }],
+      },
     };
     await writeFile(join(skillDir, "SKILL.md"), "# Seed Skill\n\nUse this bundled test skill.\n", "utf8");
     await writeFile(join(skillDir, "supbot-local-tool.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
@@ -990,7 +1075,9 @@ describe("SupbotRuntime", () => {
     const runtime = new SupbotRuntime(new JsonFileStorage(dataDir), { rootDir });
     await runtime.init();
     expect(runtime.snapshot().capabilities.find((item) => item.id === capability.id)).toMatchObject(capability);
-    expect((await runtime.listToolMarket({ query: "Seed" })).find((item) => item.id === "seed-skill")?.installed).toBe(true);
+    expect((await runtime.listToolMarket({ query: "Seed" })).find((item) => item.id === "seed-skill")?.installed).toBe(
+      true,
+    );
 
     await runtime.deleteCapability(capability.id);
     const restarted = new SupbotRuntime(new JsonFileStorage(dataDir), { rootDir });
@@ -1003,14 +1090,14 @@ describe("SupbotRuntime", () => {
     const updated = await runtime.updateCapability("tool.scheduler", {
       name: "Local timers",
       description: "Updated scheduler description.",
-      enabled: false
+      enabled: false,
     });
     expect(updated).toMatchObject({
       id: "tool.scheduler",
       kind: "scheduler",
       name: "Local timers",
       description: "Updated scheduler description.",
-      enabled: false
+      enabled: false,
     });
     expect(runtime.snapshot().capabilities.find((item) => item.id === "tool.scheduler")).toMatchObject(updated);
 
@@ -1046,7 +1133,7 @@ describe("SupbotRuntime", () => {
     const state = createInitialState();
     state.servstationA2AConfig = {
       ...state.servstationA2AConfig,
-      baseUrl: "http://101.227.67.76"
+      baseUrl: "http://101.227.67.76",
     };
     await storage.save(state);
 
@@ -1068,7 +1155,7 @@ describe("SupbotRuntime", () => {
     expect(JSON.parse(await readFile(join(skillDir, "supbot-local-tool.json"), "utf8"))).toMatchObject({
       product: { id: "document-skills" },
       deployment: { kind: "skill" },
-      localPath: skillDir
+      localPath: skillDir,
     });
 
     const plugin = await runtime.installToolMarketProduct("planner-subagent-kit");
@@ -1076,7 +1163,7 @@ describe("SupbotRuntime", () => {
     const pluginDir = join(dataDir, "plugins", "planner-subagent-kit");
     expect(JSON.parse(await readFile(join(pluginDir, ".codex-plugin", "plugin.json"), "utf8"))).toMatchObject({
       id: "planner-subagent-kit",
-      name: "Planner Subagent Kit"
+      name: "Planner Subagent Kit",
     });
     expect(await readFile(join(pluginDir, "README.md"), "utf8")).toContain("Planner Subagent Kit");
 
@@ -1101,7 +1188,10 @@ describe("SupbotRuntime", () => {
     try {
       const result = await runtime.sendPrompt({ prompt: "create a presentation deck" });
       await waitForJob(runtime, result.job.id);
-      const assistant = runtime.snapshot().conversations.find((item) => item.id === result.conversation.id)?.messages.find((item) => item.role === "assistant");
+      const assistant = runtime
+        .snapshot()
+        .conversations.find((item) => item.id === result.conversation.id)
+        ?.messages.find((item) => item.role === "assistant");
       expect(assistant?.text).toBe("Skill context received.");
     } finally {
       await mock.close();
@@ -1115,7 +1205,7 @@ describe("SupbotRuntime", () => {
       apiUrl: "https://i-shu.com",
       accountEmail: "subscriber@example.com",
       accessToken: "market-secret",
-      password: "market123"
+      password: "market123",
     });
 
     expect(saved.accessTokenSaved).toBe(true);
@@ -1133,21 +1223,25 @@ describe("SupbotRuntime", () => {
     const dir = await mkdtemp(join(tmpdir(), "supbot-test-"));
     tempDirs.push(dir);
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, "state.json"), JSON.stringify({
-      agentName: "Supbot Local Agent",
-      modelConfig: {},
-      toolMarketConfig: {
-        source: "local",
-        apiUrl: "http://localhost:3000/subscriber/market/api",
-        accountEmail: "subscriber@example.com"
-      },
-      personality: {},
-      capabilities: [],
-      subagents: [],
-      conversations: [],
-      jobs: [],
-      scheduledJobs: []
-    }), "utf8");
+    await writeFile(
+      join(dir, "state.json"),
+      JSON.stringify({
+        agentName: "Supbot Local Agent",
+        modelConfig: {},
+        toolMarketConfig: {
+          source: "local",
+          apiUrl: "http://localhost:3000/subscriber/market/api",
+          accountEmail: "subscriber@example.com",
+        },
+        personality: {},
+        capabilities: [],
+        subagents: [],
+        conversations: [],
+        jobs: [],
+        scheduledJobs: [],
+      }),
+      "utf8",
+    );
 
     const runtime = new SupbotRuntime(new JsonFileStorage(dir));
     await runtime.init();
@@ -1174,7 +1268,7 @@ describe("SupbotRuntime", () => {
         source: "hybrid",
         apiUrl: `http://127.0.0.1:${address.port}`,
         accountEmail: "subscriber@example.com",
-        clearPassword: true
+        clearPassword: true,
       });
 
       const products = await runtime.listToolMarket({});
@@ -1182,7 +1276,7 @@ describe("SupbotRuntime", () => {
       expect(products.some((item) => item.origin === "remote")).toBe(false);
       expect(events).toEqual([]);
     } finally {
-      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
   });
 
@@ -1206,12 +1300,14 @@ describe("SupbotRuntime", () => {
         source: "remote",
         apiUrl: `http://127.0.0.1:${address.port}`,
         accountEmail: "subscriber@example.com",
-        password: "wrong-password"
+        password: "wrong-password",
       });
 
-      await expect(runtime.listToolMarket({})).rejects.toThrow("Tool market login failed: email or password is incorrect");
+      await expect(runtime.listToolMarket({})).rejects.toThrow(
+        "Tool market login failed: email or password is incorrect",
+      );
     } finally {
-      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
   });
 
@@ -1238,32 +1334,38 @@ describe("SupbotRuntime", () => {
         expect(url.searchParams.get("type")).toBe("mcp");
       }
       response.setHeader("Content-Type", "application/json");
-      response.end(JSON.stringify({
-        items: [{
-          id: "calendar-mcp",
-          name: "Calendar MCP",
-          type: "mcp",
-          provider_name: "ToolsMarket",
-          description: "Calendar automation from a remote market.",
-          billing_mode: "free",
-          source_health: "healthy",
-          local_deployment: {
-            kind: "mcp",
-            files: [{
-              path: "calendar-mcp.cjs",
-              content: "process.stdin.resume();\n"
-            }],
-            mcp_server: {
+      response.end(
+        JSON.stringify({
+          items: [
+            {
               id: "calendar-mcp",
               name: "Calendar MCP",
-              command: "node",
-              args: ["{installDir}\\calendar-mcp.cjs"],
-              enabled: true,
-              autoConnect: false
-            }
-          }
-        }]
-      }));
+              type: "mcp",
+              provider_name: "ToolsMarket",
+              description: "Calendar automation from a remote market.",
+              billing_mode: "free",
+              source_health: "healthy",
+              local_deployment: {
+                kind: "mcp",
+                files: [
+                  {
+                    path: "calendar-mcp.cjs",
+                    content: "process.stdin.resume();\n",
+                  },
+                ],
+                mcp_server: {
+                  id: "calendar-mcp",
+                  name: "Calendar MCP",
+                  command: "node",
+                  args: ["{installDir}\\calendar-mcp.cjs"],
+                  enabled: true,
+                  autoConnect: false,
+                },
+              },
+            },
+          ],
+        }),
+      );
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     try {
@@ -1273,7 +1375,7 @@ describe("SupbotRuntime", () => {
         source: "remote",
         apiUrl: `http://127.0.0.1:${address.port}`,
         accountEmail: "subscriber@example.com",
-        password: "market123"
+        password: "market123",
       });
 
       const products = await runtime.listToolMarket({ type: "mcp" });
@@ -1292,18 +1394,18 @@ describe("SupbotRuntime", () => {
       expect(JSON.parse(await readFile(join(installPath, "supbot-local-tool.json"), "utf8"))).toMatchObject({
         product: { id: "calendar-mcp", origin: "remote" },
         deployment: { kind: "mcp", mcpServer: { id: "calendar-mcp" } },
-        localPath: installPath
+        localPath: installPath,
       });
       expect(JSON.parse(await readFile(join(receiptPath, "supbot-market-install.json"), "utf8"))).toMatchObject({
         product: { id: "calendar-mcp", origin: "remote" },
         deployment: { kind: "mcp", mcpServer: { id: "calendar-mcp" } },
-        localPath: installPath
+        localPath: installPath,
       });
       expect(runtime.snapshot().mcpServers.find((item) => item.id === "calendar-mcp")).toMatchObject({
         name: "Calendar MCP",
         command: "node",
         cwd: installPath,
-        args: [join(installPath, "calendar-mcp.cjs")]
+        args: [join(installPath, "calendar-mcp.cjs")],
       });
 
       const restarted = new SupbotRuntime(new JsonFileStorage(dataDir), { rootDir });
@@ -1319,7 +1421,7 @@ describe("SupbotRuntime", () => {
       await expect(readFile(join(installPath, "supbot-local-tool.json"), "utf8")).rejects.toThrow();
       await expect(readFile(join(receiptPath, "supbot-market-install.json"), "utf8")).rejects.toThrow();
     } finally {
-      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
   });
 
@@ -1329,49 +1431,68 @@ describe("SupbotRuntime", () => {
     const uploadDir = await mkdtemp(join(tmpdir(), "supbot-upload-"));
     tempDirs.push(uploadDir);
     const zipPath = join(uploadDir, "zip-skill.zip");
-    await writeTestZip(zipPath, [{
-      path: "wrapped-zip-skill/SKILL.md",
-      content: "---\nname: Zip Skill\ndescription: Handles zipword package tasks.\n---\nWhen asked about zipword, reply with the installed package path.\n"
-    }]);
+    await writeTestZip(zipPath, [
+      {
+        path: "wrapped-zip-skill/SKILL.md",
+        content:
+          "---\nname: Zip Skill\ndescription: Handles zipword package tasks.\n---\nWhen asked about zipword, reply with the installed package path.\n",
+      },
+    ]);
     const zipSize = (await stat(zipPath)).size;
     const conversation = await runtime.createConversation("Install ZIP skill");
     const mock = await withMockModel(runtime, (body, call) => {
       const parsed = JSON.parse(body);
       if (call === 1) {
-        expect(parsed.tools.map((tool: { function: { name: string } }) => tool.function.name)).toContain("InspectPackageArchive");
+        expect(parsed.tools.map((tool: { function: { name: string } }) => tool.function.name)).toContain(
+          "InspectPackageArchive",
+        );
         return {
-          choices: [{
-            message: {
-              content: null,
-              tool_calls: [{
-                id: "call_inspect_zip",
-                type: "function",
-                function: { name: "InspectPackageArchive", arguments: JSON.stringify({ path: zipPath }) }
-              }]
-            }
-          }]
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_inspect_zip",
+                    type: "function",
+                    function: { name: "InspectPackageArchive", arguments: JSON.stringify({ path: zipPath }) },
+                  },
+                ],
+              },
+            },
+          ],
         };
       }
       if (call === 2) {
-        const inspection = parsed.messages.find((message: { role: string; content: string }) => message.role === "tool")?.content || "";
+        const inspection =
+          parsed.messages.find((message: { role: string; content: string }) => message.role === "tool")?.content || "";
         const sha256 = inspection.match(/SHA-256:\s*([a-f0-9]{64})/)?.[1];
         expect(inspection).toContain("Package inspection: Zip Skill");
         expect(inspection).toContain(join(dataDir, "skills", "zip-skill"));
         expect(sha256).toBeTruthy();
         return {
-          choices: [{
-            message: {
-              content: null,
-              tool_calls: [{
-                id: "call_install_zip",
-                type: "function",
-                function: { name: "InstallPackageArchive", arguments: JSON.stringify({ path: zipPath, expectedSha256: sha256 }) }
-              }]
-            }
-          }]
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_install_zip",
+                    type: "function",
+                    function: {
+                      name: "InstallPackageArchive",
+                      arguments: JSON.stringify({ path: zipPath, expectedSha256: sha256 }),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
         };
       }
-      const toolMessages = parsed.messages.filter((message: { role: string; content: string }) => message.role === "tool");
+      const toolMessages = parsed.messages.filter(
+        (message: { role: string; content: string }) => message.role === "tool",
+      );
       const installResult = toolMessages.at(-1)?.content || "";
       expect(installResult).toContain("Installed package: Zip Skill");
       expect(installResult).toContain("Installed skill instructions available now");
@@ -1381,17 +1502,21 @@ describe("SupbotRuntime", () => {
       const result = await runtime.sendPrompt({
         conversationId: conversation.id,
         prompt: "Install this ZIP skill package.",
-        attachments: [{ id: "zip-attachment", name: "zip-skill.zip", path: zipPath, size: zipSize }]
+        attachments: [{ id: "zip-attachment", name: "zip-skill.zip", path: zipPath, size: zipSize }],
       });
       await waitForJob(runtime, result.job.id);
-      expect(runtime.snapshot().capabilities.find((capability) => capability.id === "local.skill.zip-skill")).toMatchObject({
+      expect(
+        runtime.snapshot().capabilities.find((capability) => capability.id === "local.skill.zip-skill"),
+      ).toMatchObject({
         kind: "skill",
-        enabled: true
+        enabled: true,
       });
-      expect(JSON.parse(await readFile(join(dataDir, "skills", "zip-skill", "supbot-local-package.json"), "utf8"))).toMatchObject({
+      expect(
+        JSON.parse(await readFile(join(dataDir, "skills", "zip-skill", "supbot-local-package.json"), "utf8")),
+      ).toMatchObject({
         kind: "skill",
         id: "zip-skill",
-        sha256: expect.stringMatching(/^[a-f0-9]{64}$/)
+        sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
       });
     } finally {
       await mock.close();
@@ -1420,35 +1545,42 @@ describe("SupbotRuntime", () => {
     const uploadDir = await mkdtemp(join(tmpdir(), "supbot-upload-"));
     tempDirs.push(uploadDir);
     const zipPath = join(uploadDir, "unsafe.zip");
-    await writeTestZip(zipPath, [{
-      path: "../evil/SKILL.md",
-      content: "---\nname: Evil\ndescription: Bad path.\n---\n"
-    }]);
+    await writeTestZip(zipPath, [
+      {
+        path: "../evil/SKILL.md",
+        content: "---\nname: Evil\ndescription: Bad path.\n---\n",
+      },
+    ]);
     const zipSize = (await stat(zipPath)).size;
     const mock = await withMockModel(runtime, (body, call) => {
       if (call === 1) {
         return {
-          choices: [{
-            message: {
-              content: null,
-              tool_calls: [{
-                id: "call_inspect_unsafe",
-                type: "function",
-                function: { name: "InspectPackageArchive", arguments: JSON.stringify({ path: zipPath }) }
-              }]
-            }
-          }]
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_inspect_unsafe",
+                    type: "function",
+                    function: { name: "InspectPackageArchive", arguments: JSON.stringify({ path: zipPath }) },
+                  },
+                ],
+              },
+            },
+          ],
         };
       }
       const parsed = JSON.parse(body);
-      const toolMessage = parsed.messages.find((message: { role: string; content: string }) => message.role === "tool")?.content || "";
+      const toolMessage =
+        parsed.messages.find((message: { role: string; content: string }) => message.role === "tool")?.content || "";
       expect(toolMessage).toContain("parent-directory path");
       return { choices: [{ message: { content: "Rejected unsafe package." } }] };
     });
     try {
       const result = await runtime.sendPrompt({
         prompt: "Inspect this unsafe package.",
-        attachments: [{ id: "unsafe-zip", name: "unsafe.zip", path: zipPath, size: zipSize }]
+        attachments: [{ id: "unsafe-zip", name: "unsafe.zip", path: zipPath, size: zipSize }],
       });
       await waitForJob(runtime, result.job.id);
       const trace = runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id);
@@ -1461,7 +1593,10 @@ describe("SupbotRuntime", () => {
   test("runs local write tool and records generated files", async () => {
     const runtime = await createRuntime();
     const result = await runtime.sendPrompt({ prompt: "/write note.txt\nhello from supbot" });
-    await waitForCondition("pending slash write permission", () => runtime.snapshot().pendingToolPermissions.length === 1);
+    await waitForCondition(
+      "pending slash write permission",
+      () => runtime.snapshot().pendingToolPermissions.length === 1,
+    );
     expect(runtime.snapshot().pendingToolPermissions[0].toolName).toBe("WriteFile");
     await runtime.approveToolPermission(runtime.snapshot().pendingToolPermissions[0].id);
     await waitForJob(runtime, result.job.id);
@@ -1481,7 +1616,10 @@ describe("SupbotRuntime", () => {
     tempDirs.push(outsideDir);
     const outsidePath = join(outsideDir, "system-ish.txt");
     const result = await runtime.sendPrompt({ prompt: `/write "${outsidePath}"\nblocked` });
-    await waitForCondition("pending outside write permission", () => runtime.snapshot().pendingToolPermissions.length === 1);
+    await waitForCondition(
+      "pending outside write permission",
+      () => runtime.snapshot().pendingToolPermissions.length === 1,
+    );
     expect(runtime.snapshot().pendingToolPermissions[0].toolName).toBe("WriteFile");
     await runtime.approveToolPermission(runtime.snapshot().pendingToolPermissions[0].id);
     await waitForJob(runtime, result.job.id);
@@ -1490,7 +1628,9 @@ describe("SupbotRuntime", () => {
     const assistant = conversation?.messages.find((item) => item.role === "assistant");
     expect(assistant?.text).toContain("WriteFile target must stay inside");
     await expect(readFile(outsidePath, "utf8")).rejects.toThrow();
-    expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe("failed");
+    expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe(
+      "failed",
+    );
   });
 
   test("blocks write path traversal outside the isolated workspace", async () => {
@@ -1504,7 +1644,9 @@ describe("SupbotRuntime", () => {
     const job = runtime.snapshot().jobs.find((item) => item.id === result.job.id);
     const worktree = runtime.snapshot().worktrees.find((item) => item.id === job?.worktreeId);
     expect(assistant?.text).toContain("WriteFile target must stay inside");
-    expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe("failed");
+    expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe(
+      "failed",
+    );
     await expect(readFile(join(dirname(worktree!.path), "escape.txt"), "utf8")).rejects.toThrow();
   });
 
@@ -1547,7 +1689,9 @@ describe("SupbotRuntime", () => {
     const projectDir = await createGitRoot();
     const dir = await mkdtemp(join(tmpdir(), "supbot-test-"));
     tempDirs.push(dir);
-    const runtime = new SupbotRuntime(new JsonFileStorage(dir), { rootDir: await mkdtemp(join(tmpdir(), "supbot-unrelated-")) });
+    const runtime = new SupbotRuntime(new JsonFileStorage(dir), {
+      rootDir: await mkdtemp(join(tmpdir(), "supbot-unrelated-")),
+    });
     await runtime.init();
     const project = await runtime.createProjectFromFolder({ rootPath: projectDir, name: "Project With Baseline" });
     await runtime.addPermissionRule({ toolName: "WriteFile", behavior: "allow" });
@@ -1575,12 +1719,14 @@ describe("SupbotRuntime", () => {
 
   test("runs local shell commands through PowerShell on Windows", async () => {
     const runtime = await createRuntime();
-    const command = process.platform === "win32"
-      ? "Get-PSDrive D | Format-List Used,Free"
-      : "printf 'Used : 1\\nFree : 2\\n'";
+    const command =
+      process.platform === "win32" ? "Get-PSDrive D | Format-List Used,Free" : "printf 'Used : 1\\nFree : 2\\n'";
 
     const result = await runtime.sendPrompt({ prompt: `/shell ${command}` });
-    await waitForCondition("pending slash shell permission", () => runtime.snapshot().pendingToolPermissions.length === 1);
+    await waitForCondition(
+      "pending slash shell permission",
+      () => runtime.snapshot().pendingToolPermissions.length === 1,
+    );
     expect(runtime.snapshot().pendingToolPermissions[0].toolName).toBe("Shell");
     await runtime.approveToolPermission(runtime.snapshot().pendingToolPermissions[0].id);
     await waitForJob(runtime, result.job.id);
@@ -1596,14 +1742,19 @@ describe("SupbotRuntime", () => {
   test("denies dangerous slash commands through the normal permission flow", async () => {
     const runtime = await createRuntime();
     const result = await runtime.sendPrompt({ prompt: "/shell should-not-run" });
-    await waitForCondition("pending slash shell permission", () => runtime.snapshot().pendingToolPermissions.length === 1);
+    await waitForCondition(
+      "pending slash shell permission",
+      () => runtime.snapshot().pendingToolPermissions.length === 1,
+    );
     await runtime.denyToolPermission(runtime.snapshot().pendingToolPermissions[0].id);
     await waitForJob(runtime, result.job.id);
 
     const conversation = runtime.snapshot().conversations.find((item) => item.id === result.conversation.id);
     const assistant = conversation?.messages.find((item) => item.role === "assistant");
     expect(assistant?.text).toContain("User denied Shell");
-    expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe("denied");
+    expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe(
+      "denied",
+    );
   });
 
   test("registers project folders and enforces project sandbox writes", async () => {
@@ -1622,19 +1773,23 @@ describe("SupbotRuntime", () => {
       workspaceMode: "main" as const,
       projectId: project.id,
       projectRoot: project.rootPath,
-      allowedWriteRoots: ["datasets/raw", "datasets/processed", "outputs", "reports", ".supbot/runs"].map((root) => join(project.rootPath, root)),
+      allowedWriteRoots: ["datasets/raw", "datasets/processed", "outputs", "reports", ".supbot/runs"].map((root) =>
+        join(project.rootPath, root),
+      ),
       host: {
         dataDir: project.rootPath,
         workspacePath: project.rootPath,
         cwd: project.rootPath,
         projectId: project.id,
         projectRoot: project.rootPath,
-        allowedWriteRoots: ["datasets/raw", "datasets/processed", "outputs", "reports", ".supbot/runs"].map((root) => join(project.rootPath, root)),
+        allowedWriteRoots: ["datasets/raw", "datasets/processed", "outputs", "reports", ".supbot/runs"].map((root) =>
+          join(project.rootPath, root),
+        ),
         randomId: (prefix: string) => `${prefix}_test`,
-        nowIso: () => "2026-07-04T00:00:00.000Z"
+        nowIso: () => "2026-07-04T00:00:00.000Z",
       },
       subagents: [],
-      runSubagent: async () => ({ text: "unused" })
+      runSubagent: async () => ({ text: "unused" }),
     };
 
     const allowed = await executor.execute({
@@ -1643,7 +1798,7 @@ describe("SupbotRuntime", () => {
       toolCall: {
         id: "call_project_allowed",
         type: "function",
-        function: { name: "WriteFile", arguments: JSON.stringify({ path: "datasets/raw/source.txt", content: "raw" }) }
+        function: { name: "WriteFile", arguments: JSON.stringify({ path: "datasets/raw/source.txt", content: "raw" }) },
       },
       registry,
       context,
@@ -1652,7 +1807,7 @@ describe("SupbotRuntime", () => {
       requestPermission: async () => "approved",
       onProgress: async (record) => {
         records.push(record);
-      }
+      },
     });
     expect(allowed.record.status).toBe("completed");
     expect(await readFile(join(project.rootPath, "datasets/raw/source.txt"), "utf8")).toBe("raw");
@@ -1663,7 +1818,7 @@ describe("SupbotRuntime", () => {
       toolCall: {
         id: "call_project_denied",
         type: "function",
-        function: { name: "WriteFile", arguments: JSON.stringify({ path: "README.md", content: "bad" }) }
+        function: { name: "WriteFile", arguments: JSON.stringify({ path: "README.md", content: "bad" }) },
       },
       registry,
       context,
@@ -1672,7 +1827,7 @@ describe("SupbotRuntime", () => {
       requestPermission: async () => "approved",
       onProgress: async (record) => {
         records.push(record);
-      }
+      },
     });
     expect(denied.record.status).toBe("denied");
     await expect(readFile(join(project.rootPath, "README.md"), "utf8")).rejects.toThrow();
@@ -1716,7 +1871,10 @@ describe("SupbotRuntime", () => {
     expect(first.job.projectId).toBe(project.id);
     await waitForJob(runtime, first.job.id);
 
-    const followup = await runtime.sendPrompt({ conversationId: first.conversation.id, prompt: "Continue in the same project" });
+    const followup = await runtime.sendPrompt({
+      conversationId: first.conversation.id,
+      prompt: "Continue in the same project",
+    });
     expect(followup.conversation.projectId).toBe(project.id);
     expect(followup.job.projectId).toBe(project.id);
     await waitForJob(runtime, followup.job.id);
@@ -1735,12 +1893,18 @@ describe("SupbotRuntime", () => {
 
     const inside = await runtime.sendPrompt({ projectId: project.id, prompt: "/read inside.txt" });
     await waitForJob(runtime, inside.job.id);
-    const insideAssistant = runtime.snapshot().conversations.find((item) => item.id === inside.conversation.id)?.messages.find((message) => message.role === "assistant");
+    const insideAssistant = runtime
+      .snapshot()
+      .conversations.find((item) => item.id === inside.conversation.id)
+      ?.messages.find((message) => message.role === "assistant");
     expect(insideAssistant?.text).toContain("inside project");
 
     const outside = await runtime.sendPrompt({ projectId: project.id, prompt: `/read ${outsideFile}` });
     await waitForJob(runtime, outside.job.id);
-    const outsideAssistant = runtime.snapshot().conversations.find((item) => item.id === outside.conversation.id)?.messages.find((message) => message.role === "assistant");
+    const outsideAssistant = runtime
+      .snapshot()
+      .conversations.find((item) => item.id === outside.conversation.id)
+      ?.messages.find((message) => message.role === "assistant");
     expect(outsideAssistant?.text).toContain("Project ReadFile target must stay inside");
   });
 
@@ -1760,12 +1924,17 @@ describe("SupbotRuntime", () => {
     const conversation = await runtime.createConversation("Legacy conversation");
     await runtime.shutdown();
 
-    const saved = JSON.parse(await readFile(join(dataDir, "state.json"), "utf8")) as { conversations: Array<Record<string, unknown>> };
+    const saved = JSON.parse(await readFile(join(dataDir, "state.json"), "utf8")) as {
+      conversations: Array<Record<string, unknown>>;
+    };
     expect(saved.conversations[0]).not.toHaveProperty("projectId");
 
     const reloaded = new SupbotRuntime(new JsonFileStorage(dataDir), { rootDir });
     await reloaded.init();
-    const result = await reloaded.sendPrompt({ conversationId: conversation.id, prompt: "Continue legacy conversation" });
+    const result = await reloaded.sendPrompt({
+      conversationId: conversation.id,
+      prompt: "Continue legacy conversation",
+    });
     expect(result.conversation.projectId).toBeUndefined();
     expect(result.job.projectId).toBeUndefined();
     await waitForJob(reloaded, result.job.id);
@@ -1779,19 +1948,24 @@ describe("SupbotRuntime", () => {
     const project = await runtime.createProjectFromFolder({ rootPath: projectDir, name: "Data Run" });
     const mock = await withMockModel(runtime, (body) => {
       const parsed = JSON.parse(body);
-      const userText = parsed.messages.filter((message: { role: string }) => message.role === "user").at(-1)?.content || "";
+      const userText =
+        parsed.messages.filter((message: { role: string }) => message.role === "user").at(-1)?.content || "";
       const hasToolResult = parsed.messages.some((message: { role: string }) => message.role === "tool");
       const write = (id: string, path: string, content: string) => ({
-        choices: [{
-          message: {
-            content: null,
-            tool_calls: [{
-              id,
-              type: "function",
-              function: { name: "WriteFile", arguments: JSON.stringify({ path, content }) }
-            }]
-          }
-        }]
+        choices: [
+          {
+            message: {
+              content: null,
+              tool_calls: [
+                {
+                  id,
+                  type: "function",
+                  function: { name: "WriteFile", arguments: JSON.stringify({ path, content }) },
+                },
+              ],
+            },
+          },
+        ],
       });
       if (!hasToolResult && userText.includes("Stage: collect")) {
         return write("call_collect", "datasets/raw/source.csv", "name,value\\na,1\\nb,2\\n");
@@ -1800,13 +1974,23 @@ describe("SupbotRuntime", () => {
         return write("call_process", "datasets/processed/clean.csv", "name,value\\na,1\\nb,2\\n");
       }
       if (!hasToolResult && userText.includes("Stage: analyze")) {
-        return write("call_analyze", "outputs/findings.txt", "Total value: 3\\nEvidence: datasets/processed/clean.csv\\n");
+        return write(
+          "call_analyze",
+          "outputs/findings.txt",
+          "Total value: 3\\nEvidence: datasets/processed/clean.csv\\n",
+        );
       }
       if (!hasToolResult && userText.includes("Stage: report")) {
-        return write("call_report", "reports/final.md", "# Report\\nTotal value is 3.\\nEvidence: outputs/findings.txt\\n");
+        return write(
+          "call_report",
+          "reports/final.md",
+          "# Report\\nTotal value is 3.\\nEvidence: outputs/findings.txt\\n",
+        );
       }
       if (userText.includes("Goal-output alignment review")) {
-        return { choices: [{ message: { content: "PASS\nThe report satisfies the goal and cites outputs/findings.txt." } }] };
+        return {
+          choices: [{ message: { content: "PASS\nThe report satisfies the goal and cites outputs/findings.txt." } }],
+        };
       }
       return { choices: [{ message: { content: `Stage complete. Evidence: ${projectDir}\\reports\\final.md` } }] };
     });
@@ -1815,7 +1999,7 @@ describe("SupbotRuntime", () => {
         projectId: project.id,
         title: "Analyze sample data",
         goal: "Collect a small CSV, process it, analyze totals, and write a report.",
-        dataSources: [{ id: "source", kind: "folderScan", label: "project", path: project.rootPath }]
+        dataSources: [{ id: "source", kind: "folderScan", label: "project", path: project.rootPath }],
       });
       await waitForAutopilotRun(runtime, run.id);
       const snapshot = runtime.snapshot();
@@ -1823,9 +2007,15 @@ describe("SupbotRuntime", () => {
       expect(completed?.status).toBe("completed");
       expect(completed?.reportPath).toContain("reports");
       const artifacts = snapshot.dataArtifacts.filter((artifact) => artifact.runId === run.id);
-      expect(artifacts.map((artifact) => artifact.kind)).toEqual(expect.arrayContaining(["raw", "processed", "analysis", "report"]));
-      expect(snapshot.autopilotTasks.filter((task) => task.runId === run.id).every((task) => task.status === "completed")).toBe(true);
-      expect(await readFile(join(project.rootPath, ".supbot", "runs", run.id, "checkpoint.json"), "utf8")).toContain("Completed");
+      expect(artifacts.map((artifact) => artifact.kind)).toEqual(
+        expect.arrayContaining(["raw", "processed", "analysis", "report"]),
+      );
+      expect(
+        snapshot.autopilotTasks.filter((task) => task.runId === run.id).every((task) => task.status === "completed"),
+      ).toBe(true);
+      expect(await readFile(join(project.rootPath, ".supbot", "runs", run.id, "checkpoint.json"), "utf8")).toContain(
+        "Completed",
+      );
     } finally {
       await mock.close();
     }
@@ -1839,19 +2029,24 @@ describe("SupbotRuntime", () => {
     let reviewCount = 0;
     const mock = await withMockModel(runtime, (body) => {
       const parsed = JSON.parse(body);
-      const userText = parsed.messages.filter((message: { role: string }) => message.role === "user").at(-1)?.content || "";
+      const userText =
+        parsed.messages.filter((message: { role: string }) => message.role === "user").at(-1)?.content || "";
       const hasToolResult = parsed.messages.some((message: { role: string }) => message.role === "tool");
       const write = (id: string, path: string, content: string) => ({
-        choices: [{
-          message: {
-            content: null,
-            tool_calls: [{
-              id,
-              type: "function",
-              function: { name: "WriteFile", arguments: JSON.stringify({ path, content }) }
-            }]
-          }
-        }]
+        choices: [
+          {
+            message: {
+              content: null,
+              tool_calls: [
+                {
+                  id,
+                  type: "function",
+                  function: { name: "WriteFile", arguments: JSON.stringify({ path, content }) },
+                },
+              ],
+            },
+          },
+        ],
       });
       if (!hasToolResult && userText.includes("Stage: collect")) {
         return write("call_loop_collect", "datasets/raw/source.csv", "name,value\\na,1\\nb,2\\n");
@@ -1860,20 +2055,36 @@ describe("SupbotRuntime", () => {
         return write("call_loop_process", "datasets/processed/clean.csv", "name,value\\na,1\\nb,2\\n");
       }
       if (!hasToolResult && userText.includes("Stage: analyze")) {
-        return write("call_loop_analyze", "outputs/findings.txt", "Total value: 3\\nEvidence: datasets/processed/clean.csv\\n");
+        return write(
+          "call_loop_analyze",
+          "outputs/findings.txt",
+          "Total value: 3\\nEvidence: datasets/processed/clean.csv\\n",
+        );
       }
       if (!hasToolResult && userText.includes("Revise outputs to match goal")) {
-        return write("call_loop_fix", "reports/final.md", "# Report\\nTotal value is 3.\\nAverage value is 1.5.\\nEvidence: outputs/findings.txt\\n");
+        return write(
+          "call_loop_fix",
+          "reports/final.md",
+          "# Report\\nTotal value is 3.\\nAverage value is 1.5.\\nEvidence: outputs/findings.txt\\n",
+        );
       }
       if (!hasToolResult && userText.includes("Stage: report")) {
-        return write("call_loop_report", "reports/final.md", "# Report\\nTotal value is 3.\\nEvidence: outputs/findings.txt\\n");
+        return write(
+          "call_loop_report",
+          "reports/final.md",
+          "# Report\\nTotal value is 3.\\nEvidence: outputs/findings.txt\\n",
+        );
       }
       if (userText.includes("Goal-output alignment review")) {
         reviewCount += 1;
         if (reviewCount === 1) {
           return { choices: [{ message: { content: "FAIL\nThe report is missing the requested average value." } }] };
         }
-        return { choices: [{ message: { content: "PASS\nThe revised report includes total and average values with evidence." } }] };
+        return {
+          choices: [
+            { message: { content: "PASS\nThe revised report includes total and average values with evidence." } },
+          ],
+        };
       }
       return { choices: [{ message: { content: "Stage complete." } }] };
     });
@@ -1883,7 +2094,7 @@ describe("SupbotRuntime", () => {
         title: "Analyze totals and average",
         goal: "Collect a CSV, process it, analyze totals, and write a report that includes both total and average value.",
         dataSources: [],
-        writePolicy: { maxTasks: 12 }
+        writePolicy: { maxTasks: 12 },
       });
       await waitForAutopilotRun(runtime, run.id);
       const snapshot = runtime.snapshot();
@@ -1893,7 +2104,11 @@ describe("SupbotRuntime", () => {
       const tasks = snapshot.autopilotTasks.filter((task) => task.runId === run.id);
       expect(tasks.some((task) => task.title.startsWith("Goal-output alignment review"))).toBe(true);
       expect(tasks.some((task) => task.title.startsWith("Revise outputs to match goal"))).toBe(true);
-      expect(snapshot.autopilotEvents.some((event) => event.runId === run.id && event.message.includes("queued fix iteration"))).toBe(true);
+      expect(
+        snapshot.autopilotEvents.some(
+          (event) => event.runId === run.id && event.message.includes("queued fix iteration"),
+        ),
+      ).toBe(true);
       expect(await readFile(join(project.rootPath, "reports", "final.md"), "utf8")).toContain("Average value is 1.5");
     } finally {
       await mock.close();
@@ -1916,42 +2131,46 @@ describe("SupbotRuntime", () => {
       metadataPath: join(projectDir, ".supbot", "project.json"),
       status: "active" as const,
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
     };
     state.projects = [project];
-    state.autopilotRuns = [{
-      id: "run_recover",
-      projectId: project.id,
-      projectRoot: project.rootPath,
-      title: "Recover run",
-      goal: "Recover after restart",
-      status: "running",
-      currentStage: "collect",
-      writePolicy: {
-        mode: "projectSandbox",
-        allowedWriteRoots: ["datasets/raw", "datasets/processed", "outputs", "reports", ".supbot/runs"],
-        allowNetwork: true,
-        allowMcp: true,
-        maxRuntimeMinutes: 120,
-        maxTasks: 16,
-        maxRetries: 1
+    state.autopilotRuns = [
+      {
+        id: "run_recover",
+        projectId: project.id,
+        projectRoot: project.rootPath,
+        title: "Recover run",
+        goal: "Recover after restart",
+        status: "running",
+        currentStage: "collect",
+        writePolicy: {
+          mode: "projectSandbox",
+          allowedWriteRoots: ["datasets/raw", "datasets/processed", "outputs", "reports", ".supbot/runs"],
+          allowNetwork: true,
+          allowMcp: true,
+          maxRuntimeMinutes: 120,
+          maxTasks: 16,
+          maxRetries: 1,
+        },
+        dataSources: [],
+        taskIds: [],
+        artifactIds: [],
+        checkpointIds: [],
+        evidence: [],
+        createdAt: now,
+        updatedAt: now,
+        startedAt: now,
       },
-      dataSources: [],
-      taskIds: [],
-      artifactIds: [],
-      checkpointIds: [],
-      evidence: [],
-      createdAt: now,
-      updatedAt: now,
-      startedAt: now
-    }];
+    ];
     await storage.save(state);
     const restarted = new SupbotRuntime(storage, { rootDir });
     await restarted.init();
     const recovered = restarted.snapshot().autopilotRuns.find((run) => run.id === "run_recover");
     expect(recovered?.status).toBe("paused");
     expect(recovered?.error).toContain("Recovered");
-    expect(await readFile(join(project.rootPath, ".supbot", "runs", "run_recover", "checkpoint.json"), "utf8")).toContain("Recovered");
+    expect(
+      await readFile(join(project.rootPath, ".supbot", "runs", "run_recover", "checkpoint.json"), "utf8"),
+    ).toContain("Recovered");
     await restarted.shutdown();
   });
 
@@ -1970,23 +2189,36 @@ describe("SupbotRuntime", () => {
         response.setHeader("Content-Type", "application/json");
         if (calls === 1) {
           const parsed = JSON.parse(body);
-          expect(parsed.tools.some((tool: { function: { name: string } }) => tool.function.name === "ReadFile")).toBe(true);
-          response.end(JSON.stringify({
-            choices: [{
-              message: {
-                content: null,
-                tool_calls: [{
-                  id: "call_read_1",
-                  type: "function",
-                  function: { name: "ReadFile", arguments: JSON.stringify({ path: filePath }) }
-                }]
-              }
-            }]
-          }));
+          expect(parsed.tools.some((tool: { function: { name: string } }) => tool.function.name === "ReadFile")).toBe(
+            true,
+          );
+          response.end(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content: null,
+                    tool_calls: [
+                      {
+                        id: "call_read_1",
+                        type: "function",
+                        function: { name: "ReadFile", arguments: JSON.stringify({ path: filePath }) },
+                      },
+                    ],
+                  },
+                },
+              ],
+            }),
+          );
           return;
         }
         const parsed = JSON.parse(body);
-        expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes("agent loop file content"))).toBe(true);
+        expect(
+          parsed.messages.some(
+            (message: { role: string; content: string }) =>
+              message.role === "tool" && message.content.includes("agent loop file content"),
+          ),
+        ).toBe(true);
         response.end(JSON.stringify({ choices: [{ message: { content: "Read complete." } }] }));
       });
     });
@@ -1999,7 +2231,7 @@ describe("SupbotRuntime", () => {
         model: "mock-model",
         temperature: 0.1,
         maxTokens: 1000,
-        apiKey: "test-key"
+        apiKey: "test-key",
       });
       const result = await runtime.sendPrompt({ prompt: "read the file" });
       await waitForJob(runtime, result.job.id);
@@ -2009,7 +2241,7 @@ describe("SupbotRuntime", () => {
       expect(assistant?.blocks?.some((block) => block.type === "tool_use" && block.toolName === "ReadFile")).toBe(true);
       expect(calls).toBe(2);
     } finally {
-      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
   });
 
@@ -2029,22 +2261,37 @@ describe("SupbotRuntime", () => {
         calls += 1;
         response.setHeader("Content-Type", "application/json");
         if (calls === 1) {
-          response.end(JSON.stringify({
-            choices: [{
-              message: {
-                content: null,
-                tool_calls: [
-                  { id: "call_read_first", type: "function", function: { name: "ReadFile", arguments: JSON.stringify({ path: firstPath }) } },
-                  { id: "call_read_second", type: "function", function: { name: "ReadFile", arguments: JSON.stringify({ path: secondPath }) } }
-                ]
-              }
-            }]
-          }));
+          response.end(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content: null,
+                    tool_calls: [
+                      {
+                        id: "call_read_first",
+                        type: "function",
+                        function: { name: "ReadFile", arguments: JSON.stringify({ path: firstPath }) },
+                      },
+                      {
+                        id: "call_read_second",
+                        type: "function",
+                        function: { name: "ReadFile", arguments: JSON.stringify({ path: secondPath }) },
+                      },
+                    ],
+                  },
+                },
+              ],
+            }),
+          );
           return;
         }
         const parsed = JSON.parse(body);
         const toolMessages = parsed.messages.filter((message: { role: string }) => message.role === "tool");
-        expect(toolMessages.map((message: { tool_call_id: string }) => message.tool_call_id)).toEqual(["call_read_first", "call_read_second"]);
+        expect(toolMessages.map((message: { tool_call_id: string }) => message.tool_call_id)).toEqual([
+          "call_read_first",
+          "call_read_second",
+        ]);
         expect(toolMessages[0].content).toContain("first content");
         expect(toolMessages[1].content).toContain("second content");
         response.end(JSON.stringify({ choices: [{ message: { content: "Both files read." } }] }));
@@ -2059,7 +2306,7 @@ describe("SupbotRuntime", () => {
         model: "mock-model",
         temperature: 0.1,
         maxTokens: 1000,
-        apiKey: "test-key"
+        apiKey: "test-key",
       });
       const result = await runtime.sendPrompt({ prompt: "read both files" });
       await waitForJob(runtime, result.job.id);
@@ -2067,7 +2314,7 @@ describe("SupbotRuntime", () => {
       expect(trace?.toolCalls.map((call) => call.id)).toEqual(["call_read_first", "call_read_second"]);
       expect(runtime.snapshot().runtimeEvents.some((event) => event.kind === "tool_result")).toBe(true);
     } finally {
-      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
   });
 
@@ -2078,18 +2325,29 @@ describe("SupbotRuntime", () => {
       calls += 1;
       response.setHeader("Content-Type", "application/json");
       if (calls === 1) {
-        response.end(JSON.stringify({
-          choices: [{
-            message: {
-              content: null,
-              tool_calls: [{
-                id: "call_shell_1",
-                type: "function",
-                function: { name: "Shell", arguments: JSON.stringify({ command: process.platform === "win32" ? "Write-Output approved" : "printf approved" }) }
-              }]
-            }
-          }]
-        }));
+        response.end(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: null,
+                  tool_calls: [
+                    {
+                      id: "call_shell_1",
+                      type: "function",
+                      function: {
+                        name: "Shell",
+                        arguments: JSON.stringify({
+                          command: process.platform === "win32" ? "Write-Output approved" : "printf approved",
+                        }),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+        );
         return;
       }
       response.end(JSON.stringify({ choices: [{ message: { content: "Shell approved." } }] }));
@@ -2103,7 +2361,7 @@ describe("SupbotRuntime", () => {
         model: "mock-model",
         temperature: 0.1,
         maxTokens: 1000,
-        apiKey: "test-key"
+        apiKey: "test-key",
       });
       const result = await runtime.sendPrompt({ prompt: "run a shell command" });
       await waitForCondition("pending shell permission", () => runtime.snapshot().pendingToolPermissions.length === 1);
@@ -2115,7 +2373,7 @@ describe("SupbotRuntime", () => {
       const trace = runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id);
       expect(trace?.toolCalls[0].status).toBe("completed");
     } finally {
-      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
   });
 
@@ -2131,22 +2389,36 @@ describe("SupbotRuntime", () => {
         calls += 1;
         response.setHeader("Content-Type", "application/json");
         if (calls === 1) {
-          response.end(JSON.stringify({
-            choices: [{
-              message: {
-                content: null,
-                tool_calls: [{
-                  id: "call_write_1",
-                  type: "function",
-                  function: { name: "WriteFile", arguments: JSON.stringify({ path: "denied.txt", content: "nope" }) }
-                }]
-              }
-            }]
-          }));
+          response.end(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content: null,
+                    tool_calls: [
+                      {
+                        id: "call_write_1",
+                        type: "function",
+                        function: {
+                          name: "WriteFile",
+                          arguments: JSON.stringify({ path: "denied.txt", content: "nope" }),
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            }),
+          );
           return;
         }
         const parsed = JSON.parse(body);
-        expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes("User denied"))).toBe(true);
+        expect(
+          parsed.messages.some(
+            (message: { role: string; content: string }) =>
+              message.role === "tool" && message.content.includes("User denied"),
+          ),
+        ).toBe(true);
         response.end(JSON.stringify({ choices: [{ message: { content: "I will not write the file." } }] }));
       });
     });
@@ -2159,7 +2431,7 @@ describe("SupbotRuntime", () => {
         model: "mock-model",
         temperature: 0.1,
         maxTokens: 1000,
-        apiKey: "test-key"
+        apiKey: "test-key",
       });
       const result = await runtime.sendPrompt({ prompt: "write a file" });
       await waitForCondition("pending write permission", () => runtime.snapshot().pendingToolPermissions.length === 1);
@@ -2168,9 +2440,11 @@ describe("SupbotRuntime", () => {
       const conversation = runtime.snapshot().conversations.find((item) => item.id === result.conversation.id);
       const assistant = conversation?.messages.find((item) => item.role === "assistant");
       expect(assistant?.text).toBe("I will not write the file.");
-      expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe("denied");
+      expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe(
+        "denied",
+      );
     } finally {
-      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
   });
 
@@ -2179,16 +2453,20 @@ describe("SupbotRuntime", () => {
     const mock = await withMockModel(runtime, (body, call) => {
       if (call === 1) {
         return {
-          choices: [{
-            message: {
-              content: null,
-              tool_calls: [{
-                id: "call_write_malformed",
-                type: "function",
-                function: { name: "WriteFile", arguments: "{\"path\":\"generate_ppt.py\",\"content\":\"print(1)" }
-              }]
-            }
-          }]
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_write_malformed",
+                    type: "function",
+                    function: { name: "WriteFile", arguments: '{"path":"generate_ppt.py","content":"print(1)' },
+                  },
+                ],
+              },
+            },
+          ],
         };
       }
       const parsed = JSON.parse(body);
@@ -2204,7 +2482,10 @@ describe("SupbotRuntime", () => {
       const record = runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0];
       expect(record?.status).toBe("failed");
       expect(record?.error).toContain("valid JSON");
-      const assistant = runtime.snapshot().conversations.find((item) => item.id === result.conversation.id)?.messages.find((item) => item.role === "assistant");
+      const assistant = runtime
+        .snapshot()
+        .conversations.find((item) => item.id === result.conversation.id)
+        ?.messages.find((item) => item.role === "assistant");
       expect(assistant?.text).toBe("I will retry with valid JSON.");
     } finally {
       await mock.close();
@@ -2218,27 +2499,38 @@ describe("SupbotRuntime", () => {
     const mock = await withMockModel(runtime, (body, call) => {
       if (call === 1) {
         return {
-          choices: [{
-            message: {
-              content: null,
-              tool_calls: [{
-                id: "call_shell_allow",
-                type: "function",
-                function: { name: "Shell", arguments: JSON.stringify({ command }) }
-              }]
-            }
-          }]
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_shell_allow",
+                    type: "function",
+                    function: { name: "Shell", arguments: JSON.stringify({ command }) },
+                  },
+                ],
+              },
+            },
+          ],
         };
       }
       const parsed = JSON.parse(body);
-      expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes("allow-rule"))).toBe(true);
+      expect(
+        parsed.messages.some(
+          (message: { role: string; content: string }) =>
+            message.role === "tool" && message.content.includes("allow-rule"),
+        ),
+      ).toBe(true);
       return { choices: [{ message: { content: "Allowed by rule." } }] };
     });
     try {
       const result = await runtime.sendPrompt({ prompt: "run allowed shell" });
       await waitForJob(runtime, result.job.id);
       expect(runtime.snapshot().pendingToolPermissions).toHaveLength(0);
-      expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe("completed");
+      expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe(
+        "completed",
+      );
       expect(mock.calls()).toBe(2);
     } finally {
       await mock.close();
@@ -2251,20 +2543,32 @@ describe("SupbotRuntime", () => {
     const mock = await withMockModel(runtime, (body, call) => {
       if (call === 1) {
         return {
-          choices: [{
-            message: {
-              content: null,
-              tool_calls: [{
-                id: "call_write_cleanup",
-                type: "function",
-                function: { name: "WriteFile", arguments: JSON.stringify({ path: "cleanup.txt", content: "delete me with the conversation" }) }
-              }]
-            }
-          }]
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_write_cleanup",
+                    type: "function",
+                    function: {
+                      name: "WriteFile",
+                      arguments: JSON.stringify({ path: "cleanup.txt", content: "delete me with the conversation" }),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
         };
       }
       const parsed = JSON.parse(body);
-      expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes("cleanup.txt"))).toBe(true);
+      expect(
+        parsed.messages.some(
+          (message: { role: string; content: string }) =>
+            message.role === "tool" && message.content.includes("cleanup.txt"),
+        ),
+      ).toBe(true);
       return { choices: [{ message: { content: "Cleanup task completed." } }] };
     });
     try {
@@ -2275,19 +2579,43 @@ describe("SupbotRuntime", () => {
       expect(before.jobs.some((item) => item.id === result.job.id)).toBe(true);
       expect(before.agentLoopTraces.some((item) => item.jobId === result.job.id)).toBe(true);
       expect(before.querySessions.some((item) => item.jobId === result.job.id)).toBe(true);
-      expect(before.runtimeEvents.some((item) => item.jobId === result.job.id || item.conversationId === result.conversation.id)).toBe(true);
+      expect(
+        before.runtimeEvents.some(
+          (item) => item.jobId === result.job.id || item.conversationId === result.conversation.id,
+        ),
+      ).toBe(true);
       expect(before.worktrees.some((item) => item.jobId === result.job.id)).toBe(true);
 
       await runtime.deleteConversation(result.conversation.id);
 
       const after = runtime.snapshot();
       expect(after.conversations.some((item) => item.id === result.conversation.id)).toBe(false);
-      expect(after.jobs.some((item) => item.id === result.job.id || item.conversationId === result.conversation.id)).toBe(false);
-      expect(after.agentLoopTraces.some((item) => item.jobId === result.job.id || item.conversationId === result.conversation.id)).toBe(false);
-      expect(after.querySessions.some((item) => item.jobId === result.job.id || item.conversationId === result.conversation.id)).toBe(false);
-      expect(after.runtimeEvents.some((item) => item.jobId === result.job.id || item.conversationId === result.conversation.id)).toBe(false);
-      expect(after.pendingToolPermissions.some((item) => item.jobId === result.job.id || item.conversationId === result.conversation.id)).toBe(false);
-      expect(after.worktrees.some((item) => item.jobId === result.job.id || item.conversationId === result.conversation.id)).toBe(false);
+      expect(
+        after.jobs.some((item) => item.id === result.job.id || item.conversationId === result.conversation.id),
+      ).toBe(false);
+      expect(
+        after.agentLoopTraces.some(
+          (item) => item.jobId === result.job.id || item.conversationId === result.conversation.id,
+        ),
+      ).toBe(false);
+      expect(
+        after.querySessions.some(
+          (item) => item.jobId === result.job.id || item.conversationId === result.conversation.id,
+        ),
+      ).toBe(false);
+      expect(
+        after.runtimeEvents.some(
+          (item) => item.jobId === result.job.id || item.conversationId === result.conversation.id,
+        ),
+      ).toBe(false);
+      expect(
+        after.pendingToolPermissions.some(
+          (item) => item.jobId === result.job.id || item.conversationId === result.conversation.id,
+        ),
+      ).toBe(false);
+      expect(
+        after.worktrees.some((item) => item.jobId === result.job.id || item.conversationId === result.conversation.id),
+      ).toBe(false);
     } finally {
       await mock.close();
     }
@@ -2299,27 +2627,41 @@ describe("SupbotRuntime", () => {
     const mock = await withMockModel(runtime, (body, call) => {
       if (call === 1) {
         return {
-          choices: [{
-            message: {
-              content: null,
-              tool_calls: [{
-                id: "call_write_denied_rule",
-                type: "function",
-                function: { name: "WriteFile", arguments: JSON.stringify({ path: "rule-denied.txt", content: "blocked" }) }
-              }]
-            }
-          }]
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_write_denied_rule",
+                    type: "function",
+                    function: {
+                      name: "WriteFile",
+                      arguments: JSON.stringify({ path: "rule-denied.txt", content: "blocked" }),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
         };
       }
       const parsed = JSON.parse(body);
-      expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes("Permission rule denied WriteFile"))).toBe(true);
+      expect(
+        parsed.messages.some(
+          (message: { role: string; content: string }) =>
+            message.role === "tool" && message.content.includes("Permission rule denied WriteFile"),
+        ),
+      ).toBe(true);
       return { choices: [{ message: { content: "Denied by rule." } }] };
     });
     try {
       const result = await runtime.sendPrompt({ prompt: "write denied by rule" });
       await waitForJob(runtime, result.job.id);
       expect(runtime.snapshot().pendingToolPermissions).toHaveLength(0);
-      expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe("denied");
+      expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe(
+        "denied",
+      );
     } finally {
       await mock.close();
     }
@@ -2333,20 +2675,29 @@ describe("SupbotRuntime", () => {
     const mock = await withMockModel(runtime, (body, call) => {
       if (call === 1) {
         return {
-          choices: [{
-            message: {
-              content: null,
-              tool_calls: [{
-                id: "call_read_ask_rule",
-                type: "function",
-                function: { name: "ReadFile", arguments: JSON.stringify({ path: filePath }) }
-              }]
-            }
-          }]
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_read_ask_rule",
+                    type: "function",
+                    function: { name: "ReadFile", arguments: JSON.stringify({ path: filePath }) },
+                  },
+                ],
+              },
+            },
+          ],
         };
       }
       const parsed = JSON.parse(body);
-      expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes("User denied ReadFile"))).toBe(true);
+      expect(
+        parsed.messages.some(
+          (message: { role: string; content: string }) =>
+            message.role === "tool" && message.content.includes("User denied ReadFile"),
+        ),
+      ).toBe(true);
       return { choices: [{ message: { content: "Read was denied." } }] };
     });
     try {
@@ -2354,7 +2705,9 @@ describe("SupbotRuntime", () => {
       await waitForCondition("pending read permission", () => runtime.snapshot().pendingToolPermissions.length === 1);
       await runtime.denyToolPermission(runtime.snapshot().pendingToolPermissions[0].id);
       await waitForJob(runtime, result.job.id);
-      expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe("denied");
+      expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe(
+        "denied",
+      );
     } finally {
       await mock.close();
     }
@@ -2365,20 +2718,29 @@ describe("SupbotRuntime", () => {
     const mock = await withMockModel(runtime, (body, call) => {
       if (call === 1) {
         return {
-          choices: [{
-            message: {
-              content: null,
-              tool_calls: [{
-                id: "call_shell_invalid",
-                type: "function",
-                function: { name: "Shell", arguments: JSON.stringify({ command: 42 }) }
-              }]
-            }
-          }]
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_shell_invalid",
+                    type: "function",
+                    function: { name: "Shell", arguments: JSON.stringify({ command: 42 }) },
+                  },
+                ],
+              },
+            },
+          ],
         };
       }
       const parsed = JSON.parse(body);
-      expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes("Tool input.command must be string"))).toBe(true);
+      expect(
+        parsed.messages.some(
+          (message: { role: string; content: string }) =>
+            message.role === "tool" && message.content.includes("Tool input.command must be string"),
+        ),
+      ).toBe(true);
       return { choices: [{ message: { content: "Invalid arguments handled." } }] };
     });
     try {
@@ -2405,27 +2767,44 @@ describe("SupbotRuntime", () => {
         calls += 1;
         response.setHeader("Content-Type", "application/json");
         const parsed = JSON.parse(body);
-        const isSubagent = parsed.messages.some((message: { role: string; content: string }) => message.role === "system" && message.content.includes("subagent @research"));
+        const isSubagent = parsed.messages.some(
+          (message: { role: string; content: string }) =>
+            message.role === "system" && message.content.includes("subagent @research"),
+        );
         if (isSubagent) {
           response.end(JSON.stringify({ choices: [{ message: { content: "Research says yes." } }] }));
           return;
         }
         if (calls === 1) {
-          response.end(JSON.stringify({
-            choices: [{
-              message: {
-                content: null,
-                tool_calls: [{
-                  id: "call_agent_1",
-                  type: "function",
-                  function: { name: "Agent", arguments: JSON.stringify({ subagent_type: "research", prompt: "check this" }) }
-                }]
-              }
-            }]
-          }));
+          response.end(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content: null,
+                    tool_calls: [
+                      {
+                        id: "call_agent_1",
+                        type: "function",
+                        function: {
+                          name: "Agent",
+                          arguments: JSON.stringify({ subagent_type: "research", prompt: "check this" }),
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            }),
+          );
           return;
         }
-        expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes("Research says yes."))).toBe(true);
+        expect(
+          parsed.messages.some(
+            (message: { role: string; content: string }) =>
+              message.role === "tool" && message.content.includes("Research says yes."),
+          ),
+        ).toBe(true);
         response.end(JSON.stringify({ choices: [{ message: { content: "Subagent complete." } }] }));
       });
     });
@@ -2438,7 +2817,7 @@ describe("SupbotRuntime", () => {
         model: "mock-model",
         temperature: 0.1,
         maxTokens: 1000,
-        apiKey: "test-key"
+        apiKey: "test-key",
       });
       const result = await runtime.sendPrompt({ prompt: "delegate research" });
       await waitForCondition("pending agent permission", () => runtime.snapshot().pendingToolPermissions.length === 1);
@@ -2447,7 +2826,7 @@ describe("SupbotRuntime", () => {
       const conversation = runtime.snapshot().conversations.find((item) => item.id === result.conversation.id);
       expect(conversation?.messages.find((item) => item.role === "assistant")?.text).toBe("Subagent complete.");
     } finally {
-      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
   });
 
@@ -2459,7 +2838,7 @@ describe("SupbotRuntime", () => {
       subagentName: "research",
       title: "Research signal",
       content: "Research subagent should remember the keyword Nebula.",
-      keywords: ["nebula", "research"]
+      keywords: ["nebula", "research"],
     });
     await runtime.addPermissionRule({ toolName: "Agent", behavior: "allow" });
     let sawMainWithoutResearchMemory = false;
@@ -2478,16 +2857,23 @@ describe("SupbotRuntime", () => {
       sawMainWithoutResearchMemory = true;
       if (call === 1) {
         return {
-          choices: [{
-            message: {
-              content: null,
-              tool_calls: [{
-                id: "call_agent_memory",
-                type: "function",
-                function: { name: "Agent", arguments: JSON.stringify({ subagent_type: "research", prompt: "Use Nebula research memory." }) }
-              }]
-            }
-          }]
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_agent_memory",
+                    type: "function",
+                    function: {
+                      name: "Agent",
+                      arguments: JSON.stringify({ subagent_type: "research", prompt: "Use Nebula research memory." }),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
         };
       }
       return { choices: [{ message: { content: "Subagent memory complete." } }] };
@@ -2497,7 +2883,13 @@ describe("SupbotRuntime", () => {
       await waitForJob(runtime, result.job.id);
       expect(sawMainWithoutResearchMemory).toBe(true);
       expect(sawSubagentWithResearchMemory).toBe(true);
-      expect(runtime.snapshot().runtimeEvents.some((event) => event.kind === "memory_recall" && event.conversationId?.startsWith("subagent_"))).toBe(true);
+      expect(
+        runtime
+          .snapshot()
+          .runtimeEvents.some(
+            (event) => event.kind === "memory_recall" && event.conversationId?.startsWith("subagent_"),
+          ),
+      ).toBe(true);
     } finally {
       await mock.close();
     }
@@ -2510,7 +2902,7 @@ describe("SupbotRuntime", () => {
       name: "disabled tools",
       command: process.execPath,
       args: [serverPath],
-      enabled: false
+      enabled: false,
     });
     expect(runtime.snapshot().mcpServers.find((server) => server.id === disabled.id)?.enabled).toBe(false);
     expect(runtime.snapshot().mcpTools).toHaveLength(0);
@@ -2519,14 +2911,16 @@ describe("SupbotRuntime", () => {
       name: "mock tools",
       command: process.execPath,
       args: [serverPath],
-      enabled: true
+      enabled: true,
     });
     await runtime.connectMcpServer(server.id);
     const snapshot = runtime.snapshot();
     expect(snapshot.mcpServers.find((item) => item.id === server.id)?.status.state).toBe("connected");
     expect(snapshot.mcpServers.find((item) => item.id === server.id)?.status.pid).toBeTypeOf("number");
     expect(snapshot.mcpServers.find((item) => item.id === server.id)?.status.lastConnectedAt).toBeTruthy();
-    expect(snapshot.mcpServers.find((item) => item.id === server.id)?.status.stderrPreview).toContain("mock mcp stderr ready");
+    expect(snapshot.mcpServers.find((item) => item.id === server.id)?.status.stderrPreview).toContain(
+      "mock mcp stderr ready",
+    );
     const tool = snapshot.mcpTools.find((item) => item.runtimeToolName === `mcp.${server.id}.echo`);
     expect(tool?.modelToolName).toBe(`mcp__${server.id}__echo`);
     expect(await runtime.getMcpLogs(server.id)).not.toHaveLength(0);
@@ -2549,7 +2943,7 @@ describe("SupbotRuntime", () => {
       args: [serverPath],
       env: { SECRET_TOKEN: "super-secret" },
       autoConnect: true,
-      enabled: true
+      enabled: true,
     });
     await runtime.addPermissionRule({ toolName: `mcp.${server.id}.*`, behavior: "ask" });
     const exported = await runtime.exportMcpConfig();
@@ -2573,7 +2967,7 @@ describe("SupbotRuntime", () => {
       command: process.execPath,
       args: [serverPath],
       requestTimeoutMs: 1000,
-      enabled: true
+      enabled: true,
     });
     expect(result.ok).toBe(true);
     expect(result.toolCount).toBe(1);
@@ -2592,7 +2986,7 @@ describe("SupbotRuntime", () => {
       command: process.execPath,
       args: [initPath],
       requestTimeoutMs: 1000,
-      enabled: true
+      enabled: true,
     });
     expect(initResult.ok).toBe(false);
     expect(initResult.error).toContain("Initialize boom");
@@ -2605,7 +2999,7 @@ describe("SupbotRuntime", () => {
       command: process.execPath,
       args: [listPath],
       requestTimeoutMs: 1000,
-      enabled: true
+      enabled: true,
     });
     expect(listResult.ok).toBe(false);
     expect(listResult.error).toContain("Tools list boom");
@@ -2621,28 +3015,45 @@ describe("SupbotRuntime", () => {
       name: "complex schema",
       command: process.execPath,
       args: [complexPath],
-      enabled: true
+      enabled: true,
     });
     await runtime.connectMcpServer(complexServer.id);
     await runtime.addPermissionRule({ toolName: `mcp.${complexServer.id}.*`, behavior: "allow" });
     let mock = await withMockModel(runtime, (body, call) => {
       if (call === 1) {
         return {
-          choices: [{
-            message: {
-              content: null,
-              tool_calls: [{
-                id: "call_mcp_complex_invalid",
-                type: "function",
-                function: { name: `mcp__${complexServer.id}__complex`, arguments: JSON.stringify({ config: { mode: "turbo", labels: ["a"] }, target: true }) }
-              }]
-            }
-          }]
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_mcp_complex_invalid",
+                    type: "function",
+                    function: {
+                      name: `mcp__${complexServer.id}__complex`,
+                      arguments: JSON.stringify({ config: { mode: "turbo", labels: ["a"] }, target: true }),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
         };
       }
       const parsed = JSON.parse(body);
-      expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes("config.mode must be one of fast, safe"))).toBe(true);
-      expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes("Tool input.target must match exactly one schema"))).toBe(true);
+      expect(
+        parsed.messages.some(
+          (message: { role: string; content: string }) =>
+            message.role === "tool" && message.content.includes("config.mode must be one of fast, safe"),
+        ),
+      ).toBe(true);
+      expect(
+        parsed.messages.some(
+          (message: { role: string; content: string }) =>
+            message.role === "tool" && message.content.includes("Tool input.target must match exactly one schema"),
+        ),
+      ).toBe(true);
       return { choices: [{ message: { content: "Complex schema rejected." } }] };
     });
     try {
@@ -2658,20 +3069,32 @@ describe("SupbotRuntime", () => {
     mock = await withMockModel(runtime, (body, call) => {
       if (call === 1) {
         return {
-          choices: [{
-            message: {
-              content: null,
-              tool_calls: [{
-                id: "call_mcp_complex_valid",
-                type: "function",
-                function: { name: `mcp__${complexServer.id}__complex`, arguments: JSON.stringify({ config: { mode: "safe", labels: ["x", "y"] }, target: "repo" }) }
-              }]
-            }
-          }]
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_mcp_complex_valid",
+                    type: "function",
+                    function: {
+                      name: `mcp__${complexServer.id}__complex`,
+                      arguments: JSON.stringify({ config: { mode: "safe", labels: ["x", "y"] }, target: "repo" }),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
         };
       }
       const parsed = JSON.parse(body);
-      expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes("complex:safe:repo"))).toBe(true);
+      expect(
+        parsed.messages.some(
+          (message: { role: string; content: string }) =>
+            message.role === "tool" && message.content.includes("complex:safe:repo"),
+        ),
+      ).toBe(true);
       return { choices: [{ message: { content: "Complex schema accepted." } }] };
     });
     try {
@@ -2688,7 +3111,7 @@ describe("SupbotRuntime", () => {
       name: "invalid schema",
       command: process.execPath,
       args: [invalidPath],
-      enabled: true
+      enabled: true,
     });
     expect(diagnostic.ok).toBe(true);
     expect(diagnostic.tools[0].schemaValid).toBe(false);
@@ -2698,7 +3121,7 @@ describe("SupbotRuntime", () => {
       name: "invalid schema",
       command: process.execPath,
       args: [invalidPath],
-      enabled: true
+      enabled: true,
     });
     await runtime.connectMcpServer(invalidServer.id);
     const invalidTool = runtime.snapshot().mcpTools.find((tool) => tool.serverId === invalidServer.id);
@@ -2707,20 +3130,29 @@ describe("SupbotRuntime", () => {
     mock = await withMockModel(runtime, (body, call) => {
       if (call === 1) {
         return {
-          choices: [{
-            message: {
-              content: null,
-              tool_calls: [{
-                id: "call_mcp_invalid_schema",
-                type: "function",
-                function: { name: `mcp__${invalidServer.id}__broken`, arguments: JSON.stringify({ value: "x" }) }
-              }]
-            }
-          }]
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_mcp_invalid_schema",
+                    type: "function",
+                    function: { name: `mcp__${invalidServer.id}__broken`, arguments: JSON.stringify({ value: "x" }) },
+                  },
+                ],
+              },
+            },
+          ],
         };
       }
       const parsed = JSON.parse(body);
-      expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes("MCP tool schema is invalid"))).toBe(true);
+      expect(
+        parsed.messages.some(
+          (message: { role: string; content: string }) =>
+            message.role === "tool" && message.content.includes("MCP tool schema is invalid"),
+        ),
+      ).toBe(true);
       return { choices: [{ message: { content: "Invalid schema handled." } }] };
     });
     try {
@@ -2742,7 +3174,7 @@ describe("SupbotRuntime", () => {
       command: process.execPath,
       args: [serverPath],
       requestTimeoutMs: 1500,
-      enabled: true
+      enabled: true,
     });
     await runtime.connectMcpServer(server.id);
     await runtime.addPermissionRule({ toolName: `mcp.${server.id}.*`, behavior: "allow" });
@@ -2755,19 +3187,28 @@ describe("SupbotRuntime", () => {
         expect(toolNames).toContain(aliasName);
         expect(toolNames).not.toContain(publicName);
         return {
-          choices: [{
-            message: {
-              content: null,
-              tool_calls: [{
-                id: "call_mcp_alias",
-                type: "function",
-                function: { name: aliasName, arguments: JSON.stringify({ message: "alias works" }) }
-              }]
-            }
-          }]
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_mcp_alias",
+                    type: "function",
+                    function: { name: aliasName, arguments: JSON.stringify({ message: "alias works" }) },
+                  },
+                ],
+              },
+            },
+          ],
         };
       }
-      expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes("alias works"))).toBe(true);
+      expect(
+        parsed.messages.some(
+          (message: { role: string; content: string }) =>
+            message.role === "tool" && message.content.includes("alias works"),
+        ),
+      ).toBe(true);
       return { choices: [{ message: { content: "Alias handled." } }] };
     });
     try {
@@ -2788,33 +3229,44 @@ describe("SupbotRuntime", () => {
       name: "schema tools",
       command: process.execPath,
       args: [serverPath],
-      enabled: true
+      enabled: true,
     });
     await runtime.connectMcpServer(server.id);
     const mock = await withMockModel(runtime, (body, call) => {
       if (call === 1) {
         return {
-          choices: [{
-            message: {
-              content: null,
-              tool_calls: [{
-                id: "call_mcp_invalid",
-                type: "function",
-                function: { name: `mcp__${server.id}__echo`, arguments: JSON.stringify({ message: 42 }) }
-              }]
-            }
-          }]
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_mcp_invalid",
+                    type: "function",
+                    function: { name: `mcp__${server.id}__echo`, arguments: JSON.stringify({ message: 42 }) },
+                  },
+                ],
+              },
+            },
+          ],
         };
       }
       const parsed = JSON.parse(body);
-      expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes("message must be string"))).toBe(true);
+      expect(
+        parsed.messages.some(
+          (message: { role: string; content: string }) =>
+            message.role === "tool" && message.content.includes("message must be string"),
+        ),
+      ).toBe(true);
       return { choices: [{ message: { content: "MCP invalid args handled." } }] };
     });
     try {
       const result = await runtime.sendPrompt({ prompt: "call invalid mcp args" });
       await waitForJob(runtime, result.job.id);
       expect(runtime.snapshot().pendingToolPermissions).toHaveLength(0);
-      expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe("failed");
+      expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe(
+        "failed",
+      );
     } finally {
       await mock.close();
     }
@@ -2827,26 +3279,38 @@ describe("SupbotRuntime", () => {
       name: "approval tools",
       command: process.execPath,
       args: [serverPath],
-      enabled: true
+      enabled: true,
     });
     await runtime.connectMcpServer(server.id);
     const mock = await withMockModel(runtime, (body, call) => {
       if (call === 1) {
         return {
-          choices: [{
-            message: {
-              content: null,
-              tool_calls: [{
-                id: "call_mcp_echo",
-                type: "function",
-                function: { name: `mcp__${server.id}__echo`, arguments: JSON.stringify({ message: "approved mcp" }) }
-              }]
-            }
-          }]
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_mcp_echo",
+                    type: "function",
+                    function: {
+                      name: `mcp__${server.id}__echo`,
+                      arguments: JSON.stringify({ message: "approved mcp" }),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
         };
       }
       const parsed = JSON.parse(body);
-      expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes("approved mcp"))).toBe(true);
+      expect(
+        parsed.messages.some(
+          (message: { role: string; content: string }) =>
+            message.role === "tool" && message.content.includes("approved mcp"),
+        ),
+      ).toBe(true);
       return { choices: [{ message: { content: "MCP approved." } }] };
     });
     try {
@@ -2855,7 +3319,9 @@ describe("SupbotRuntime", () => {
       expect(runtime.snapshot().pendingToolPermissions[0].toolName).toBe(`mcp.${server.id}.echo`);
       await runtime.approveToolPermission(runtime.snapshot().pendingToolPermissions[0].id);
       await waitForJob(runtime, result.job.id);
-      expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe("completed");
+      expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe(
+        "completed",
+      );
     } finally {
       await mock.close();
     }
@@ -2868,40 +3334,54 @@ describe("SupbotRuntime", () => {
       name: "wildcard tools",
       command: process.execPath,
       args: [serverPath],
-      enabled: true
+      enabled: true,
     });
     await runtime.connectMcpServer(server.id);
     await runtime.addPermissionRule({ toolName: `mcp.${server.id}.*`, behavior: "deny" });
     const mock = await withMockModel(runtime, (body, call) => {
       if (call === 1) {
         return {
-          choices: [{
-            message: {
-              content: null,
-              tool_calls: [{
-                id: "call_mcp_denied",
-                type: "function",
-                function: { name: `mcp__${server.id}__echo`, arguments: JSON.stringify({ message: "blocked" }) }
-              }]
-            }
-          }]
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_mcp_denied",
+                    type: "function",
+                    function: { name: `mcp__${server.id}__echo`, arguments: JSON.stringify({ message: "blocked" }) },
+                  },
+                ],
+              },
+            },
+          ],
         };
       }
       const parsed = JSON.parse(body);
-      expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes(`Permission rule denied mcp.${server.id}.echo`))).toBe(true);
+      expect(
+        parsed.messages.some(
+          (message: { role: string; content: string }) =>
+            message.role === "tool" && message.content.includes(`Permission rule denied mcp.${server.id}.echo`),
+        ),
+      ).toBe(true);
       return { choices: [{ message: { content: "MCP denied." } }] };
     });
     try {
       const result = await runtime.sendPrompt({ prompt: "deny mcp echo" });
       await waitForJob(runtime, result.job.id);
       expect(runtime.snapshot().pendingToolPermissions).toHaveLength(0);
-      expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe("denied");
+      expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe(
+        "denied",
+      );
     } finally {
       await mock.close();
     }
 
-    await expect(runtime.addMcpServer({ name: "bad mcp", command: "definitely-not-a-real-mcp-command", enabled: true })
-      .then((bad) => runtime.connectMcpServer(bad.id))).rejects.toThrow();
+    await expect(
+      runtime
+        .addMcpServer({ name: "bad mcp", command: "definitely-not-a-real-mcp-command", enabled: true })
+        .then((bad) => runtime.connectMcpServer(bad.id)),
+    ).rejects.toThrow();
     expect(runtime.snapshot().runtimeEvents.some((event) => event.kind === "mcp_server")).toBe(true);
   });
 
@@ -2913,7 +3393,7 @@ describe("SupbotRuntime", () => {
       command: process.execPath,
       args: [initPath],
       requestTimeoutMs: 1000,
-      enabled: true
+      enabled: true,
     });
     await expect(runtime.connectMcpServer(initServer.id)).rejects.toThrow("Initialize boom");
     expect(runtime.snapshot().mcpServers.find((server) => server.id === initServer.id)?.status.state).toBe("error");
@@ -2925,7 +3405,7 @@ describe("SupbotRuntime", () => {
       command: process.execPath,
       args: [listPath],
       requestTimeoutMs: 1000,
-      enabled: true
+      enabled: true,
     });
     await expect(runtime.connectMcpServer(listServer.id)).rejects.toThrow("Tools list boom");
     const listStatus = runtime.snapshot().mcpServers.find((server) => server.id === listServer.id)?.status;
@@ -2942,29 +3422,48 @@ describe("SupbotRuntime", () => {
       command: process.execPath,
       args: [callPath],
       requestTimeoutMs: 1000,
-      enabled: true
+      enabled: true,
     });
     await runtime.connectMcpServer(callServer.id);
     await runtime.addPermissionRule({ toolName: `mcp.${callServer.id}.*`, behavior: "allow" });
     let mock = await withMockModel(runtime, (body, call) => {
       if (call === 1) {
         return {
-          choices: [{
-            message: {
-              content: null,
-              tool_calls: [{
-                id: "call_mcp_failure",
-                type: "function",
-                function: { name: `mcp__${callServer.id}__echo`, arguments: JSON.stringify({ message: "boom" }) }
-              }]
-            }
-          }]
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_mcp_failure",
+                    type: "function",
+                    function: { name: `mcp__${callServer.id}__echo`, arguments: JSON.stringify({ message: "boom" }) },
+                  },
+                ],
+              },
+            },
+          ],
         };
       }
       const parsed = JSON.parse(body);
-      expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes("Call boom"))).toBe(true);
-      expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes("MCP code -32002"))).toBe(true);
-      expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes("bad-call"))).toBe(true);
+      expect(
+        parsed.messages.some(
+          (message: { role: string; content: string }) =>
+            message.role === "tool" && message.content.includes("Call boom"),
+        ),
+      ).toBe(true);
+      expect(
+        parsed.messages.some(
+          (message: { role: string; content: string }) =>
+            message.role === "tool" && message.content.includes("MCP code -32002"),
+        ),
+      ).toBe(true);
+      expect(
+        parsed.messages.some(
+          (message: { role: string; content: string }) =>
+            message.role === "tool" && message.content.includes("bad-call"),
+        ),
+      ).toBe(true);
       return { choices: [{ message: { content: "Call failure handled." } }] };
     });
     try {
@@ -2984,33 +3483,47 @@ describe("SupbotRuntime", () => {
       command: process.execPath,
       args: [timeoutPath],
       requestTimeoutMs: 1000,
-      enabled: true
+      enabled: true,
     });
     await runtime.connectMcpServer(timeoutServer.id);
     await runtime.addPermissionRule({ toolName: `mcp.${timeoutServer.id}.*`, behavior: "allow" });
     mock = await withMockModel(runtime, (body, call) => {
       if (call === 1) {
         return {
-          choices: [{
-            message: {
-              content: null,
-              tool_calls: [{
-                id: "call_mcp_timeout",
-                type: "function",
-                function: { name: `mcp__${timeoutServer.id}__echo`, arguments: JSON.stringify({ message: "slow" }) }
-              }]
-            }
-          }]
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_mcp_timeout",
+                    type: "function",
+                    function: {
+                      name: `mcp__${timeoutServer.id}__echo`,
+                      arguments: JSON.stringify({ message: "slow" }),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
         };
       }
       const parsed = JSON.parse(body);
-      expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes("timed out"))).toBe(true);
+      expect(
+        parsed.messages.some(
+          (message: { role: string; content: string }) =>
+            message.role === "tool" && message.content.includes("timed out"),
+        ),
+      ).toBe(true);
       return { choices: [{ message: { content: "Timeout handled." } }] };
     });
     try {
       const result = await runtime.sendPrompt({ prompt: "call hanging mcp" });
       await waitForJob(runtime, result.job.id);
-      expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe("failed");
+      expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe(
+        "failed",
+      );
     } finally {
       await mock.close();
     }
@@ -3021,27 +3534,36 @@ describe("SupbotRuntime", () => {
       command: process.execPath,
       args: [exitPath],
       requestTimeoutMs: 1000,
-      enabled: true
+      enabled: true,
     });
     await runtime.connectMcpServer(exitServer.id);
     await runtime.addPermissionRule({ toolName: `mcp.${exitServer.id}.*`, behavior: "allow" });
     mock = await withMockModel(runtime, (body, call) => {
       if (call === 1) {
         return {
-          choices: [{
-            message: {
-              content: null,
-              tool_calls: [{
-                id: "call_mcp_exit",
-                type: "function",
-                function: { name: `mcp__${exitServer.id}__echo`, arguments: JSON.stringify({ message: "exit" }) }
-              }]
-            }
-          }]
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_mcp_exit",
+                    type: "function",
+                    function: { name: `mcp__${exitServer.id}__echo`, arguments: JSON.stringify({ message: "exit" }) },
+                  },
+                ],
+              },
+            },
+          ],
         };
       }
       const parsed = JSON.parse(body);
-      expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes("MCP server exited"))).toBe(true);
+      expect(
+        parsed.messages.some(
+          (message: { role: string; content: string }) =>
+            message.role === "tool" && message.content.includes("MCP server exited"),
+        ),
+      ).toBe(true);
       return { choices: [{ message: { content: "Exit handled." } }] };
     });
     try {
@@ -3049,7 +3571,9 @@ describe("SupbotRuntime", () => {
       await waitForJob(runtime, result.job.id);
       const snapshot = runtime.snapshot();
       expect(snapshot.agentLoopTraces.find((item) => item.jobId === result.job.id)?.toolCalls[0].status).toBe("failed");
-      expect(snapshot.mcpServers.find((server) => server.id === exitServer.id)?.status.lastExitReason).toContain("code 7");
+      expect(snapshot.mcpServers.find((server) => server.id === exitServer.id)?.status.lastExitReason).toContain(
+        "code 7",
+      );
     } finally {
       await mock.close();
     }
@@ -3062,7 +3586,7 @@ describe("SupbotRuntime", () => {
       name: "notification tools",
       command: process.execPath,
       args: [notificationPath],
-      enabled: true
+      enabled: true,
     });
     await runtime.connectMcpServer(notificationServer.id);
     const logs = await runtime.getMcpLogs(notificationServer.id);
@@ -3074,29 +3598,51 @@ describe("SupbotRuntime", () => {
       name: "rich tools",
       command: process.execPath,
       args: [richPath],
-      enabled: true
+      enabled: true,
     });
     await runtime.connectMcpServer(richServer.id);
     await runtime.addPermissionRule({ toolName: `mcp.${richServer.id}.*`, behavior: "allow" });
     const mock = await withMockModel(runtime, (body, call) => {
       if (call === 1) {
         return {
-          choices: [{
-            message: {
-              content: null,
-              tool_calls: [{
-                id: "call_mcp_rich",
-                type: "function",
-                function: { name: `mcp__${richServer.id}__rich`, arguments: JSON.stringify({ message: "payload" }) }
-              }]
-            }
-          }]
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_mcp_rich",
+                    type: "function",
+                    function: {
+                      name: `mcp__${richServer.id}__rich`,
+                      arguments: JSON.stringify({ message: "payload" }),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
         };
       }
       const parsed = JSON.parse(body);
-      expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes("rich:payload"))).toBe(true);
-      expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes("[image image/png"))).toBe(true);
-      expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes("resource text"))).toBe(true);
+      expect(
+        parsed.messages.some(
+          (message: { role: string; content: string }) =>
+            message.role === "tool" && message.content.includes("rich:payload"),
+        ),
+      ).toBe(true);
+      expect(
+        parsed.messages.some(
+          (message: { role: string; content: string }) =>
+            message.role === "tool" && message.content.includes("[image image/png"),
+        ),
+      ).toBe(true);
+      expect(
+        parsed.messages.some(
+          (message: { role: string; content: string }) =>
+            message.role === "tool" && message.content.includes("resource text"),
+        ),
+      ).toBe(true);
       return { choices: [{ message: { content: "Rich result handled." } }] };
     });
     try {
@@ -3107,11 +3653,15 @@ describe("SupbotRuntime", () => {
       expect(record?.outputParts?.map((part) => part.type)).toEqual(["text", "image", "resource", "custom"]);
       expect(record?.outputParts?.find((part) => part.type === "image")?.mimeType).toBe("image/png");
       expect(record?.outputTruncated).toBe(false);
-      const snapshotConversation = runtime.snapshot().conversations.find((conversation) => conversation.id === result.conversation.id);
+      const snapshotConversation = runtime
+        .snapshot()
+        .conversations.find((conversation) => conversation.id === result.conversation.id);
       const messageBlock = snapshotConversation?.messages
         .find((message) => message.role === "assistant")
         ?.blocks?.find((block) => block.type === "tool_result");
-      expect(messageBlock && messageBlock.type === "tool_result" ? messageBlock.outputParts?.map((part) => part.type) : []).toContain("resource");
+      expect(
+        messageBlock && messageBlock.type === "tool_result" ? messageBlock.outputParts?.map((part) => part.type) : [],
+      ).toContain("resource");
     } finally {
       await mock.close();
     }
@@ -3123,17 +3673,19 @@ describe("SupbotRuntime", () => {
     const storage = new JsonFileStorage(dir);
     const state = await storage.load();
     const now = new Date().toISOString();
-    state.mcpServers = [{
-      id: "bad-auto",
-      name: "bad auto",
-      command: "definitely-not-a-real-mcp-command",
-      args: [],
-      requestTimeoutMs: 1000,
-      enabled: true,
-      autoConnect: true,
-      createdAt: now,
-      updatedAt: now
-    }];
+    state.mcpServers = [
+      {
+        id: "bad-auto",
+        name: "bad auto",
+        command: "definitely-not-a-real-mcp-command",
+        args: [],
+        requestTimeoutMs: 1000,
+        enabled: true,
+        autoConnect: true,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
     await storage.save(state);
     const runtime = new SupbotRuntime(storage);
     await runtime.init();
@@ -3155,7 +3707,9 @@ describe("SupbotRuntime", () => {
     const boundary = await runtime.compactConversation(result.conversation.id);
     const snapshot = runtime.snapshot();
     expect(snapshot.compactBoundaries.some((item) => item.id === boundary.id)).toBe(true);
-    expect(snapshot.conversations.find((item) => item.id === result.conversation.id)?.messages.at(-1)?.blocks?.[0]?.type).toBe("compact_summary");
+    expect(
+      snapshot.conversations.find((item) => item.id === result.conversation.id)?.messages.at(-1)?.blocks?.[0]?.type,
+    ).toBe("compact_summary");
     expect(snapshot.runtimeEvents.some((event) => event.kind === "query_start")).toBe(true);
 
     const transcript = await runtime.loadTranscript(result.conversation.id);
@@ -3175,7 +3729,7 @@ describe("SupbotRuntime", () => {
       enabled: true,
       host: "127.0.0.1",
       port: 0,
-      token
+      token,
     });
     expect(config.enabled).toBe(true);
     config = await runtime.updateRemoteBridgeConfig({ host: "0.0.0.0" });
@@ -3187,10 +3741,10 @@ describe("SupbotRuntime", () => {
     const bridgeUrl = `http://127.0.0.1:${config.port}`;
 
     const snapshotResponse = await fetch(`${bridgeUrl}/snapshot`, {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: { Authorization: `Bearer ${token}` },
     });
     expect(snapshotResponse.status).toBe(200);
-    const remoteSnapshot = await snapshotResponse.json() as { remoteBridge: { config: { enabled: boolean } } };
+    const remoteSnapshot = (await snapshotResponse.json()) as { remoteBridge: { config: { enabled: boolean } } };
     expect(remoteSnapshot.remoteBridge.config.enabled).toBe(true);
 
     const unauthorized = await fetch(`${bridgeUrl}/snapshot`);
@@ -3199,45 +3753,59 @@ describe("SupbotRuntime", () => {
     const invalidJson = await fetch(`${bridgeUrl}/prompt`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: "{"
+      body: "{",
     });
     expect(invalidJson.status).toBe(400);
 
     const oversizedBody = await fetch(`${bridgeUrl}/prompt`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: "x".repeat(70 * 1024) })
+      body: JSON.stringify({ prompt: "x".repeat(70 * 1024) }),
     });
     expect(oversizedBody.status).toBe(413);
 
     const slashResponse = await fetch(`${bridgeUrl}/prompt`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: "/write remote.txt\nblocked" })
+      body: JSON.stringify({ prompt: "/write remote.txt\nblocked" }),
     });
     expect(slashResponse.status).toBe(200);
-    const slashSent = await slashResponse.json() as { job: { id: string } };
+    const slashSent = (await slashResponse.json()) as { job: { id: string } };
     await waitForJob(runtime, slashSent.job.id);
-    expect(runtime.snapshot().agentLoopTraces.find((trace) => trace.jobId === slashSent.job.id)?.toolCalls[0].status).toBe("denied");
+    expect(
+      runtime.snapshot().agentLoopTraces.find((trace) => trace.jobId === slashSent.job.id)?.toolCalls[0].status,
+    ).toBe("denied");
 
     await runtime.addPermissionRule({ toolName: "WriteFile", behavior: "allow" });
     const mock = await withMockModel(runtime, (body, call) => {
       if (call === 1) {
         return {
-          choices: [{
-            message: {
-              content: null,
-              tool_calls: [{
-                id: "call_remote_write",
-                type: "function",
-                function: { name: "WriteFile", arguments: JSON.stringify({ path: "remote.txt", content: "blocked" }) }
-              }]
-            }
-          }]
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_remote_write",
+                    type: "function",
+                    function: {
+                      name: "WriteFile",
+                      arguments: JSON.stringify({ path: "remote.txt", content: "blocked" }),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
         };
       }
       const parsed = JSON.parse(body);
-      expect(parsed.messages.some((message: { role: string; content: string }) => message.role === "tool" && message.content.includes("read-only"))).toBe(true);
+      expect(
+        parsed.messages.some(
+          (message: { role: string; content: string }) =>
+            message.role === "tool" && message.content.includes("read-only"),
+        ),
+      ).toBe(true);
       return { choices: [{ message: { content: "Remote write blocked." } }] };
     });
     try {
@@ -3253,15 +3821,17 @@ describe("SupbotRuntime", () => {
           "x-organization-id": "dev-org",
           "x-department-id": "dev-dept",
           "x-user-id": "dev-user",
-          "x-role-ids": "admin,user"
+          "x-role-ids": "admin,user",
         },
-        body: JSON.stringify({ prompt: "write remotely" })
+        body: JSON.stringify({ prompt: "write remotely" }),
       });
       expect(promptResponse.status).toBe(200);
-      const sent = await promptResponse.json() as { job: { id: string } };
+      const sent = (await promptResponse.json()) as { job: { id: string } };
       await waitForJob(runtime, sent.job.id);
       expect(runtime.snapshot().jobs.find((job) => job.id === sent.job.id)?.workspaceMode).toBe("readOnly");
-      expect(runtime.snapshot().agentLoopTraces.find((trace) => trace.jobId === sent.job.id)?.toolCalls[0].status).toBe("denied");
+      expect(runtime.snapshot().agentLoopTraces.find((trace) => trace.jobId === sent.job.id)?.toolCalls[0].status).toBe(
+        "denied",
+      );
       expect(runtime.snapshot().remoteBridge.audit.length).toBeGreaterThan(0);
       const audit = runtime.snapshot().remoteBridge.audit.find((record) => record.peerId === "peer-supbot-1");
       expect(audit?.requestId).toBe("req-remote-1");
@@ -3275,7 +3845,12 @@ describe("SupbotRuntime", () => {
 
   test("exposes Servstation as a permission-gated outbound A2A tool", async () => {
     const runtime = await createRuntime();
-    const servstationCalls: Array<{ path: string; method: string; headers: Record<string, string | string[] | undefined>; body: Record<string, unknown> }> = [];
+    const servstationCalls: Array<{
+      path: string;
+      method: string;
+      headers: Record<string, string | string[] | undefined>;
+      body: Record<string, unknown>;
+    }> = [];
     const servstation = createServer((request, response) => {
       let body = "";
       request.on("data", (chunk) => {
@@ -3288,11 +3863,13 @@ describe("SupbotRuntime", () => {
           path: `${url.pathname}${url.search}`,
           method: request.method || "GET",
           headers: request.headers,
-          body: body ? JSON.parse(body) as Record<string, unknown> : {}
+          body: body ? (JSON.parse(body) as Record<string, unknown>) : {},
         });
         response.setHeader("Content-Type", "application/json");
         if (request.method === "POST" && path === "/api/v1/agent/connect") {
-          response.end(JSON.stringify({ agentInstanceId: "agent-serv-1", connectionMode: "reused", sessionToken: "redacted" }));
+          response.end(
+            JSON.stringify({ agentInstanceId: "agent-serv-1", connectionMode: "reused", sessionToken: "redacted" }),
+          );
           return;
         }
         if (request.method === "POST" && path === "/api/v1/agent/agent-serv-1/conversations") {
@@ -3300,28 +3877,39 @@ describe("SupbotRuntime", () => {
           return;
         }
         if (request.method === "POST" && path === "/api/v1/agent/agent-serv-1/jobs") {
-          response.end(JSON.stringify({ id: "job-serv-1", agentInstanceId: "agent-serv-1", conversationId: "conv-serv-1", status: "queued" }));
+          response.end(
+            JSON.stringify({
+              id: "job-serv-1",
+              agentInstanceId: "agent-serv-1",
+              conversationId: "conv-serv-1",
+              status: "queued",
+            }),
+          );
           return;
         }
         if (request.method === "GET" && path === "/api/v1/agent/agent-serv-1/jobs") {
           expect(url.searchParams.get("conversationId")).toBe("conv-serv-1");
-          response.end(JSON.stringify({
-            jobs: [{
-              id: "job-serv-1",
-              agentInstanceId: "agent-serv-1",
-              conversationId: "conv-serv-1",
-              status: "completed",
-              result: {
-                prompt: "remote system prompt should not be returned to Supbot",
-                assistantText: "Remote staff-agent done.",
-                assistantMessages: ["Remote staff-agent done."],
-                statusEvents: ["turn_1_complete"],
-                model: "mock-remote",
-                usage: { inputTokens: 10, outputTokens: 4 }
-              },
-              progress: { phase: "turn_complete" }
-            }]
-          }));
+          response.end(
+            JSON.stringify({
+              jobs: [
+                {
+                  id: "job-serv-1",
+                  agentInstanceId: "agent-serv-1",
+                  conversationId: "conv-serv-1",
+                  status: "completed",
+                  result: {
+                    prompt: "remote system prompt should not be returned to Supbot",
+                    assistantText: "Remote staff-agent done.",
+                    assistantMessages: ["Remote staff-agent done."],
+                    statusEvents: ["turn_1_complete"],
+                    model: "mock-remote",
+                    usage: { inputTokens: 10, outputTokens: 4 },
+                  },
+                  progress: { phase: "turn_complete" },
+                },
+              ],
+            }),
+          );
           return;
         }
         response.statusCode = 404;
@@ -3338,25 +3926,34 @@ describe("SupbotRuntime", () => {
       userId: "user-A",
       roleIds: ["operator", "user"],
       source: "servstation",
-      servstationUrl
+      servstationUrl,
     });
     await runtime.updateServstationA2AConfig({ enabled: true, baseUrl: servstationUrl, authMode: "identityHeaders" });
     await runtime.addPermissionRule({ toolName: "ServstationPrompt", behavior: "allow" });
     const mock = await withMockModel(runtime, (body, call) => {
       if (call === 1) {
         const parsed = JSON.parse(body);
-        expect(parsed.tools.some((tool: { function: { name: string } }) => tool.function.name === "servstation_prompt")).toBe(true);
+        expect(
+          parsed.tools.some((tool: { function: { name: string } }) => tool.function.name === "servstation_prompt"),
+        ).toBe(true);
         return {
-          choices: [{
-            message: {
-              content: null,
-              tool_calls: [{
-                id: "call_servstation_prompt",
-                type: "function",
-                function: { name: "servstation_prompt", arguments: JSON.stringify({ prompt: "coordinate remote planning" }) }
-              }]
-            }
-          }]
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_servstation_prompt",
+                    type: "function",
+                    function: {
+                      name: "servstation_prompt",
+                      arguments: JSON.stringify({ prompt: "coordinate remote planning" }),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
         };
       }
       const parsed = JSON.parse(body);
@@ -3371,9 +3968,9 @@ describe("SupbotRuntime", () => {
         result: {
           assistantText: "Remote staff-agent done.",
           model: "mock-remote",
-          usage: { inputTokens: 10, outputTokens: 4 }
+          usage: { inputTokens: 10, outputTokens: 4 },
         },
-        progress: { phase: "turn_complete" }
+        progress: { phase: "turn_complete" },
       });
       return { choices: [{ message: { content: "Servstation result: Remote staff-agent done." } }] };
     });
@@ -3384,7 +3981,7 @@ describe("SupbotRuntime", () => {
         "POST /api/v1/agent/connect",
         "POST /api/v1/agent/agent-serv-1/conversations",
         "POST /api/v1/agent/agent-serv-1/jobs",
-        "GET /api/v1/agent/agent-serv-1/jobs?conversationId=conv-serv-1"
+        "GET /api/v1/agent/agent-serv-1/jobs?conversationId=conv-serv-1",
       ]);
       expect(servstationCalls[0].headers["x-tenant-id"]).toBe("tenant-A");
       expect(servstationCalls[0].headers["x-organization-id"]).toBe("org-A");
@@ -3397,7 +3994,7 @@ describe("SupbotRuntime", () => {
       expect(trace?.toolCalls[0].status).toBe("completed");
     } finally {
       await mock.close();
-      await new Promise<void>((resolve, reject) => servstation.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => servstation.close((error) => (error ? reject(error) : resolve())));
     }
   });
 
@@ -3410,48 +4007,55 @@ describe("SupbotRuntime", () => {
       prompt: "Summarize the project",
       scheduleKind: "daily",
       runAt: "2026-07-16T01:00:00.000Z",
-      enabled: true
+      enabled: true,
     });
     const snapshot = runtime.snapshot();
-    const workspace = buildReverseWorkspaceSnapshot({
-      ...snapshot,
-      autopilotRuns: [{
-        id: "run-safe-1",
-        projectId: project.id,
-        projectRoot: "C:\\secret\\project",
-        title: "Safe run",
-        goal: "Verify projection",
-        status: "paused",
-        writePolicy: {
-          mode: "projectSandbox",
-          allowedWriteRoots: ["C:\\secret\\project"],
-          allowNetwork: false,
-          allowMcp: false,
-          maxRuntimeMinutes: 10,
-          maxTasks: 5,
-          maxRetries: 1
-        },
-        dataSources: [],
-        taskIds: [],
-        artifactIds: ["artifact-safe-1"],
-        checkpointIds: [],
-        evidence: ["C:\\secret\\project\\evidence.txt"],
-        createdAt: "2026-07-15T00:00:00.000Z",
-        updatedAt: "2026-07-15T00:00:00.000Z"
-      }],
-      dataArtifacts: [{
-        id: "artifact-safe-1",
-        projectId: project.id,
-        runId: "run-safe-1",
-        kind: "report",
-        stage: "report",
-        name: "summary.md",
-        path: "C:\\secret\\project\\summary.md",
-        source: "C:\\secret\\project\\input.txt",
-        size: 42,
-        createdAt: "2026-07-15T00:00:00.000Z"
-      }]
-    }, "2026-07-15T00:00:01.000Z");
+    const workspace = buildReverseWorkspaceSnapshot(
+      {
+        ...snapshot,
+        autopilotRuns: [
+          {
+            id: "run-safe-1",
+            projectId: project.id,
+            projectRoot: "C:\\secret\\project",
+            title: "Safe run",
+            goal: "Verify projection",
+            status: "paused",
+            writePolicy: {
+              mode: "projectSandbox",
+              allowedWriteRoots: ["C:\\secret\\project"],
+              allowNetwork: false,
+              allowMcp: false,
+              maxRuntimeMinutes: 10,
+              maxTasks: 5,
+              maxRetries: 1,
+            },
+            dataSources: [],
+            taskIds: [],
+            artifactIds: ["artifact-safe-1"],
+            checkpointIds: [],
+            evidence: ["C:\\secret\\project\\evidence.txt"],
+            createdAt: "2026-07-15T00:00:00.000Z",
+            updatedAt: "2026-07-15T00:00:00.000Z",
+          },
+        ],
+        dataArtifacts: [
+          {
+            id: "artifact-safe-1",
+            projectId: project.id,
+            runId: "run-safe-1",
+            kind: "report",
+            stage: "report",
+            name: "summary.md",
+            path: "C:\\secret\\project\\summary.md",
+            source: "C:\\secret\\project\\input.txt",
+            size: 42,
+            createdAt: "2026-07-15T00:00:00.000Z",
+          },
+        ],
+      },
+      "2026-07-15T00:00:01.000Z",
+    );
 
     expect(workspace.scheduledJobs).toHaveLength(1);
     expect(workspace.autopilotRuns[0]).not.toHaveProperty("projectRoot");
@@ -3492,36 +4096,47 @@ describe("SupbotRuntime", () => {
           response.end(JSON.stringify({ agentInstanceId: "agent-reverse-1" }));
           return;
         }
-        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-reverse-1/a2a-peers/reverse-connections") {
+        if (
+          request.method === "POST" &&
+          url.pathname === "/api/v1/agent/agent-reverse-1/a2a-peers/reverse-connections"
+        ) {
           expect(request.headers["x-tenant-id"]).toBe("tenant-rev");
           const parsed = JSON.parse(body) as Record<string, unknown>;
           expect(parsed.capabilities).toEqual([
             "prompt.readOnly",
             "conversation.projectAware",
             "schedule.manage",
-            "autopilot.manage"
+            "autopilot.manage",
           ]);
           expect(parsed.displayName).toBe("HBClient Desktop");
           expect(parsed.hbclientVersion).toBe("0.1.2");
-          response.end(JSON.stringify({
-            peer: { id: "peer-reverse-1" },
-            streamUrl: "/api/v1/agent/agent-reverse-1/a2a-peers/peer-reverse-1/events",
-            heartbeatMs: 500
-          }));
+          response.end(
+            JSON.stringify({
+              peer: { id: "peer-reverse-1" },
+              streamUrl: "/api/v1/agent/agent-reverse-1/a2a-peers/peer-reverse-1/events",
+              heartbeatMs: 500,
+            }),
+          );
           return;
         }
-        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-reverse-1/a2a-peers/peer-reverse-1/events") {
+        if (
+          request.method === "GET" &&
+          url.pathname === "/api/v1/agent/agent-reverse-1/a2a-peers/peer-reverse-1/events"
+        ) {
           response.writeHead(200, {
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache",
-            Connection: "keep-alive"
+            Connection: "keep-alive",
           });
           eventStream = response;
           closeStream = () => response.end();
           response.write(`event: heartbeat\ndata: {"ok":true}\n\n`);
           return;
         }
-        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-reverse-1/a2a-peers/peer-reverse-1/heartbeat") {
+        if (
+          request.method === "POST" &&
+          url.pathname === "/api/v1/agent/agent-reverse-1/a2a-peers/peer-reverse-1/heartbeat"
+        ) {
           heartbeatPosts += 1;
           response.end(JSON.stringify({ status: "online" }));
           return;
@@ -3561,94 +4176,105 @@ describe("SupbotRuntime", () => {
       userId: "user-rev",
       roleIds: ["user"],
       source: "servstation",
-      servstationUrl: baseUrl
+      servstationUrl: baseUrl,
     });
     await runtime.updateServstationA2AConfig({ enabled: true, baseUrl, authMode: "identityHeaders" });
     const reverseProject = await runtime.createProjectFromName({ name: "Reverse Project" });
     const mock = await withMockModel(runtime, () => ({
-      choices: [{ message: { content: "Local Supbot reverse result." } }]
+      choices: [{ message: { content: "Local Supbot reverse result." } }],
     }));
     try {
       await runtime.connectServstationReverseBridge();
-      await waitForCondition("reverse stream connected", () => runtime.snapshot().servstationA2A.config.reverse?.status === "connected" && Boolean(eventStream));
+      await waitForCondition(
+        "reverse stream connected",
+        () => runtime.snapshot().servstationA2A.config.reverse?.status === "connected" && Boolean(eventStream),
+      );
       await waitForCondition("reverse heartbeat posted", () => heartbeatPosts > 0);
-      eventStream!.write([
-        "id: inv-reverse-1",
-        "event: invoke_prompt",
-        `data: ${JSON.stringify({
-          invocationId: "inv-reverse-1",
-          requestId: "req-reverse-1",
-          prompt: "Run a read-only local Supbot task",
-          projectId: reverseProject.id,
-          timeoutMs: 5_000,
-          userContext: {
-            tenantId: "tenant-rev",
-            organizationId: "org-rev",
-            departmentId: "dept-rev",
-            userId: "user-rev",
-            roleIds: ["user"],
-            source: "servstation"
-          },
-          agentInstanceId: "agent-reverse-1"
-        })}`,
-        "",
-        ""
-      ].join("\n"));
+      eventStream!.write(
+        [
+          "id: inv-reverse-1",
+          "event: invoke_prompt",
+          `data: ${JSON.stringify({
+            invocationId: "inv-reverse-1",
+            requestId: "req-reverse-1",
+            prompt: "Run a read-only local Supbot task",
+            projectId: reverseProject.id,
+            timeoutMs: 5_000,
+            userContext: {
+              tenantId: "tenant-rev",
+              organizationId: "org-rev",
+              departmentId: "dept-rev",
+              userId: "user-rev",
+              roleIds: ["user"],
+              source: "servstation",
+            },
+            agentInstanceId: "agent-reverse-1",
+          })}`,
+          "",
+          "",
+        ].join("\n"),
+      );
       await resultReceived;
       expect(resultBody).toMatchObject({
         status: "completed",
-        assistantText: "Local Supbot reverse result."
+        assistantText: "Local Supbot reverse result.",
       });
       expect(resultBody?.result).toMatchObject({
         assistantText: "Local Supbot reverse result.",
-        workspaceMode: "readOnly"
+        workspaceMode: "readOnly",
       });
       const reverseJob = runtime.snapshot().jobs.find((job) => job.prompt === "Run a read-only local Supbot task");
       expect(reverseJob?.workspaceMode).toBe("readOnly");
       expect(reverseJob?.projectId).toBe(reverseProject.id);
-      const reverseConversation = runtime.snapshot().conversations.find((conversation) => conversation.id === reverseJob?.conversationId);
+      const reverseConversation = runtime
+        .snapshot()
+        .conversations.find((conversation) => conversation.id === reverseJob?.conversationId);
       expect(reverseConversation?.projectId).toBe(reverseProject.id);
       const conversationId = reverseConversation?.id;
       expect(conversationId).toBeTruthy();
-      eventStream!.write([
-        "id: snapshot-req-1",
-        "event: snapshot_request",
-        `data: ${JSON.stringify({ requestId: "snapshot-req-1" })}`,
-        "",
-        ""
-      ].join("\n"));
+      eventStream!.write(
+        [
+          "id: snapshot-req-1",
+          "event: snapshot_request",
+          `data: ${JSON.stringify({ requestId: "snapshot-req-1" })}`,
+          "",
+          "",
+        ].join("\n"),
+      );
       await snapshotReceived;
-      expect(requestResults["/api/v1/agent/agent-reverse-1/a2a-peers/peer-reverse-1/requests/snapshot-req-1/result"]).toMatchObject({
+      expect(
+        requestResults["/api/v1/agent/agent-reverse-1/a2a-peers/peer-reverse-1/requests/snapshot-req-1/result"],
+      ).toMatchObject({
         status: "completed",
         result: {
           conversations: expect.any(Array),
-          jobs: expect.any(Array)
-        }
+          jobs: expect.any(Array),
+        },
       });
-      eventStream!.write([
-        "id: transcript-req-1",
-        "event: transcript_request",
-        `data: ${JSON.stringify({ requestId: "transcript-req-1", conversationId })}`,
-        "",
-        ""
-      ].join("\n"));
+      eventStream!.write(
+        [
+          "id: transcript-req-1",
+          "event: transcript_request",
+          `data: ${JSON.stringify({ requestId: "transcript-req-1", conversationId })}`,
+          "",
+          "",
+        ].join("\n"),
+      );
       await transcriptReceived;
-      expect(requestResults["/api/v1/agent/agent-reverse-1/a2a-peers/peer-reverse-1/requests/transcript-req-1/result"]).toMatchObject({
+      expect(
+        requestResults["/api/v1/agent/agent-reverse-1/a2a-peers/peer-reverse-1/requests/transcript-req-1/result"],
+      ).toMatchObject({
         status: "completed",
         result: {
           conversationId,
-          activeMessages: expect.any(Array)
-        }
+          activeMessages: expect.any(Array),
+        },
       });
 
       const sendWorkspaceEvent = async (requestId: string, event: string, data: Record<string, unknown>) => {
-        eventStream!.write([
-          `id: ${requestId}`,
-          `event: ${event}`,
-          `data: ${JSON.stringify({ requestId, ...data })}`,
-          "",
-          ""
-        ].join("\n"));
+        eventStream!.write(
+          [`id: ${requestId}`, `event: ${event}`, `data: ${JSON.stringify({ requestId, ...data })}`, "", ""].join("\n"),
+        );
         const path = `/api/v1/agent/agent-reverse-1/a2a-peers/peer-reverse-1/requests/${requestId}/result`;
         await waitForCondition(`${event} result`, () => Boolean(requestResults[path]));
         return requestResults[path];
@@ -3660,8 +4286,8 @@ describe("SupbotRuntime", () => {
         result: {
           scheduledJobs: [],
           autopilotRuns: [],
-          fetchedAt: expect.any(String)
-        }
+          fetchedAt: expect.any(String),
+        },
       });
       expect(workspaceResult.result).not.toHaveProperty("memory");
 
@@ -3673,53 +4299,53 @@ describe("SupbotRuntime", () => {
           prompt: "Run from client-web",
           scheduleKind: "daily",
           runAt: "2026-07-16T01:00:00.000Z",
-          enabled: true
-        }
+          enabled: true,
+        },
       });
       expect(scheduleCreated).toMatchObject({ status: "completed", result: { title: "Remote plan", enabled: true } });
       const scheduleId = (scheduleCreated.result as { id: string }).id;
 
       const scheduleUpdated = await sendWorkspaceEvent("workspace-action-2", "workspace_action", {
         action: "schedule.update",
-        payload: { id: scheduleId, enabled: false }
+        payload: { id: scheduleId, enabled: false },
       });
       expect(scheduleUpdated).toMatchObject({ status: "completed", result: { id: scheduleId, enabled: false } });
 
       await sendWorkspaceEvent("workspace-action-3", "workspace_action", {
         action: "schedule.delete",
-        payload: { id: scheduleId }
+        payload: { id: scheduleId },
       });
       expect(runtime.snapshot().scheduledJobs).toHaveLength(0);
 
       const autopilotStarted = await sendWorkspaceEvent("workspace-action-4", "workspace_action", {
         action: "autopilot.start",
-        payload: { projectId: reverseProject.id, title: "Remote run", goal: "Return a short verification" }
+        payload: { projectId: reverseProject.id, title: "Remote run", goal: "Return a short verification" },
       });
       expect(autopilotStarted).toMatchObject({ status: "completed", result: { title: "Remote run" } });
       const runId = (autopilotStarted.result as { id: string }).id;
 
       const autopilotPaused = await sendWorkspaceEvent("workspace-action-5", "workspace_action", {
         action: "autopilot.pause",
-        payload: { id: runId }
+        payload: { id: runId },
       });
       expect(autopilotPaused).toMatchObject({ status: "completed", result: { id: runId, status: "paused" } });
 
       const autopilotResumed = await sendWorkspaceEvent("workspace-action-6", "workspace_action", {
         action: "autopilot.resume",
-        payload: { id: runId }
+        payload: { id: runId },
       });
       expect(autopilotResumed).toMatchObject({ status: "completed", result: { id: runId } });
 
       const autopilotCanceled = await sendWorkspaceEvent("workspace-action-7", "workspace_action", {
         action: "autopilot.cancel",
-        payload: { id: runId }
+        payload: { id: runId },
       });
       expect(autopilotCanceled).toMatchObject({ status: "completed", result: { id: runId, status: "canceled" } });
     } finally {
       closeStream?.();
       await runtime.disconnectServstationReverseBridge();
       await mock.close();
-      await new Promise<void>((resolve, reject) => servstation.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => servstation.close((error) => (error ? reject(error) : resolve())));
     }
   }, 15_000);
 
@@ -3744,7 +4370,7 @@ describe("SupbotRuntime", () => {
       capabilities: ["prompt.readOnly"],
       status: "unknown",
       createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:00.000Z"
+      updatedAt: "2026-01-01T00:00:00.000Z",
     };
     const servstation = createServer((request, response) => {
       let body = "";
@@ -3758,7 +4384,10 @@ describe("SupbotRuntime", () => {
           response.end(JSON.stringify({ agentInstanceId: "agent-recover-1" }));
           return;
         }
-        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-recover-1/a2a-peers/reverse-connections") {
+        if (
+          request.method === "POST" &&
+          url.pathname === "/api/v1/agent/agent-recover-1/a2a-peers/reverse-connections"
+        ) {
           registerCalls += 1;
           expect(JSON.parse(body)).toMatchObject({ clientInstanceId: "hbclient-client-recover" });
           response.statusCode = 400;
@@ -3770,18 +4399,24 @@ describe("SupbotRuntime", () => {
           response.end(JSON.stringify({ peers: [peer] }));
           return;
         }
-        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-recover-1/a2a-peers/peer-recover-1/events") {
+        if (
+          request.method === "GET" &&
+          url.pathname === "/api/v1/agent/agent-recover-1/a2a-peers/peer-recover-1/events"
+        ) {
           response.writeHead(200, {
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache",
-            Connection: "keep-alive"
+            Connection: "keep-alive",
           });
           eventStream = response;
           closeStream = () => response.end();
           response.write(`event: heartbeat\ndata: {"ok":true}\n\n`);
           return;
         }
-        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-recover-1/a2a-peers/peer-recover-1/heartbeat") {
+        if (
+          request.method === "POST" &&
+          url.pathname === "/api/v1/agent/agent-recover-1/a2a-peers/peer-recover-1/heartbeat"
+        ) {
           heartbeatPosts += 1;
           response.end(JSON.stringify({ status: "online" }));
           return;
@@ -3800,17 +4435,20 @@ describe("SupbotRuntime", () => {
       userId: "user-recover",
       roleIds: ["user"],
       source: "servstation",
-      servstationUrl: baseUrl
+      servstationUrl: baseUrl,
     });
     await runtime.updateServstationA2AConfig({
       enabled: true,
       baseUrl,
       authMode: "identityHeaders",
-      reverseClientInstanceId: "hbclient-client-recover"
+      reverseClientInstanceId: "hbclient-client-recover",
     });
     try {
       await runtime.connectServstationReverseBridge();
-      await waitForCondition("recovered reverse stream connected", () => runtime.snapshot().servstationA2A.config.reverse?.status === "connected" && Boolean(eventStream));
+      await waitForCondition(
+        "recovered reverse stream connected",
+        () => runtime.snapshot().servstationA2A.config.reverse?.status === "connected" && Boolean(eventStream),
+      );
       await waitForCondition("recovered reverse heartbeat posted", () => heartbeatPosts > 0);
       expect(registerCalls).toBe(1);
       expect(peerListCalls).toBe(1);
@@ -3818,7 +4456,7 @@ describe("SupbotRuntime", () => {
     } finally {
       closeStream?.();
       await runtime.disconnectServstationReverseBridge();
-      await new Promise<void>((resolve, reject) => servstation.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => servstation.close((error) => (error ? reject(error) : resolve())));
     }
   });
 
@@ -3826,56 +4464,69 @@ describe("SupbotRuntime", () => {
     const { runtime, dataDir } = await createRuntimeWithPaths();
     const attachmentPath = join(dataDir, "remote-note.txt");
     await writeFile(attachmentPath, "hello remote", "utf8");
-    const requests: Array<{ method: string; path: string; headers: Record<string, string | string[] | undefined>; body: Record<string, unknown> }> = [];
-    const projects = [{
-      id: "project-1",
-      agentInstanceId: "agent-client-1",
-      name: "Project One",
-      resourceCount: 1,
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:02.000Z"
-    }];
-    const projectResources = [{
-      id: "resource-1",
-      projectId: "project-1",
-      agentInstanceId: "agent-client-1",
-      conversationId: "conv-1",
-      jobId: "job-1",
-      resourceType: "generated",
-      fileName: "plan.md",
-      contentType: "text/markdown",
-      sizeBytes: 128,
-      relativePath: "artifacts/plan.md",
-      summary: "Project plan",
-      createdAt: "2026-01-01T00:00:02.000Z"
-    }];
-    const conversations = [{
-      id: "conv-1",
-      agentInstanceId: "agent-client-1",
-      projectId: "project-1",
-      projectName: "Project One",
-      title: "Planning",
-      runtimeSessionId: "runtime-1",
-      jobCount: 1,
-      lastMessageAt: "2026-01-01T00:00:02.000Z",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:02.000Z"
-    }];
-    const jobsByConversation: Record<string, unknown[]> = {
-      "conv-1": [{
-        id: "job-1",
+    const requests: Array<{
+      method: string;
+      path: string;
+      headers: Record<string, string | string[] | undefined>;
+      body: Record<string, unknown>;
+    }> = [];
+    const projects = [
+      {
+        id: "project-1",
         agentInstanceId: "agent-client-1",
-        requestId: "req-1",
-        clientId: "agent-client-web-dev",
-        jobType: "interactive",
+        name: "Project One",
+        resourceCount: 1,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:02.000Z",
+      },
+    ];
+    const projectResources = [
+      {
+        id: "resource-1",
+        projectId: "project-1",
+        agentInstanceId: "agent-client-1",
+        conversationId: "conv-1",
+        jobId: "job-1",
+        resourceType: "generated",
+        fileName: "plan.md",
+        contentType: "text/markdown",
+        sizeBytes: 128,
+        relativePath: "artifacts/plan.md",
+        summary: "Project plan",
+        createdAt: "2026-01-01T00:00:02.000Z",
+      },
+    ];
+    const conversations = [
+      {
+        id: "conv-1",
+        agentInstanceId: "agent-client-1",
+        projectId: "project-1",
+        projectName: "Project One",
+        title: "Planning",
         runtimeSessionId: "runtime-1",
-        payload: { prompt: "existing prompt" },
-        status: "completed",
-        queuePosition: 0,
-        result: { assistantText: "existing answer" },
-        createdAt: "2026-01-01T00:00:01.000Z",
-        finishedAt: "2026-01-01T00:00:02.000Z"
-      }]
+        jobCount: 1,
+        lastMessageAt: "2026-01-01T00:00:02.000Z",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:02.000Z",
+      },
+    ];
+    const jobsByConversation: Record<string, unknown[]> = {
+      "conv-1": [
+        {
+          id: "job-1",
+          agentInstanceId: "agent-client-1",
+          requestId: "req-1",
+          clientId: "agent-client-web-dev",
+          jobType: "interactive",
+          runtimeSessionId: "runtime-1",
+          payload: { prompt: "existing prompt" },
+          status: "completed",
+          queuePosition: 0,
+          result: { assistantText: "existing answer" },
+          createdAt: "2026-01-01T00:00:01.000Z",
+          finishedAt: "2026-01-01T00:00:02.000Z",
+        },
+      ],
     };
     const mismatchedConversationJob = {
       id: "job-other",
@@ -3890,20 +4541,22 @@ describe("SupbotRuntime", () => {
       queuePosition: 0,
       result: { assistantText: "other answer" },
       createdAt: "2026-01-01T00:00:01.000Z",
-      finishedAt: "2026-01-01T00:00:02.000Z"
+      finishedAt: "2026-01-01T00:00:02.000Z",
     };
-    const scheduledJobs = [{
-      id: "schedule-1",
-      agentInstanceId: "agent-client-1",
-      conversationId: "conv-1",
-      title: "Daily check",
-      prompt: "check status",
-      scheduleKind: "cron",
-      cronExpr: "0 9 * * *",
-      enabled: true,
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:00.000Z"
-    }];
+    const scheduledJobs = [
+      {
+        id: "schedule-1",
+        agentInstanceId: "agent-client-1",
+        conversationId: "conv-1",
+        title: "Daily check",
+        prompt: "check status",
+        scheduleKind: "cron",
+        cronExpr: "0 9 * * *",
+        enabled: true,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ];
     let currentRunStatus = "watching";
     let autopilotStepsAvailable = true;
     let autopilotStreamRequestCount = 0;
@@ -3921,7 +4574,7 @@ describe("SupbotRuntime", () => {
       lastDecision: { action: "continue", reason: "Verify the output", nextPrompt: "Verify the output" },
       noProgressCount: 0,
       createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:01.000Z"
+      updatedAt: "2026-01-01T00:00:01.000Z",
     };
     const autopilotStep = {
       id: "step-1",
@@ -3936,7 +4589,7 @@ describe("SupbotRuntime", () => {
       decision: { action: "continue", reason: "Verify the output", nextPrompt: "Verify the output" },
       evidence: currentRun.latestEvidence,
       createdAt: "2026-01-01T00:00:01.000Z",
-      updatedAt: "2026-01-01T00:00:02.000Z"
+      updatedAt: "2026-01-01T00:00:02.000Z",
     };
     const flowWorkflow = {
       id: "workflow-1",
@@ -3949,9 +4602,9 @@ describe("SupbotRuntime", () => {
         properties: {
           title: { type: "string", title: "Title" },
           amount: { type: "number", title: "Amount" },
-          receipt: { type: "string", format: "file", title: "Receipt" }
-        }
-      }
+          receipt: { type: "string", format: "file", title: "Receipt" },
+        },
+      },
     };
     const flowTask = {
       id: "approval-1",
@@ -3965,7 +4618,7 @@ describe("SupbotRuntime", () => {
       approverRoles: ["staff"],
       openUrl: "https://example.test/flow/approval-1",
       status: "pending",
-      executionInput: { title: "Lunch", amount: 42 }
+      executionInput: { title: "Lunch", amount: 42 },
     };
     const flowExecution = {
       id: "execution-1",
@@ -3977,18 +4630,23 @@ describe("SupbotRuntime", () => {
       status: "waiting_approval",
       input: { title: "Lunch", amount: 42 },
       createdAt: "2026-01-01T00:06:00.000Z",
-      startedAt: "2026-01-01T00:06:01.000Z"
+      startedAt: "2026-01-01T00:06:01.000Z",
     };
     const flowEvent = {
       id: "flow-event-1",
       executionId: "execution-1",
       type: "approval.created",
       payload: { approvalId: "approval-1" },
-      createdAt: "2026-01-01T00:06:02.000Z"
+      createdAt: "2026-01-01T00:06:02.000Z",
     };
     const messageItem = {
       messageId: "msg-1",
-      sender: { tenantId: "tenant-client", organizationId: "org-client", departmentId: "dept-client", userId: "sender-user" },
+      sender: {
+        tenantId: "tenant-client",
+        organizationId: "org-client",
+        departmentId: "dept-client",
+        userId: "sender-user",
+      },
       senderAgentInstanceId: "agent-client-1",
       subject: "Hello",
       preview: "Message preview",
@@ -3998,38 +4656,42 @@ describe("SupbotRuntime", () => {
       readAt: null,
       favorited: false,
       trashed: false,
-      channel: "internal"
+      channel: "internal",
     };
     const messageDetail = {
       ...messageItem,
       body: "Message body",
-      recipients: [{ tenantId: "tenant-client", organizationId: "org-client", departmentId: "dept-client", userId: "user-client" }]
+      recipients: [
+        { tenantId: "tenant-client", organizationId: "org-client", departmentId: "dept-client", userId: "user-client" },
+      ],
     };
-    const mailAccounts: Array<Record<string, unknown>> = [{
-      id: "acct-1",
-      tenantId: "tenant-client",
-      organizationId: "org-client",
-      departmentId: "dept-client",
-      userId: "user-client",
-      emailAddress: "user@example.test",
-      displayName: "User Mail",
-      smtpHost: "smtp.example.test",
-      smtpPort: 587,
-      smtpSecurity: "starttls",
-      smtpUsername: "user@example.test",
-      smtpPassword: "smtp-secret",
-      hasSmtpPassword: true,
-      imapHost: "imap.example.test",
-      imapPort: 993,
-      imapSecurity: "tls",
-      imapUsername: "user@example.test",
-      imapPassword: "imap-secret",
-      hasImapPassword: true,
-      isDefault: true,
-      enabled: true,
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:00.000Z"
-    }];
+    const mailAccounts: Array<Record<string, unknown>> = [
+      {
+        id: "acct-1",
+        tenantId: "tenant-client",
+        organizationId: "org-client",
+        departmentId: "dept-client",
+        userId: "user-client",
+        emailAddress: "user@example.test",
+        displayName: "User Mail",
+        smtpHost: "smtp.example.test",
+        smtpPort: 587,
+        smtpSecurity: "starttls",
+        smtpUsername: "user@example.test",
+        smtpPassword: "smtp-secret",
+        hasSmtpPassword: true,
+        imapHost: "imap.example.test",
+        imapPort: 993,
+        imapSecurity: "tls",
+        imapUsername: "user@example.test",
+        imapPassword: "imap-secret",
+        hasImapPassword: true,
+        isDefault: true,
+        enabled: true,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ];
     const servstation = createServer((request, response) => {
       let body = "";
       request.on("data", (chunk) => {
@@ -4037,34 +4699,42 @@ describe("SupbotRuntime", () => {
       });
       request.on("end", () => {
         const url = new URL(request.url || "/", "http://127.0.0.1");
-        const parsedBody = body ? JSON.parse(body) as Record<string, unknown> : {};
-        requests.push({ method: request.method || "GET", path: `${url.pathname}${url.search}`, headers: request.headers, body: parsedBody });
+        const parsedBody = body ? (JSON.parse(body) as Record<string, unknown>) : {};
+        requests.push({
+          method: request.method || "GET",
+          path: `${url.pathname}${url.search}`,
+          headers: request.headers,
+          body: parsedBody,
+        });
         if (request.method === "GET" && url.pathname === "/api/v1/messages/events") {
           response.setHeader("Content-Type", "text/event-stream");
-          response.end(`event: messages.unread\ndata: ${JSON.stringify({ unreadCount: 1, messages: [messageItem] })}\n\n`);
+          response.end(
+            `event: messages.unread\ndata: ${JSON.stringify({ unreadCount: 1, messages: [messageItem] })}\n\n`,
+          );
           return;
         }
         if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/autopilot-runs/run-1/stream") {
           autopilotStreamRequestCount += 1;
-          const event = autopilotStreamRequestCount === 1
-            ? {
-              id: "evt-stream-1",
-              runId: "run-1",
-              agentInstanceId: "agent-client-1",
-              eventType: "step_completed",
-              level: "info",
-              message: "step completed",
-              createdAt: "2026-01-01T00:00:04.000Z"
-            }
-            : {
-              id: "evt-stream-2",
-              runId: "run-1",
-              agentInstanceId: "agent-client-1",
-              eventType: "completed",
-              level: "info",
-              message: "run completed",
-              createdAt: "2026-01-01T00:00:05.000Z"
-            };
+          const event =
+            autopilotStreamRequestCount === 1
+              ? {
+                  id: "evt-stream-1",
+                  runId: "run-1",
+                  agentInstanceId: "agent-client-1",
+                  eventType: "step_completed",
+                  level: "info",
+                  message: "step completed",
+                  createdAt: "2026-01-01T00:00:04.000Z",
+                }
+              : {
+                  id: "evt-stream-2",
+                  runId: "run-1",
+                  agentInstanceId: "agent-client-1",
+                  eventType: "completed",
+                  level: "info",
+                  message: "run completed",
+                  createdAt: "2026-01-01T00:00:05.000Z",
+                };
           if (autopilotStreamRequestCount > 1) {
             currentRunStatus = "completed";
           }
@@ -4084,26 +4754,35 @@ describe("SupbotRuntime", () => {
             name: String(parsedBody.name || ""),
             resourceCount: 0,
             createdAt: "2026-01-01T00:03:00.000Z",
-            updatedAt: "2026-01-01T00:03:00.000Z"
+            updatedAt: "2026-01-01T00:03:00.000Z",
           };
           projects.unshift(project);
           response.end(JSON.stringify(project));
           return;
         }
         if (request.method === "PATCH" && url.pathname === "/api/v1/agent/agent-client-1/projects/project-1") {
-          const updated = { ...projects.find((item) => item.id === "project-1"), name: parsedBody.name, updatedAt: "2026-01-01T00:04:00.000Z" };
+          const updated = {
+            ...projects.find((item) => item.id === "project-1"),
+            name: parsedBody.name,
+            updatedAt: "2026-01-01T00:04:00.000Z",
+          };
           response.end(JSON.stringify(updated));
           return;
         }
         if (request.method === "DELETE" && url.pathname === "/api/v1/agent/agent-client-1/projects/project-1") {
-          response.end(JSON.stringify({ deletedProjectId: "project-1", deletedResources: 1, unlinkedConversations: 1 }));
+          response.end(
+            JSON.stringify({ deletedProjectId: "project-1", deletedResources: 1, unlinkedConversations: 1 }),
+          );
           return;
         }
         if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/projects/project-1/resources") {
           response.end(JSON.stringify({ resources: projectResources }));
           return;
         }
-        if (request.method === "DELETE" && url.pathname === "/api/v1/agent/agent-client-1/projects/project-1/resources/resource-1") {
+        if (
+          request.method === "DELETE" &&
+          url.pathname === "/api/v1/agent/agent-client-1/projects/project-1/resources/resource-1"
+        ) {
           response.end(JSON.stringify({ deletedResourceId: "resource-1" }));
           return;
         }
@@ -4112,23 +4791,25 @@ describe("SupbotRuntime", () => {
           return;
         }
         if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/conversations/conv-1") {
-          response.end(JSON.stringify({
-            ...conversations[0],
-            messages: [
-              {
-                id: "message-user-1",
-                role: "user",
-                text: "historical prompt",
-                createdAt: "2026-01-01T00:00:01.000Z"
-              },
-              {
-                id: "message-agent-1",
-                role: "assistant",
-                content: "historical answer",
-                createdAt: "2026-01-01T00:00:02.000Z"
-              }
-            ]
-          }));
+          response.end(
+            JSON.stringify({
+              ...conversations[0],
+              messages: [
+                {
+                  id: "message-user-1",
+                  role: "user",
+                  text: "historical prompt",
+                  createdAt: "2026-01-01T00:00:01.000Z",
+                },
+                {
+                  id: "message-agent-1",
+                  role: "assistant",
+                  content: "historical answer",
+                  createdAt: "2026-01-01T00:00:02.000Z",
+                },
+              ],
+            }),
+          );
           return;
         }
         if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-client-1/conversations") {
@@ -4141,7 +4822,7 @@ describe("SupbotRuntime", () => {
             runtimeSessionId: "runtime-new",
             jobCount: 0,
             createdAt: "2026-01-01T00:01:00.000Z",
-            updatedAt: "2026-01-01T00:01:00.000Z"
+            updatedAt: "2026-01-01T00:01:00.000Z",
           };
           conversations.unshift(conversation);
           jobsByConversation[conversation.id] = [];
@@ -4158,9 +4839,11 @@ describe("SupbotRuntime", () => {
         }
         if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/jobs") {
           const conversationId = url.searchParams.get("conversationId") || "";
-          response.end(JSON.stringify({
-            jobs: [...(jobsByConversation[conversationId] || []), mismatchedConversationJob]
-          }));
+          response.end(
+            JSON.stringify({
+              jobs: [...(jobsByConversation[conversationId] || []), mismatchedConversationJob],
+            }),
+          );
           return;
         }
         if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-client-1/jobs") {
@@ -4176,30 +4859,38 @@ describe("SupbotRuntime", () => {
             status: "queued",
             queuePosition: 1,
             progress: { message: "queued" },
-            createdAt: "2026-01-01T00:01:01.000Z"
+            createdAt: "2026-01-01T00:01:01.000Z",
           };
           jobsByConversation[conversationId] = [...(jobsByConversation[conversationId] || []), job];
           response.end(JSON.stringify(job));
           return;
         }
         if (request.method === "PATCH" && url.pathname === "/api/v1/agent/agent-client-1/jobs") {
-          response.end(JSON.stringify({ ...jobsByConversation["conv-1"][0], id: url.searchParams.get("jobId"), status: "canceled" }));
+          response.end(
+            JSON.stringify({
+              ...jobsByConversation["conv-1"][0],
+              id: url.searchParams.get("jobId"),
+              status: "canceled",
+            }),
+          );
           return;
         }
         if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/scheduled-tasks") {
-          response.end(JSON.stringify({
-            tasks: scheduledJobs.map((job) => ({
-              id: job.id,
-              agentInstanceId: job.agentInstanceId,
-              name: job.title,
-              prompt: job.prompt,
-              scheduleType: "unbounded_recurring",
-              cronExpression: job.cronExpr,
-              status: job.enabled ? "active" : "paused",
-              createdAt: job.createdAt,
-              updatedAt: job.updatedAt
-            }))
-          }));
+          response.end(
+            JSON.stringify({
+              tasks: scheduledJobs.map((job) => ({
+                id: job.id,
+                agentInstanceId: job.agentInstanceId,
+                name: job.title,
+                prompt: job.prompt,
+                scheduleType: "unbounded_recurring",
+                cronExpression: job.cronExpr,
+                status: job.enabled ? "active" : "paused",
+                createdAt: job.createdAt,
+                updatedAt: job.updatedAt,
+              })),
+            }),
+          );
           return;
         }
         if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-client-1/scheduled-tasks") {
@@ -4213,9 +4904,9 @@ describe("SupbotRuntime", () => {
             runAt: parsedBody.runAt,
             status: "active",
             createdAt: "2026-01-01T00:02:00.000Z",
-            updatedAt: "2026-01-01T00:02:00.000Z"
+            updatedAt: "2026-01-01T00:02:00.000Z",
           };
-          scheduledJobs.push(scheduled as typeof scheduledJobs[number]);
+          scheduledJobs.push(scheduled as (typeof scheduledJobs)[number]);
           response.end(JSON.stringify(scheduled));
           return;
         }
@@ -4223,7 +4914,10 @@ describe("SupbotRuntime", () => {
           response.end(JSON.stringify({ ...scheduledJobs[0], ...parsedBody, id: "schedule-1" }));
           return;
         }
-        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-client-1/scheduled-tasks/schedule-1/pause") {
+        if (
+          request.method === "POST" &&
+          url.pathname === "/api/v1/agent/agent-client-1/scheduled-tasks/schedule-1/pause"
+        ) {
           response.end(JSON.stringify({ ...scheduledJobs[0], id: "schedule-1", status: "paused" }));
           return;
         }
@@ -4232,25 +4926,45 @@ describe("SupbotRuntime", () => {
           return;
         }
         if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/autopilot-runs/current") {
-          response.end(JSON.stringify({ run: { ...currentRun, status: currentRunStatus, lifecycleStatus: currentRunStatus === "completed" ? "completed" : "active" } }));
+          response.end(
+            JSON.stringify({
+              run: {
+                ...currentRun,
+                status: currentRunStatus,
+                lifecycleStatus: currentRunStatus === "completed" ? "completed" : "active",
+              },
+            }),
+          );
           return;
         }
         if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/autopilot-runs/run-1") {
-          response.end(JSON.stringify({ run: { ...currentRun, status: currentRunStatus, lifecycleStatus: currentRunStatus === "completed" ? "completed" : "active" } }));
+          response.end(
+            JSON.stringify({
+              run: {
+                ...currentRun,
+                status: currentRunStatus,
+                lifecycleStatus: currentRunStatus === "completed" ? "completed" : "active",
+              },
+            }),
+          );
           return;
         }
         if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/autopilot-runs/run-1/events") {
-          response.end(JSON.stringify({
-            events: [{
-              id: "evt-1",
-              runId: "run-1",
-              agentInstanceId: "agent-client-1",
-              eventType: "watching",
-              level: "info",
-              message: "watching",
-              createdAt: "2026-01-01T00:00:03.000Z"
-            }]
-          }));
+          response.end(
+            JSON.stringify({
+              events: [
+                {
+                  id: "evt-1",
+                  runId: "run-1",
+                  agentInstanceId: "agent-client-1",
+                  eventType: "watching",
+                  level: "info",
+                  message: "watching",
+                  createdAt: "2026-01-01T00:00:03.000Z",
+                },
+              ],
+            }),
+          );
           return;
         }
         if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-client-1/autopilot-runs/run-1/steps") {
@@ -4279,13 +4993,15 @@ describe("SupbotRuntime", () => {
           return;
         }
         if (request.method === "POST" && url.pathname === "/api/v1/flow-engine/executions") {
-          response.end(JSON.stringify({
-            ...flowExecution,
-            id: "execution-new",
-            workflowId: parsedBody.workflowId,
-            status: "queued",
-            input: parsedBody.input
-          }));
+          response.end(
+            JSON.stringify({
+              ...flowExecution,
+              id: "execution-new",
+              workflowId: parsedBody.workflowId,
+              status: "queued",
+              input: parsedBody.input,
+            }),
+          );
           return;
         }
         if (request.method === "GET" && url.pathname === "/api/v1/flow-engine/executions/mine") {
@@ -4301,7 +5017,14 @@ describe("SupbotRuntime", () => {
           return;
         }
         if (request.method === "POST" && url.pathname === "/api/v1/flow-engine/approvals/approval-1/decision") {
-          response.end(JSON.stringify({ ...flowTask, status: parsedBody.decision, decision: parsedBody.decision, comment: parsedBody.comment }));
+          response.end(
+            JSON.stringify({
+              ...flowTask,
+              status: parsedBody.decision,
+              decision: parsedBody.decision,
+              comment: parsedBody.comment,
+            }),
+          );
           return;
         }
         if (request.method === "GET" && url.pathname === "/api/v1/messages") {
@@ -4337,28 +5060,32 @@ describe("SupbotRuntime", () => {
           return;
         }
         if (request.method === "GET" && url.pathname === "/api/v1/messages/msg-1/attachments/att-msg-1") {
-          response.end(JSON.stringify({
-            attachment: {
-              attachmentId: "att-msg-1",
-              fileName: "hello.txt",
-              contentType: "text/plain",
-              sizeBytes: 5,
-              contentBase64: Buffer.from("hello").toString("base64")
-            }
-          }));
+          response.end(
+            JSON.stringify({
+              attachment: {
+                attachmentId: "att-msg-1",
+                fileName: "hello.txt",
+                contentType: "text/plain",
+                sizeBytes: 5,
+                contentBase64: Buffer.from("hello").toString("base64"),
+              },
+            }),
+          );
           return;
         }
         if (request.method === "POST" && url.pathname === "/api/v1/messages/send") {
-          response.end(JSON.stringify({
-            id: "job-message-1",
-            agentInstanceId: parsedBody.agentInstanceId,
-            requestId: "message-req",
-            clientId: "message-compose",
-            jobType: "message_delivery",
-            status: "queued",
-            queuePosition: 0,
-            createdAt: "2026-01-01T00:05:00.000Z"
-          }));
+          response.end(
+            JSON.stringify({
+              id: "job-message-1",
+              agentInstanceId: parsedBody.agentInstanceId,
+              requestId: "message-req",
+              clientId: "message-compose",
+              jobType: "message_delivery",
+              status: "queued",
+              queuePosition: 0,
+              createdAt: "2026-01-01T00:05:00.000Z",
+            }),
+          );
           return;
         }
         if (request.method === "POST" && url.pathname === "/api/v1/messages/deliver") {
@@ -4370,7 +5097,17 @@ describe("SupbotRuntime", () => {
           return;
         }
         if (request.method === "POST" && url.pathname === "/api/v1/mail/accounts") {
-          response.end(JSON.stringify({ account: { ...mailAccounts[0], id: "acct-new", ...parsedBody, hasSmtpPassword: true, hasImapPassword: true } }));
+          response.end(
+            JSON.stringify({
+              account: {
+                ...mailAccounts[0],
+                id: "acct-new",
+                ...parsedBody,
+                hasSmtpPassword: true,
+                hasImapPassword: true,
+              },
+            }),
+          );
           return;
         }
         if (request.method === "PUT" && url.pathname === "/api/v1/mail/accounts/acct-1") {
@@ -4408,7 +5145,7 @@ describe("SupbotRuntime", () => {
         userId: "user-client",
         roleIds: ["staff", "user"],
         source: "servstation",
-        servstationUrl: baseUrl
+        servstationUrl: baseUrl,
       });
       await runtime.updateServstationA2AConfig({
         enabled: true,
@@ -4418,7 +5155,7 @@ describe("SupbotRuntime", () => {
         oidcClientId: "agent-client-web-dev",
         staffAgentAccount: "staff@example.test",
         staffAgentPassword: "staff-secret",
-        agentInstanceId: "agent-client-1"
+        agentInstanceId: "agent-client-1",
       });
       await runtime.updateServstationA2AOidcSession({
         baseUrl,
@@ -4429,44 +5166,50 @@ describe("SupbotRuntime", () => {
           refreshToken: "refresh-client-token",
           expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
           issuerUrl: `${baseUrl}/realms/supmate`,
-          clientId: "agent-client-web-dev"
-        }
+          clientId: "agent-client-web-dev",
+        },
       });
       const disconnected = await runtime.getServstationClientSnapshot();
       expect(disconnected.connected).toBe(false);
       expect(disconnected.projects).toEqual([]);
       expect(disconnected.conversations).toEqual([]);
       expect(disconnected.autopilotSteps).toEqual([]);
-      await expect(runtime.getServstationFlowEngineSnapshot()).rejects.toThrow("Servstation reverse A2A is not connected.");
-      await (runtime as unknown as { updateServstationReverseState(input: Record<string, unknown>): Promise<void> }).updateServstationReverseState({
+      await expect(runtime.getServstationFlowEngineSnapshot()).rejects.toThrow(
+        "Servstation reverse A2A is not connected.",
+      );
+      await (
+        runtime as unknown as { updateServstationReverseState(input: Record<string, unknown>): Promise<void> }
+      ).updateServstationReverseState({
         enabled: true,
         status: "connected",
-        peerId: "peer-client-1"
+        peerId: "peer-client-1",
       });
       const snapshot = await runtime.getServstationClientSnapshot();
       expect(snapshot).toMatchObject({
         connected: true,
         agentInstanceId: "agent-client-1",
-        activeConversationId: "conv-1"
+        activeConversationId: "conv-1",
       });
       expect(snapshot.projects[0]).toMatchObject({ id: "project-1", name: "Project One", resourceCount: 1 });
       expect(snapshot.conversations).toHaveLength(1);
       expect(snapshot.conversations[0]).toMatchObject({ projectId: "project-1", projectName: "Project One" });
       expect(snapshot.jobs).toHaveLength(1);
       expect(snapshot.jobs[0]).toMatchObject({ id: "job-1", conversationId: "conv-1", status: "completed" });
-      expect((snapshot.conversations[0] as typeof snapshot.conversations[number] & { messages?: unknown[] }).messages).toEqual([
+      expect(
+        (snapshot.conversations[0] as (typeof snapshot.conversations)[number] & { messages?: unknown[] }).messages,
+      ).toEqual([
         {
           id: "message-user-1",
           role: "user",
           text: "historical prompt",
-          createdAt: "2026-01-01T00:00:01.000Z"
+          createdAt: "2026-01-01T00:00:01.000Z",
         },
         {
           id: "message-agent-1",
           role: "agent",
           text: "historical answer",
-          createdAt: "2026-01-01T00:00:02.000Z"
-        }
+          createdAt: "2026-01-01T00:00:02.000Z",
+        },
       ]);
       const historicalJobs = jobsByConversation["conv-1"];
       jobsByConversation["conv-1"] = [];
@@ -4474,7 +5217,7 @@ describe("SupbotRuntime", () => {
       expect(transcriptOnlySnapshot.jobs).toEqual([]);
       expect(transcriptOnlySnapshot.conversations[0].messages?.map((message) => message.text)).toEqual([
         "historical prompt",
-        "historical answer"
+        "historical answer",
       ]);
       jobsByConversation["conv-1"] = historicalJobs;
       expect(snapshot.scheduledJobs[0]).toMatchObject({ id: "schedule-1" });
@@ -4492,42 +5235,69 @@ describe("SupbotRuntime", () => {
       const sent = await runtime.sendServstationPrompt({
         projectId: "project-1",
         prompt: "new remote prompt",
-        attachments: [{ id: "att-1", name: "remote-note.txt", path: attachmentPath, size: 12, mimeType: "text/plain" }]
+        attachments: [{ id: "att-1", name: "remote-note.txt", path: attachmentPath, size: 12, mimeType: "text/plain" }],
       });
       expect(sent.conversation.id).toBe("conv-new");
       expect(sent.conversation.projectId).toBe("project-1");
       expect(sent.snapshot.jobs[0]).toMatchObject({ id: "job-new", status: "queued" });
-      const postConversation = requests.find((item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/conversations");
+      const postConversation = requests.find(
+        (item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/conversations",
+      );
       expect(postConversation?.body).toEqual({ projectId: "project-1" });
-      const postJob = requests.find((item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/jobs");
+      const postJob = requests.find(
+        (item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/jobs",
+      );
       expect(postJob?.body).toMatchObject({
         clientId: "supbot-server-agent-client",
         jobType: "interactive",
-        conversationId: "conv-new"
+        conversationId: "conv-new",
       });
       expect(postJob?.body).not.toHaveProperty("projectId");
-      expect(((postJob?.body.payload as Record<string, unknown>).attachments as Array<Record<string, unknown>>)[0]).toMatchObject({
+      expect(
+        ((postJob?.body.payload as Record<string, unknown>).attachments as Array<Record<string, unknown>>)[0],
+      ).toMatchObject({
         name: "remote-note.txt",
         mimeType: "text/plain",
-        contentBase64: Buffer.from("hello remote").toString("base64")
+        contentBase64: Buffer.from("hello remote").toString("base64"),
       });
       await runtime.deleteServstationConversation("conv-new");
-      expect(requests.some((item) => item.method === "DELETE" && item.path === "/api/v1/agent/agent-client-1/conversations/conv-new")).toBe(true);
+      expect(
+        requests.some(
+          (item) => item.method === "DELETE" && item.path === "/api/v1/agent/agent-client-1/conversations/conv-new",
+        ),
+      ).toBe(true);
 
-      expect(await runtime.createServstationProject("Project Two")).toMatchObject({ id: "project-new", name: "Project Two" });
-      expect(await runtime.updateServstationProject("project-1", "Project Renamed")).toMatchObject({ id: "project-1", name: "Project Renamed" });
+      expect(await runtime.createServstationProject("Project Two")).toMatchObject({
+        id: "project-new",
+        name: "Project Two",
+      });
+      expect(await runtime.updateServstationProject("project-1", "Project Renamed")).toMatchObject({
+        id: "project-1",
+        name: "Project Renamed",
+      });
       expect(await runtime.listServstationProjectResources("project-1")).toEqual(projectResources);
-      expect(await runtime.deleteServstationProjectResource("project-1", "resource-1")).toEqual({ deletedResourceId: "resource-1" });
+      expect(await runtime.deleteServstationProjectResource("project-1", "resource-1")).toEqual({
+        deletedResourceId: "resource-1",
+      });
       expect(await runtime.deleteServstationProject("project-1")).toEqual({
         deletedProjectId: "project-1",
         deletedResources: 1,
-        unlinkedConversations: 1
+        unlinkedConversations: 1,
       });
       await runtime.cancelServstationJob("job-1");
-      await runtime.createServstationScheduledJob({ prompt: "scheduled prompt", scheduleKind: "once", runAt: "2026-01-02T00:00:00.000Z", enabled: true });
+      await runtime.createServstationScheduledJob({
+        prompt: "scheduled prompt",
+        scheduleKind: "once",
+        runAt: "2026-01-02T00:00:00.000Z",
+        enabled: true,
+      });
       await runtime.updateServstationScheduledJob("schedule-1", { enabled: false });
       await runtime.deleteServstationScheduledJob("schedule-1");
-      await runtime.startServstationAutopilotRun({ conversationId: "conv-1", prompt: "finish the plan", requestId: "autopilot-request-1" });
+      await runtime.startServstationAutopilotRun({
+        conversationId: "conv-1",
+        prompt: "finish the plan",
+        requestId: "autopilot-request-1",
+      });
       await runtime.updateServstationAutopilotRun({ runId: "run-1", status: "paused" });
       await runtime.updateServstationAutopilotRun({ runId: "run-1", status: "watching" });
       await runtime.updateServstationAutopilotRun({ runId: "run-1", status: "stopped" });
@@ -4536,9 +5306,11 @@ describe("SupbotRuntime", () => {
       await runtime.streamServstationAutopilotEvents("run-1", (event) => streamedAutopilotEvents.push(event));
       expect(streamedAutopilotEvents).toMatchObject([
         { id: "evt-stream-1", eventType: "step_completed" },
-        { id: "evt-stream-2", eventType: "completed" }
+        { id: "evt-stream-2", eventType: "completed" },
       ]);
-      const streamRequests = requests.filter((item) => item.path === "/api/v1/agent/agent-client-1/autopilot-runs/run-1/stream");
+      const streamRequests = requests.filter(
+        (item) => item.path === "/api/v1/agent/agent-client-1/autopilot-runs/run-1/stream",
+      );
       expect(streamRequests).toHaveLength(2);
       expect(streamRequests[1]?.headers["last-event-id"]).toBe("evt-stream-1");
 
@@ -4546,14 +5318,26 @@ describe("SupbotRuntime", () => {
       expect(flowSnapshot.launchableWorkflows[0]).toMatchObject({ id: "workflow-1", name: "Expense approval" });
       expect(flowSnapshot.pendingTasks[0]).toMatchObject({ id: "approval-1", status: "pending" });
       expect(flowSnapshot.executions[0]).toMatchObject({ id: "execution-1", status: "waiting_approval" });
-      const launchedFlow = await runtime.launchServstationFlowEngineWorkflow({ workflowId: "workflow-1", input: { title: "Dinner", amount: 88 } });
+      const launchedFlow = await runtime.launchServstationFlowEngineWorkflow({
+        workflowId: "workflow-1",
+        input: { title: "Dinner", amount: 88 },
+      });
       expect(launchedFlow).toMatchObject({ id: "execution-new", workflowId: "workflow-1", status: "queued" });
-      expect(await runtime.getServstationFlowEngineExecution("execution-1")).toMatchObject({ id: "execution-1", workflowName: "Expense approval" });
+      expect(await runtime.getServstationFlowEngineExecution("execution-1")).toMatchObject({
+        id: "execution-1",
+        workflowName: "Expense approval",
+      });
       expect(await runtime.getServstationFlowEngineExecutionEvents("execution-1")).toEqual([flowEvent]);
-      expect(await runtime.decideServstationFlowEngineApproval({ approvalId: "approval-1", decision: "approved", comment: "ok" })).toMatchObject({
+      expect(
+        await runtime.decideServstationFlowEngineApproval({
+          approvalId: "approval-1",
+          decision: "approved",
+          comment: "ok",
+        }),
+      ).toMatchObject({
         id: "approval-1",
         status: "approved",
-        comment: "ok"
+        comment: "ok",
       });
 
       const messages = await runtime.listServstationMessages("inbox");
@@ -4566,20 +5350,22 @@ describe("SupbotRuntime", () => {
       expect(await runtime.restoreServstationMessage("msg-1")).toMatchObject({ trashed: false });
       expect(await runtime.fetchServstationMessageAttachment("msg-1", "att-msg-1")).toMatchObject({
         fileName: "hello.txt",
-        contentBase64: Buffer.from("hello").toString("base64")
+        contentBase64: Buffer.from("hello").toString("base64"),
       });
       await runtime.deleteServstationMessage("msg-1");
       await runtime.sendServstationAgentMessage({
-        recipients: [{ tenantId: "tenant-client", organizationId: "org-client", departmentId: "dept-client", userId: "user-b" }],
+        recipients: [
+          { tenantId: "tenant-client", organizationId: "org-client", departmentId: "dept-client", userId: "user-b" },
+        ],
         subject: "Internal",
-        body: "Internal body"
+        body: "Internal body",
       });
       await runtime.sendServstationDirectMessage({
         recipients: [],
         externalRecipients: ["person@example.test"],
         senderMailAccountId: "acct-1",
         subject: "External",
-        body: "External body"
+        body: "External body",
       });
       const accounts = await runtime.listServstationMailAccounts();
       expect(accounts[0]).toMatchObject({ id: "acct-1", hasSmtpPassword: true, hasImapPassword: true });
@@ -4599,49 +5385,158 @@ describe("SupbotRuntime", () => {
         imapUsername: "new@example.test",
         imapPassword: "created-imap-secret",
         isDefault: false,
-        enabled: true
+        enabled: true,
       };
       const createdAccount = await runtime.createServstationMailAccount(accountDraft);
       expect(createdAccount.id).toBe("acct-new");
       expect(JSON.stringify(createdAccount)).not.toContain("created-smtp-secret");
       await runtime.updateServstationMailAccount("acct-1", accountDraft);
       await runtime.setDefaultServstationMailAccount("acct-1");
-      expect(await runtime.testServstationMailAccountConnection("acct-1")).toMatchObject({ smtpOk: true, imapOk: true });
+      expect(await runtime.testServstationMailAccountConnection("acct-1")).toMatchObject({
+        smtpOk: true,
+        imapOk: true,
+      });
       expect(await runtime.syncServstationMailAccountNow("acct-1")).toEqual({ status: "queued" });
       await runtime.deleteServstationMailAccount("acct-1");
       const streamedEvents: unknown[] = [];
       await runtime.streamServstationMessageEvents((event) => streamedEvents.push(event));
       expect(streamedEvents).toEqual([{ type: "messages.unread", data: { unreadCount: 1, messages: [messageItem] } }]);
 
-      expect(requests.some((item) => item.method === "PATCH" && item.path === "/api/v1/agent/agent-client-1/jobs?jobId=job-1")).toBe(true);
-      expect(requests.some((item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/projects" && item.body.name === "Project Two")).toBe(true);
-      expect(requests.some((item) => item.method === "PATCH" && item.path === "/api/v1/agent/agent-client-1/projects/project-1" && item.body.name === "Project Renamed")).toBe(true);
-      expect(requests.some((item) => item.method === "GET" && item.path === "/api/v1/agent/agent-client-1/projects/project-1/resources")).toBe(true);
-      expect(requests.some((item) => item.method === "DELETE" && item.path === "/api/v1/agent/agent-client-1/projects/project-1/resources/resource-1")).toBe(true);
-      expect(requests.some((item) => item.method === "DELETE" && item.path === "/api/v1/agent/agent-client-1/projects/project-1")).toBe(true);
-      expect(requests.some((item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/scheduled-tasks")).toBe(true);
-      expect(requests.some((item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/scheduled-tasks/schedule-1/pause")).toBe(true);
-      expect(requests.some((item) => item.method === "DELETE" && item.path === "/api/v1/agent/agent-client-1/scheduled-tasks/schedule-1")).toBe(true);
-      expect(requests.some((item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/autopilot-runs")).toBe(true);
-      expect(requests.some((item) => item.method === "PATCH" && item.path === "/api/v1/agent/agent-client-1/autopilot-runs/run-1")).toBe(true);
-      const autopilotStart = requests.find((item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/autopilot-runs");
-      expect(autopilotStart?.body).toEqual({ conversationId: "conv-1", prompt: "finish the plan", requestId: "autopilot-request-1" });
+      expect(
+        requests.some(
+          (item) => item.method === "PATCH" && item.path === "/api/v1/agent/agent-client-1/jobs?jobId=job-1",
+        ),
+      ).toBe(true);
+      expect(
+        requests.some(
+          (item) =>
+            item.method === "POST" &&
+            item.path === "/api/v1/agent/agent-client-1/projects" &&
+            item.body.name === "Project Two",
+        ),
+      ).toBe(true);
+      expect(
+        requests.some(
+          (item) =>
+            item.method === "PATCH" &&
+            item.path === "/api/v1/agent/agent-client-1/projects/project-1" &&
+            item.body.name === "Project Renamed",
+        ),
+      ).toBe(true);
+      expect(
+        requests.some(
+          (item) => item.method === "GET" && item.path === "/api/v1/agent/agent-client-1/projects/project-1/resources",
+        ),
+      ).toBe(true);
+      expect(
+        requests.some(
+          (item) =>
+            item.method === "DELETE" &&
+            item.path === "/api/v1/agent/agent-client-1/projects/project-1/resources/resource-1",
+        ),
+      ).toBe(true);
+      expect(
+        requests.some(
+          (item) => item.method === "DELETE" && item.path === "/api/v1/agent/agent-client-1/projects/project-1",
+        ),
+      ).toBe(true);
+      expect(
+        requests.some((item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/scheduled-tasks"),
+      ).toBe(true);
+      expect(
+        requests.some(
+          (item) =>
+            item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/scheduled-tasks/schedule-1/pause",
+        ),
+      ).toBe(true);
+      expect(
+        requests.some(
+          (item) => item.method === "DELETE" && item.path === "/api/v1/agent/agent-client-1/scheduled-tasks/schedule-1",
+        ),
+      ).toBe(true);
+      expect(
+        requests.some((item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/autopilot-runs"),
+      ).toBe(true);
+      expect(
+        requests.some(
+          (item) => item.method === "PATCH" && item.path === "/api/v1/agent/agent-client-1/autopilot-runs/run-1",
+        ),
+      ).toBe(true);
+      const autopilotStart = requests.find(
+        (item) => item.method === "POST" && item.path === "/api/v1/agent/agent-client-1/autopilot-runs",
+      );
+      expect(autopilotStart?.body).toEqual({
+        conversationId: "conv-1",
+        prompt: "finish the plan",
+        requestId: "autopilot-request-1",
+      });
       const autopilotUpdates = requests
         .filter((item) => item.method === "PATCH" && item.path === "/api/v1/agent/agent-client-1/autopilot-runs/run-1")
         .map((item) => item.body.status);
       expect(autopilotUpdates).toEqual(["paused", "watching", "stopped"]);
-      expect(requests.some((item) => item.method === "GET" && item.path === "/api/v1/flow-engine/workflows/launchable")).toBe(true);
-      expect(requests.some((item) => item.method === "GET" && item.path === "/api/v1/flow-engine/tasks/pending")).toBe(true);
-      expect(requests.some((item) => item.method === "GET" && item.path === "/api/v1/flow-engine/executions/mine")).toBe(true);
-      expect(requests.some((item) => item.method === "POST" && item.path === "/api/v1/flow-engine/executions" && item.body.workflowId === "workflow-1")).toBe(true);
-      expect(requests.some((item) => item.method === "GET" && item.path === "/api/v1/flow-engine/executions/mine/execution-1/events")).toBe(true);
-      expect(requests.some((item) => item.method === "POST" && item.path === "/api/v1/flow-engine/approvals/approval-1/decision" && item.body.decision === "approved")).toBe(true);
-      expect(requests.some((item) => item.method === "GET" && item.path === "/api/v1/messages?folder=inbox&unreadOnly=false")).toBe(true);
-      expect(requests.some((item) => item.method === "POST" && item.path === "/api/v1/messages/send" && item.body.agentInstanceId === "agent-client-1")).toBe(true);
-      expect(requests.some((item) => item.method === "POST" && item.path === "/api/v1/messages/deliver" && item.body.senderAgentInstanceId === "agent-client-1")).toBe(true);
-      expect(requests.some((item) => item.method === "POST" && item.path === "/api/v1/mail/accounts" && item.body.smtpPassword === "created-smtp-secret")).toBe(true);
+      expect(
+        requests.some((item) => item.method === "GET" && item.path === "/api/v1/flow-engine/workflows/launchable"),
+      ).toBe(true);
+      expect(requests.some((item) => item.method === "GET" && item.path === "/api/v1/flow-engine/tasks/pending")).toBe(
+        true,
+      );
+      expect(
+        requests.some((item) => item.method === "GET" && item.path === "/api/v1/flow-engine/executions/mine"),
+      ).toBe(true);
+      expect(
+        requests.some(
+          (item) =>
+            item.method === "POST" &&
+            item.path === "/api/v1/flow-engine/executions" &&
+            item.body.workflowId === "workflow-1",
+        ),
+      ).toBe(true);
+      expect(
+        requests.some(
+          (item) => item.method === "GET" && item.path === "/api/v1/flow-engine/executions/mine/execution-1/events",
+        ),
+      ).toBe(true);
+      expect(
+        requests.some(
+          (item) =>
+            item.method === "POST" &&
+            item.path === "/api/v1/flow-engine/approvals/approval-1/decision" &&
+            item.body.decision === "approved",
+        ),
+      ).toBe(true);
+      expect(
+        requests.some(
+          (item) => item.method === "GET" && item.path === "/api/v1/messages?folder=inbox&unreadOnly=false",
+        ),
+      ).toBe(true);
+      expect(
+        requests.some(
+          (item) =>
+            item.method === "POST" &&
+            item.path === "/api/v1/messages/send" &&
+            item.body.agentInstanceId === "agent-client-1",
+        ),
+      ).toBe(true);
+      expect(
+        requests.some(
+          (item) =>
+            item.method === "POST" &&
+            item.path === "/api/v1/messages/deliver" &&
+            item.body.senderAgentInstanceId === "agent-client-1",
+        ),
+      ).toBe(true);
+      expect(
+        requests.some(
+          (item) =>
+            item.method === "POST" &&
+            item.path === "/api/v1/mail/accounts" &&
+            item.body.smtpPassword === "created-smtp-secret",
+        ),
+      ).toBe(true);
 
-      const authed = requests.find((item) => item.method === "GET" && item.path === "/api/v1/agent/agent-client-1/conversations");
+      const authed = requests.find(
+        (item) => item.method === "GET" && item.path === "/api/v1/agent/agent-client-1/conversations",
+      );
       expect(authed?.headers.authorization).toBe("Bearer oidc-client-token");
       expect(authed?.headers["x-tenant-id"]).toBe("tenant-client");
       expect(authed?.headers["x-organization-id"]).toBe("org-client");
@@ -4652,7 +5547,7 @@ describe("SupbotRuntime", () => {
       expect(JSON.stringify(flowSnapshot)).not.toContain("oidc-client-token");
       expect(JSON.stringify(snapshot)).not.toContain("staff-secret");
     } finally {
-      await new Promise<void>((resolve, reject) => servstation.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => servstation.close((error) => (error ? reject(error) : resolve())));
     }
   });
 
@@ -4695,18 +5590,20 @@ describe("SupbotRuntime", () => {
         userId: "user-client",
         roleIds: ["user"],
         source: "servstation",
-        servstationUrl: baseUrl
+        servstationUrl: baseUrl,
       });
       await runtime.updateServstationA2AConfig({
         enabled: true,
         baseUrl,
         authMode: "identityHeaders",
-        agentInstanceId: "agent-client-1"
+        agentInstanceId: "agent-client-1",
       });
-      await (runtime as unknown as { updateServstationReverseState(input: Record<string, unknown>): Promise<void> }).updateServstationReverseState({
+      await (
+        runtime as unknown as { updateServstationReverseState(input: Record<string, unknown>): Promise<void> }
+      ).updateServstationReverseState({
         enabled: true,
         status: "connected",
-        peerId: "peer-client-1"
+        peerId: "peer-client-1",
       });
 
       const snapshot = await runtime.getServstationClientSnapshot();
@@ -4716,7 +5613,7 @@ describe("SupbotRuntime", () => {
       expect(snapshot.autopilotRun).toBeNull();
       expect(snapshot.autopilotSteps).toEqual([]);
     } finally {
-      await new Promise<void>((resolve, reject) => servstation.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => servstation.close((error) => (error ? reject(error) : resolve())));
     }
   });
 
@@ -4731,12 +5628,12 @@ describe("SupbotRuntime", () => {
       oidcIssuerUrl: issuerUrl,
       oidcClientId: "agent-client",
       staffAgentAccount: "staff@example.com",
-      staffAgentPassword: "staff-password"
+      staffAgentPassword: "staff-password",
     });
     expect(saved).toMatchObject({
       staffAgentAccount: "staff@example.com",
       staffAgentPasswordSaved: true,
-      staffAgentPasswordStorage: "file"
+      staffAgentPasswordStorage: "file",
     });
     expect("staffAgentPassword" in saved).toBe(false);
     const snapshot = runtime.snapshot().servstationA2A.config;
@@ -4754,12 +5651,12 @@ describe("SupbotRuntime", () => {
           tenantId: "tenant-staff",
           organizationId: "org-staff",
           departmentId: "dept-staff",
-          preferred_username: "staff@example.com"
+          preferred_username: "staff@example.com",
         }),
         refreshToken: "refresh-staff",
         issuerUrl,
-        clientId: "agent-client"
-      }
+        clientId: "agent-client",
+      },
     });
     expect(runtime.snapshot().servstationA2A.config.oidc?.refreshTokenSaved).toBe(true);
     await runtime.updateServstationA2AConfig({ staffAgentAccount: "other@example.com" });
@@ -4786,19 +5683,21 @@ describe("SupbotRuntime", () => {
         }
         if (request.method === "POST" && url.pathname === "/issuer/token") {
           tokenBodies.push(body);
-          response.end(JSON.stringify({
-            access_token: fakeJwt({
-              tenantId: "tenant-pw",
-              organizationId: "org-pw",
-              departmentId: "dept-pw",
-              preferred_username: "staff-user",
-              realm_access: { roles: ["staff"] }
+          response.end(
+            JSON.stringify({
+              access_token: fakeJwt({
+                tenantId: "tenant-pw",
+                organizationId: "org-pw",
+                departmentId: "dept-pw",
+                preferred_username: "staff-user",
+                realm_access: { roles: ["staff"] },
+              }),
+              refresh_token: "refresh-password",
+              token_type: "Bearer",
+              scope: "openid profile email offline_access",
+              expires_in: 300,
             }),
-            refresh_token: "refresh-password",
-            token_type: "Bearer",
-            scope: "openid profile email offline_access",
-            expires_in: 300
-          }));
+          );
           return;
         }
         if (request.method === "POST" && url.pathname === "/api/v1/agent/connect") {
@@ -4807,28 +5706,39 @@ describe("SupbotRuntime", () => {
           response.end(JSON.stringify({ agentInstanceId: "agent-password-1" }));
           return;
         }
-        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-password-1/a2a-peers/reverse-connections") {
+        if (
+          request.method === "POST" &&
+          url.pathname === "/api/v1/agent/agent-password-1/a2a-peers/reverse-connections"
+        ) {
           expect(String(request.headers.authorization || "")).toMatch(/^Bearer /);
           const parsed = JSON.parse(body) as Record<string, unknown>;
           expect(parsed.clientInstanceId).toBeTruthy();
-          response.end(JSON.stringify({
-            peer: { id: "peer-password-1" },
-            streamUrl: "/api/v1/agent/agent-password-1/a2a-peers/peer-password-1/events"
-          }));
+          response.end(
+            JSON.stringify({
+              peer: { id: "peer-password-1" },
+              streamUrl: "/api/v1/agent/agent-password-1/a2a-peers/peer-password-1/events",
+            }),
+          );
           return;
         }
-        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-password-1/a2a-peers/peer-password-1/events") {
+        if (
+          request.method === "GET" &&
+          url.pathname === "/api/v1/agent/agent-password-1/a2a-peers/peer-password-1/events"
+        ) {
           response.writeHead(200, {
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache",
-            Connection: "keep-alive"
+            Connection: "keep-alive",
           });
           eventStream = response;
           closeStream = () => response.end();
           response.write(`event: heartbeat\ndata: {"ok":true}\n\n`);
           return;
         }
-        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-password-1/a2a-peers/peer-password-1/heartbeat") {
+        if (
+          request.method === "POST" &&
+          url.pathname === "/api/v1/agent/agent-password-1/a2a-peers/peer-password-1/heartbeat"
+        ) {
           heartbeatPosts += 1;
           response.end(JSON.stringify({ status: "online" }));
           return;
@@ -4848,7 +5758,7 @@ describe("SupbotRuntime", () => {
         oidcIssuerUrl: `${baseUrl}/issuer`,
         oidcClientId: "agent-client-web-dev",
         staffAgentAccount: "staff-user",
-        staffAgentPassword: "staff-password"
+        staffAgentPassword: "staff-password",
       });
       await runtime.updateServstationA2AOidcSession({
         baseUrl,
@@ -4860,15 +5770,18 @@ describe("SupbotRuntime", () => {
             organizationId: "org-pw",
             departmentId: "dept-pw",
             preferred_username: "staff-user",
-            realm_access: { roles: ["staff"] }
+            realm_access: { roles: ["staff"] },
           }),
           refreshToken: "refresh-password",
           issuerUrl: `${baseUrl}/issuer`,
-          clientId: "agent-client-web-dev"
-        }
+          clientId: "agent-client-web-dev",
+        },
       });
       await runtime.connectServstationReverseBridge();
-      await waitForCondition("password reverse stream connected", () => runtime.snapshot().servstationA2A.config.reverse?.status === "connected" && Boolean(eventStream));
+      await waitForCondition(
+        "password reverse stream connected",
+        () => runtime.snapshot().servstationA2A.config.reverse?.status === "connected" && Boolean(eventStream),
+      );
       await waitForCondition("password reverse heartbeat posted", () => heartbeatPosts > 0);
       expect(tokenBodies).toHaveLength(0);
       expect(runtime.snapshot().identityContext).toMatchObject({
@@ -4876,12 +5789,12 @@ describe("SupbotRuntime", () => {
         organizationId: "org-pw",
         departmentId: "dept-pw",
         userId: "staff-user",
-        source: "servstation"
+        source: "servstation",
       });
     } finally {
       closeStream?.();
       await runtime.disconnectServstationReverseBridge();
-      await new Promise<void>((resolve, reject) => servstation.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => servstation.close((error) => (error ? reject(error) : resolve())));
     }
   });
 
@@ -4902,25 +5815,36 @@ describe("SupbotRuntime", () => {
           response.end(JSON.stringify({ agentInstanceId: "agent-heartbeat-1" }));
           return;
         }
-        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-heartbeat-1/a2a-peers/reverse-connections") {
-          response.end(JSON.stringify({
-            peer: { id: "peer-heartbeat-1" },
-            streamUrl: "/api/v1/agent/agent-heartbeat-1/a2a-peers/peer-heartbeat-1/events"
-          }));
+        if (
+          request.method === "POST" &&
+          url.pathname === "/api/v1/agent/agent-heartbeat-1/a2a-peers/reverse-connections"
+        ) {
+          response.end(
+            JSON.stringify({
+              peer: { id: "peer-heartbeat-1" },
+              streamUrl: "/api/v1/agent/agent-heartbeat-1/a2a-peers/peer-heartbeat-1/events",
+            }),
+          );
           return;
         }
-        if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-heartbeat-1/a2a-peers/peer-heartbeat-1/events") {
+        if (
+          request.method === "GET" &&
+          url.pathname === "/api/v1/agent/agent-heartbeat-1/a2a-peers/peer-heartbeat-1/events"
+        ) {
           response.writeHead(200, {
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache",
-            Connection: "keep-alive"
+            Connection: "keep-alive",
           });
           eventStream = response;
           closeStream = () => response.end();
           response.write(`event: heartbeat\ndata: {"ok":true}\n\n`);
           return;
         }
-        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-heartbeat-1/a2a-peers/peer-heartbeat-1/heartbeat") {
+        if (
+          request.method === "POST" &&
+          url.pathname === "/api/v1/agent/agent-heartbeat-1/a2a-peers/peer-heartbeat-1/heartbeat"
+        ) {
           heartbeatPosts += 1;
           response.statusCode = 400;
           response.end(JSON.stringify({ error: "missing agent instance id", code: "bad_request" }));
@@ -4940,7 +5864,7 @@ describe("SupbotRuntime", () => {
       userId: "user-heartbeat",
       roleIds: ["user"],
       source: "servstation",
-      servstationUrl: baseUrl
+      servstationUrl: baseUrl,
     });
     await runtime.updateServstationA2AConfig({ enabled: true, baseUrl, authMode: "identityHeaders" });
     try {
@@ -4948,13 +5872,13 @@ describe("SupbotRuntime", () => {
       await waitForCondition("reverse heartbeat attempted", () => heartbeatPosts > 0);
       expect(runtime.snapshot().servstationA2A.config.reverse).toMatchObject({
         status: "connected",
-        lastError: undefined
+        lastError: undefined,
       });
       expect(eventStream).toBeTruthy();
     } finally {
       closeStream?.();
       await runtime.disconnectServstationReverseBridge();
-      await new Promise<void>((resolve, reject) => servstation.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => servstation.close((error) => (error ? reject(error) : resolve())));
     }
   });
 
@@ -4983,25 +5907,30 @@ describe("SupbotRuntime", () => {
             response.end(JSON.stringify({ error: "transient reverse failure" }));
             return;
           }
-          response.end(JSON.stringify({
-            peer: { id: "peer-retry-1" },
-            streamUrl: "/api/v1/agent/agent-retry-1/a2a-peers/peer-retry-1/events",
-            heartbeatMs: 500
-          }));
+          response.end(
+            JSON.stringify({
+              peer: { id: "peer-retry-1" },
+              streamUrl: "/api/v1/agent/agent-retry-1/a2a-peers/peer-retry-1/events",
+              heartbeatMs: 500,
+            }),
+          );
           return;
         }
         if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-retry-1/a2a-peers/peer-retry-1/events") {
           response.writeHead(200, {
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache",
-            Connection: "keep-alive"
+            Connection: "keep-alive",
           });
           eventStream = response;
           closeStream = () => response.end();
           response.write(`event: heartbeat\ndata: {"ok":true}\n\n`);
           return;
         }
-        if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-retry-1/a2a-peers/peer-retry-1/heartbeat") {
+        if (
+          request.method === "POST" &&
+          url.pathname === "/api/v1/agent/agent-retry-1/a2a-peers/peer-retry-1/heartbeat"
+        ) {
           heartbeatPosts += 1;
           response.end(JSON.stringify({ status: "online" }));
           return;
@@ -5020,7 +5949,7 @@ describe("SupbotRuntime", () => {
       userId: "user-retry",
       roleIds: ["user"],
       source: "servstation",
-      servstationUrl: baseUrl
+      servstationUrl: baseUrl,
     });
     await runtime.updateServstationA2AConfig({ enabled: true, baseUrl, authMode: "identityHeaders" });
     try {
@@ -5035,14 +5964,13 @@ describe("SupbotRuntime", () => {
     } finally {
       closeStream?.();
       await runtime.disconnectServstationReverseBridge();
-      await new Promise<void>((resolve, reject) => servstation.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => servstation.close((error) => (error ? reject(error) : resolve())));
     }
   });
 
   test("refreshes Servstation OIDC sessions and updates bound identity", async () => {
     const runtime = await createRuntime();
     const refreshBodies: string[] = [];
-    let issuerUrl = "";
     let tokenEndpoint = "";
     const server = createServer((request, response) => {
       let body = "";
@@ -5058,19 +5986,21 @@ describe("SupbotRuntime", () => {
         }
         if (request.method === "POST" && path === "/issuer/token") {
           refreshBodies.push(body);
-          response.end(JSON.stringify({
-            access_token: fakeJwt({
-              tenantId: "tenant-oidc",
-              organizationId: "org-oidc",
-              departmentId: "dept-oidc",
-              preferred_username: "oidc-user",
-              realm_access: { roles: ["user", "offline_access"] }
+          response.end(
+            JSON.stringify({
+              access_token: fakeJwt({
+                tenantId: "tenant-oidc",
+                organizationId: "org-oidc",
+                departmentId: "dept-oidc",
+                preferred_username: "oidc-user",
+                realm_access: { roles: ["user", "offline_access"] },
+              }),
+              refresh_token: "refresh-token-2",
+              token_type: "Bearer",
+              scope: "openid profile offline_access",
+              expires_in: 300,
             }),
-            refresh_token: "refresh-token-2",
-            token_type: "Bearer",
-            scope: "openid profile offline_access",
-            expires_in: 300
-          }));
+          );
           return;
         }
         response.statusCode = 404;
@@ -5080,7 +6010,7 @@ describe("SupbotRuntime", () => {
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address() as AddressInfo;
     const baseUrl = `http://127.0.0.1:${address.port}`;
-    issuerUrl = `${baseUrl}/issuer`;
+    const issuerUrl = `${baseUrl}/issuer`;
     tokenEndpoint = `${issuerUrl}/token`;
     try {
       const initial = await runtime.updateServstationA2AOidcSession({
@@ -5093,12 +6023,12 @@ describe("SupbotRuntime", () => {
             tenantId: "tenant-old",
             organizationId: "org-old",
             departmentId: "dept-old",
-            preferred_username: "old-user"
+            preferred_username: "old-user",
           }),
           refreshToken: "refresh-token-1",
           expiresAt: new Date(Date.now() - 60_000).toISOString(),
           issuerUrl,
-          clientId: "agent-client-web-dev"
+          clientId: "agent-client-web-dev",
         },
         identityContext: {
           tenantId: "tenant-old",
@@ -5107,8 +6037,8 @@ describe("SupbotRuntime", () => {
           userId: "old-user",
           roleIds: ["user"],
           source: "servstation",
-          servstationUrl: baseUrl
-        }
+          servstationUrl: baseUrl,
+        },
       });
       expect(initial.authMode).toBe("oidc");
       expect(initial.oidc?.refreshTokenSaved).toBe(true);
@@ -5124,11 +6054,11 @@ describe("SupbotRuntime", () => {
         tenantId: "tenant-oidc",
         organizationId: "org-oidc",
         departmentId: "dept-oidc",
-        userId: "oidc-user"
+        userId: "oidc-user",
       });
       expect(identity?.roleIds).toEqual(["user", "offline_access"]);
     } finally {
-      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
   });
 
@@ -5137,23 +6067,36 @@ describe("SupbotRuntime", () => {
     const result = await runtime.sendPrompt({ prompt: "Remember that the release branch is v3-memory-mvp." });
     await waitForJob(runtime, result.job.id);
     const firstBoundary = await runtime.compactConversation(result.conversation.id);
-    const firstCandidate = runtime.snapshot().memory.candidates.find((candidate) => candidate.source === `compact:${firstBoundary.id}`);
+    const firstCandidate = runtime
+      .snapshot()
+      .memory.candidates.find((candidate) => candidate.source === `compact:${firstBoundary.id}`);
     expect(firstCandidate?.status).toBe("pending");
 
     const approved = await runtime.approveMemoryCandidate(firstCandidate!.id);
     expect(approved.content).toContain("release branch");
-    expect(runtime.snapshot().memory.facts.some((fact) => fact.id === approved.id && fact.status === "active")).toBe(true);
-    expect(runtime.snapshot().memory.candidates.find((candidate) => candidate.id === firstCandidate!.id)?.status).toBe("approved");
+    expect(runtime.snapshot().memory.facts.some((fact) => fact.id === approved.id && fact.status === "active")).toBe(
+      true,
+    );
+    expect(runtime.snapshot().memory.candidates.find((candidate) => candidate.id === firstCandidate!.id)?.status).toBe(
+      "approved",
+    );
 
     const denyConversation = await runtime.createConversation("Deny candidate");
-    const second = await runtime.sendPrompt({ conversationId: denyConversation.id, prompt: "Remember that the deny candidate path is v3-memory-deny-flow." });
+    const second = await runtime.sendPrompt({
+      conversationId: denyConversation.id,
+      prompt: "Remember that the deny candidate path is v3-memory-deny-flow.",
+    });
     await waitForJob(runtime, second.job.id);
     const secondBoundary = await runtime.compactConversation(denyConversation.id);
-    const secondCandidate = runtime.snapshot().memory.candidates.find((candidate) => candidate.source === `compact:${secondBoundary.id}`);
+    const secondCandidate = runtime
+      .snapshot()
+      .memory.candidates.find((candidate) => candidate.source === `compact:${secondBoundary.id}`);
     expect(secondCandidate?.status).toBe("pending");
 
     await runtime.denyMemoryCandidate(secondCandidate!.id);
-    expect(runtime.snapshot().memory.candidates.find((candidate) => candidate.id === secondCandidate!.id)?.status).toBe("denied");
+    expect(runtime.snapshot().memory.candidates.find((candidate) => candidate.id === secondCandidate!.id)?.status).toBe(
+      "denied",
+    );
     expect(runtime.snapshot().memory.facts.some((fact) => fact.source === secondCandidate!.source)).toBe(false);
     expect(runtime.snapshot().runtimeEvents.some((event) => event.kind === "memory_write")).toBe(true);
   });
@@ -5163,12 +6106,16 @@ describe("SupbotRuntime", () => {
     const result = await runtime.sendPrompt({ prompt: "Remember that the Polaris launch branch is release/polaris." });
     await waitForJob(runtime, result.job.id);
     const firstBoundary = await runtime.compactConversation(result.conversation.id);
-    const firstCandidate = runtime.snapshot().memory.candidates.find((candidate) => candidate.source === `compact:${firstBoundary.id}`);
+    const firstCandidate = runtime
+      .snapshot()
+      .memory.candidates.find((candidate) => candidate.source === `compact:${firstBoundary.id}`);
     expect(firstCandidate?.status).toBe("pending");
     const before = runtime.snapshot().memory.candidates.length;
 
     const secondBoundary = await runtime.compactConversation(result.conversation.id);
-    expect(runtime.snapshot().memory.candidates.find((candidate) => candidate.source === `compact:${secondBoundary.id}`)).toBeUndefined();
+    expect(
+      runtime.snapshot().memory.candidates.find((candidate) => candidate.source === `compact:${secondBoundary.id}`),
+    ).toBeUndefined();
     expect(runtime.snapshot().memory.candidates.length).toBe(before);
   });
 
@@ -5188,7 +6135,10 @@ describe("SupbotRuntime", () => {
       return { choices: [{ message: { content: "No duplicate compact memory." } }] };
     });
     try {
-      const followup = await runtime.sendPrompt({ conversationId: result.conversation.id, prompt: "Orchid recall follow-up" });
+      const followup = await runtime.sendPrompt({
+        conversationId: result.conversation.id,
+        prompt: "Orchid recall follow-up",
+      });
       await waitForJob(runtime, followup.job.id);
     } finally {
       await mock.close();
@@ -5209,6 +6159,52 @@ describe("SupbotRuntime", () => {
     expect(transcript.diagnostics[0]?.message).toContain("Transcript file was not found");
   });
 
+  test("migrates legacy state messages to transcripts and keeps snapshots bounded", async () => {
+    const rootDir = await createGitRoot();
+    const dataDir = await mkdtemp(join(tmpdir(), "supbot-test-"));
+    tempDirs.push(dataDir);
+    const legacyState = createInitialState();
+    legacyState.conversations = ["conv-a", "conv-b"].map((conversationId) => ({
+      id: conversationId,
+      title: conversationId,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:01:19.000Z",
+      messages: Array.from({ length: 80 }, (_value, index) => ({
+        id: `${conversationId}-msg-${index}`,
+        conversationId,
+        role: index % 2 ? ("assistant" as const) : ("user" as const),
+        text: `${conversationId} history ${index}`,
+        createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+      })),
+    }));
+    await writeFile(join(dataDir, "state.json"), JSON.stringify(legacyState), "utf8");
+
+    const runtime = new SupbotRuntime(new JsonFileStorage(dataDir), { rootDir });
+    await runtime.init();
+    const snapshot = runtime.snapshot("conv-a");
+    expect(snapshot.activeConversationId).toBe("conv-a");
+    expect(snapshot.conversations.find((item) => item.id === "conv-a")).toMatchObject({
+      messageCount: 80,
+    });
+    expect(snapshot.conversations.find((item) => item.id === "conv-a")?.messages).toHaveLength(50);
+    expect(snapshot.conversations.find((item) => item.id === "conv-b")?.messages).toEqual([]);
+    expect(JSON.stringify(snapshot)).not.toContain("conv-b history 0");
+
+    const page = await runtime.loadConversationHistory("conv-a", "conv-a-msg-30", 20);
+    expect(page.messages.map((message) => message.id)).toEqual(
+      Array.from({ length: 20 }, (_value, index) => `conv-a-msg-${index + 10}`),
+    );
+    expect(page.hasMore).toBe(true);
+
+    const persisted = JSON.parse(await readFile(join(dataDir, "state.json"), "utf8"));
+    expect(
+      persisted.conversations.every((conversation: Record<string, unknown>) => !("messages" in conversation)),
+    ).toBe(true);
+    const restarted = new SupbotRuntime(new JsonFileStorage(dataDir), { rootDir });
+    await restarted.init();
+    expect(restarted.snapshot("conv-b").conversations.find((item) => item.id === "conv-b")?.messages).toHaveLength(50);
+  });
+
   test("loads transcript recovery with diagnostics for damaged lines", async () => {
     const runtime = await createRuntime();
     const result = await runtime.sendPrompt({ prompt: "damaged transcript context" });
@@ -5216,17 +6212,25 @@ describe("SupbotRuntime", () => {
     const conversation = runtime.snapshot().conversations.find((item) => item.id === result.conversation.id)!;
     const store = new TranscriptStore(tempDirs[tempDirs.length - 1]);
     await mkdir(dirname(store.pathFor(conversation.id)), { recursive: true });
-    await writeFile(store.pathFor(conversation.id), [
-      "not-json",
-      JSON.stringify({ type: "message", message: conversation.messages[0] }),
-      JSON.stringify({ type: "message", message: conversation.messages[1] })
-    ].join("\n"), "utf8");
+    await writeFile(
+      store.pathFor(conversation.id),
+      [
+        "not-json",
+        JSON.stringify({ type: "message", message: conversation.messages[0] }),
+        JSON.stringify({ type: "message", message: conversation.messages[1] }),
+      ].join("\n"),
+      "utf8",
+    );
 
     const transcript = await runtime.loadTranscript(conversation.id);
     expect(transcript.source).toBe("transcript");
     expect(transcript.entries).toHaveLength(2);
-    expect(transcript.activeMessages.map((message) => message.id)).toEqual(conversation.messages.slice(0, 2).map((message) => message.id));
-    expect(transcript.diagnostics.some((diagnostic) => diagnostic.level === "error" && diagnostic.line === 1)).toBe(true);
+    expect(transcript.activeMessages.map((message) => message.id)).toEqual(
+      conversation.messages.slice(0, 2).map((message) => message.id),
+    );
+    expect(transcript.diagnostics.some((diagnostic) => diagnostic.level === "error" && diagnostic.line === 1)).toBe(
+      true,
+    );
   });
 
   test("recovers active transcript context after the latest compact boundary", async () => {
@@ -5249,18 +6253,27 @@ describe("SupbotRuntime", () => {
     const runtime = await createRuntime();
     const server = createServer((_request, response) => {
       response.setHeader("Content-Type", "application/json");
-      response.end(JSON.stringify({
-        choices: [{
-          message: {
-            content: null,
-            tool_calls: [{
-              id: `call_read_${Date.now()}_${Math.random()}`,
-              type: "function",
-              function: { name: "ReadFile", arguments: JSON.stringify({ path: join(tempDirs[tempDirs.length - 1], "missing.txt") }) }
-            }]
-          }
-        }]
-      }));
+      response.end(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: `call_read_${Date.now()}_${Math.random()}`,
+                    type: "function",
+                    function: {
+                      name: "ReadFile",
+                      arguments: JSON.stringify({ path: join(tempDirs[tempDirs.length - 1], "missing.txt") }),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      );
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     try {
@@ -5271,7 +6284,7 @@ describe("SupbotRuntime", () => {
         model: "mock-model",
         temperature: 0.1,
         maxTokens: 1000,
-        apiKey: "test-key"
+        apiKey: "test-key",
       });
       const result = await runtime.sendPrompt({ prompt: "loop forever" });
       await waitForJob(runtime, result.job.id);
@@ -5279,7 +6292,7 @@ describe("SupbotRuntime", () => {
       expect(job?.status).toBe("failed");
       expect(job?.error).toContain("maxTurns");
     } finally {
-      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
   });
 
@@ -5290,7 +6303,7 @@ describe("SupbotRuntime", () => {
       prompt: "scheduled hello",
       scheduleKind: "once",
       runAt: new Date(Date.now() - 1000).toISOString(),
-      enabled: true
+      enabled: true,
     });
 
     const count = await runtime.runDueScheduledJobs(new Date());
@@ -5312,7 +6325,7 @@ describe("SupbotRuntime", () => {
       prompt: "scheduled project hello",
       scheduleKind: "once",
       runAt: new Date(Date.now() - 1000).toISOString(),
-      enabled: true
+      enabled: true,
     });
 
     expect(await runtime.runDueScheduledJobs(new Date())).toBe(1);

@@ -41,7 +41,7 @@ import {
   type ScheduledJob,
   type SubagentConfig,
   type TaskWorktree,
-  type ToolMarketConfig
+  type ToolMarketConfig,
 } from "@supbot/shared";
 
 export interface ModelProviderState extends ModelProviderConfig {
@@ -101,36 +101,36 @@ const defaultCapabilities: CapabilityDefinition[] = [
     name: "Local files",
     kind: "tool",
     description: "Attach files, read local files with /read, and create generated files with /write.",
-    enabled: true
+    enabled: true,
   },
   {
     id: "tool.shell",
     name: "Shell commands",
     kind: "tool",
     description: "Run local commands with /shell when the user asks the agent to automate work.",
-    enabled: true
+    enabled: true,
   },
   {
     id: "tool.scheduler",
     name: "Scheduled tasks",
     kind: "scheduler",
     description: "Create and manage local reminders or recurring prompts.",
-    enabled: true
+    enabled: true,
   },
   {
     id: "tool.generated-files",
     name: "Generated files",
     kind: "storage",
     description: "Track artifacts created by local agent jobs.",
-    enabled: true
+    enabled: true,
   },
   {
     id: "tool.autopilot-data",
     name: "Project data autopilot",
     kind: "storage",
     description: "Run supervised project-based data collection, processing, analysis, and reporting workflows.",
-    enabled: true
-  }
+    enabled: true,
+  },
 ];
 
 const defaultSubagents: SubagentConfig[] = [
@@ -138,53 +138,59 @@ const defaultSubagents: SubagentConfig[] = [
     id: "research",
     name: "research",
     description: "Collects context and summarizes options before implementation.",
-    systemPrompt: "You are a local research subagent. Be concise, cite local evidence when available, and hand back actionable findings.",
-    enabled: true
+    systemPrompt:
+      "You are a local research subagent. Be concise, cite local evidence when available, and hand back actionable findings.",
+    enabled: true,
   },
   {
     id: "builder",
     name: "builder",
     description: "Focuses on implementation plans, code edits, and verification steps.",
-    systemPrompt: "You are a local builder subagent. Turn the task into concrete implementation steps and call out risks.",
-    enabled: true
+    systemPrompt:
+      "You are a local builder subagent. Turn the task into concrete implementation steps and call out risks.",
+    enabled: true,
   },
   {
     id: "collector",
     name: "collector",
     description: "Collects source data for project-based data runs.",
-    systemPrompt: "You are a local data collection staff-agent. Gather source data into approved project data folders, record sources, and keep outputs concise.",
-    enabled: true
+    systemPrompt:
+      "You are a local data collection staff-agent. Gather source data into approved project data folders, record sources, and keep outputs concise.",
+    enabled: true,
   },
   {
     id: "processor",
     name: "processor",
     description: "Cleans, deduplicates, and transforms collected data.",
-    systemPrompt: "You are a local data processing staff-agent. Clean, deduplicate, transform, and summarize data artifacts inside approved project output folders.",
-    enabled: true
+    systemPrompt:
+      "You are a local data processing staff-agent. Clean, deduplicate, transform, and summarize data artifacts inside approved project output folders.",
+    enabled: true,
   },
   {
     id: "analyst",
     name: "analyst",
     description: "Analyzes processed data and extracts evidence-backed findings.",
-    systemPrompt: "You are a local data analysis staff-agent. Produce evidence-backed findings from project data artifacts and cite the files you used.",
-    enabled: true
+    systemPrompt:
+      "You are a local data analysis staff-agent. Produce evidence-backed findings from project data artifacts and cite the files you used.",
+    enabled: true,
   },
   {
     id: "reviewer",
     name: "reviewer",
     description: "Reviews data-run outputs against the goal and evidence ledger.",
-    systemPrompt: "You are a local data review staff-agent. Check whether the run output satisfies the goal, identify unsupported claims, and request fixes when evidence is missing.",
-    enabled: true
-  }
+    systemPrompt:
+      "You are a local data review staff-agent. Check whether the run output satisfies the goal, identify unsupported claims, and request fixes when evidence is missing.",
+    enabled: true,
+  },
 ];
 
 const legacyLocalBotstationA2A = {
   baseUrl: "http://localhost:8081",
-  issuerUrl: "http://localhost:8092"
+  issuerUrl: "http://localhost:8092",
 };
 
 const legacyRemoteBotstationA2A = {
-  baseUrl: "http://101.227.67.76"
+  baseUrl: "http://101.227.67.76",
 };
 
 const defaultBotstationA2A = {
@@ -193,7 +199,7 @@ const defaultBotstationA2A = {
   clientId: defaultServstationClientId,
   scope: defaultServstationScope,
   redirectUri: defaultServstationRedirectUri,
-  userId: defaultServstationUser
+  userId: defaultServstationUser,
 };
 
 export function createInitialState(): RuntimeState {
@@ -201,7 +207,7 @@ export function createInitialState(): RuntimeState {
   const defaultProvider: ModelProviderState = {
     ...defaultModelProviderConfig,
     createdAt,
-    updatedAt: createdAt
+    updatedAt: createdAt,
   };
   return {
     agentName: "HBClient Local Agent",
@@ -236,7 +242,7 @@ export function createInitialState(): RuntimeState {
       enabled: false,
       host: "127.0.0.1",
       port: 47831,
-      tokenSaved: false
+      tokenSaved: false,
     },
     remoteBridgeSessions: [],
     remoteBridgeAudit: [],
@@ -252,13 +258,13 @@ export function createInitialState(): RuntimeState {
         clientId: defaultBotstationA2A.clientId,
         scope: defaultBotstationA2A.scope,
         redirectUri: defaultBotstationA2A.redirectUri,
-        refreshTokenSaved: false
+        refreshTokenSaved: false,
       },
       reverse: {
         enabled: false,
-        status: "disconnected"
-      }
-    }
+        status: "disconnected",
+      },
+    },
   };
 }
 
@@ -303,7 +309,7 @@ export class JsonFileStorage implements StorageAdapter {
   }
 
   async save(state: RuntimeState): Promise<void> {
-    const snapshot = JSON.stringify(state, null, 2);
+    const snapshot = JSON.stringify(stateForDisk(state), null, 2);
     this.writeQueue = this.writeQueue.catch(() => undefined).then(() => this.writeSnapshot(snapshot));
     await this.writeQueue;
   }
@@ -328,6 +334,19 @@ export class JsonFileStorage implements StorageAdapter {
   }
 }
 
+function stateForDisk(
+  state: RuntimeState,
+): Omit<RuntimeState, "conversations"> & { conversations: Array<Omit<Conversation, "messages">> } {
+  return {
+    ...state,
+    conversations: state.conversations.map((conversation) => {
+      const metadata = { ...conversation } as Partial<Conversation>;
+      delete metadata.messages;
+      return metadata as Omit<Conversation, "messages">;
+    }),
+  };
+}
+
 type LegacyRuntimeStateInput = Partial<RuntimeState> & {
   modelConfig?: Partial<ModelConfig>;
   modelSecret?: string;
@@ -344,24 +363,41 @@ function normalizeState(input: LegacyRuntimeStateInput): RuntimeState {
     activeModelProviderId,
     toolMarketConfig: normalizeToolMarketConfig(input, initial.toolMarketConfig),
     toolMarketSecret: typeof input.toolMarketSecret === "string" ? input.toolMarketSecret : undefined,
-    toolMarketPasswordSecret: typeof input.toolMarketPasswordSecret === "string" ? input.toolMarketPasswordSecret : undefined,
+    toolMarketPasswordSecret:
+      typeof input.toolMarketPasswordSecret === "string" ? input.toolMarketPasswordSecret : undefined,
     personality: {
       ...initial.personality,
       ...(input.personality || {}),
-      traits: Array.isArray(input.personality?.traits) ? input.personality.traits.filter((item) => typeof item === "string") : initial.personality.traits
+      traits: Array.isArray(input.personality?.traits)
+        ? input.personality.traits.filter((item) => typeof item === "string")
+        : initial.personality.traits,
     },
-    capabilities: mergeDefaultCapabilities(Array.isArray(input.capabilities) ? input.capabilities : [], initial.capabilities, normalizeDeletedCapabilityIds(input.deletedCapabilityIds)),
+    capabilities: mergeDefaultCapabilities(
+      Array.isArray(input.capabilities) ? input.capabilities : [],
+      initial.capabilities,
+      normalizeDeletedCapabilityIds(input.deletedCapabilityIds),
+    ),
     deletedCapabilityIds: normalizeDeletedCapabilityIds(input.deletedCapabilityIds),
     subagents: Array.isArray(input.subagents) ? input.subagents : initial.subagents,
     conversations: Array.isArray(input.conversations) ? input.conversations.map(normalizeConversation) : [],
     jobs: Array.isArray(input.jobs) ? input.jobs.map(normalizeAgentJob) : [],
     scheduledJobs: Array.isArray(input.scheduledJobs) ? input.scheduledJobs.map(normalizeScheduledJob) : [],
-    projects: Array.isArray(input.projects) ? input.projects.map(normalizeProject).filter(Boolean) as Project[] : [],
-    autopilotRuns: Array.isArray(input.autopilotRuns) ? input.autopilotRuns.map(normalizeAutopilotRun).filter(Boolean) as AutopilotRun[] : [],
-    autopilotTasks: Array.isArray(input.autopilotTasks) ? input.autopilotTasks.map(normalizeAutopilotTask).filter(Boolean) as AutopilotTask[] : [],
-    autopilotEvents: Array.isArray(input.autopilotEvents) ? input.autopilotEvents.map(normalizeAutopilotEvent).filter(Boolean) as AutopilotEvent[] : [],
-    autopilotCheckpoints: Array.isArray(input.autopilotCheckpoints) ? input.autopilotCheckpoints.map(normalizeAutopilotCheckpoint).filter(Boolean) as AutopilotCheckpoint[] : [],
-    dataArtifacts: Array.isArray(input.dataArtifacts) ? input.dataArtifacts.map(normalizeDataArtifact).filter(Boolean) as DataArtifact[] : [],
+    projects: Array.isArray(input.projects) ? (input.projects.map(normalizeProject).filter(Boolean) as Project[]) : [],
+    autopilotRuns: Array.isArray(input.autopilotRuns)
+      ? (input.autopilotRuns.map(normalizeAutopilotRun).filter(Boolean) as AutopilotRun[])
+      : [],
+    autopilotTasks: Array.isArray(input.autopilotTasks)
+      ? (input.autopilotTasks.map(normalizeAutopilotTask).filter(Boolean) as AutopilotTask[])
+      : [],
+    autopilotEvents: Array.isArray(input.autopilotEvents)
+      ? (input.autopilotEvents.map(normalizeAutopilotEvent).filter(Boolean) as AutopilotEvent[])
+      : [],
+    autopilotCheckpoints: Array.isArray(input.autopilotCheckpoints)
+      ? (input.autopilotCheckpoints.map(normalizeAutopilotCheckpoint).filter(Boolean) as AutopilotCheckpoint[])
+      : [],
+    dataArtifacts: Array.isArray(input.dataArtifacts)
+      ? (input.dataArtifacts.map(normalizeDataArtifact).filter(Boolean) as DataArtifact[])
+      : [],
     pendingToolPermissions: Array.isArray(input.pendingToolPermissions) ? input.pendingToolPermissions : [],
     agentLoopTraces: Array.isArray(input.agentLoopTraces) ? input.agentLoopTraces : [],
     querySessions: Array.isArray(input.querySessions) ? input.querySessions : [],
@@ -370,21 +406,33 @@ function normalizeState(input: LegacyRuntimeStateInput): RuntimeState {
     memory: normalizeMemory(input.memory),
     permissionMode: normalizePermissionMode(input.permissionMode),
     permissionRules: Array.isArray(input.permissionRules) ? input.permissionRules : [],
-    mcpServers: Array.isArray(input.mcpServers) ? input.mcpServers.map(normalizeMcpServer).filter(Boolean) as McpServerConfig[] : [],
-    worktrees: Array.isArray(input.worktrees) ? input.worktrees.map(normalizeWorktree).filter(Boolean) as TaskWorktree[] : [],
+    mcpServers: Array.isArray(input.mcpServers)
+      ? (input.mcpServers.map(normalizeMcpServer).filter(Boolean) as McpServerConfig[])
+      : [],
+    worktrees: Array.isArray(input.worktrees)
+      ? (input.worktrees.map(normalizeWorktree).filter(Boolean) as TaskWorktree[])
+      : [],
     remoteBridgeConfig: normalizeRemoteBridgeConfig(input.remoteBridgeConfig, Boolean(input.remoteBridgeSecret)),
     remoteBridgeSecret: typeof input.remoteBridgeSecret === "string" ? input.remoteBridgeSecret : undefined,
-    remoteBridgeSessions: Array.isArray(input.remoteBridgeSessions) ? input.remoteBridgeSessions.map(normalizeRemoteBridgeSession).filter(Boolean) as RemoteBridgeSession[] : [],
-    remoteBridgeAudit: Array.isArray(input.remoteBridgeAudit) ? input.remoteBridgeAudit.map(normalizeRemoteBridgeAudit).filter(Boolean) as RemoteBridgeAuditRecord[] : [],
+    remoteBridgeSessions: Array.isArray(input.remoteBridgeSessions)
+      ? (input.remoteBridgeSessions.map(normalizeRemoteBridgeSession).filter(Boolean) as RemoteBridgeSession[])
+      : [],
+    remoteBridgeAudit: Array.isArray(input.remoteBridgeAudit)
+      ? (input.remoteBridgeAudit.map(normalizeRemoteBridgeAudit).filter(Boolean) as RemoteBridgeAuditRecord[])
+      : [],
     servstationA2AConfig: normalizeServstationA2AConfig(
       input.servstationA2AConfig,
       Boolean(input.servstationA2ASecret),
       Boolean(input.servstationA2AOidcSecret),
-      Boolean(input.servstationA2AStaffAgentPasswordSecret)
+      Boolean(input.servstationA2AStaffAgentPasswordSecret),
     ),
     servstationA2ASecret: typeof input.servstationA2ASecret === "string" ? input.servstationA2ASecret : undefined,
-    servstationA2AOidcSecret: typeof input.servstationA2AOidcSecret === "string" ? input.servstationA2AOidcSecret : undefined,
-    servstationA2AStaffAgentPasswordSecret: typeof input.servstationA2AStaffAgentPasswordSecret === "string" ? input.servstationA2AStaffAgentPasswordSecret : undefined
+    servstationA2AOidcSecret:
+      typeof input.servstationA2AOidcSecret === "string" ? input.servstationA2AOidcSecret : undefined,
+    servstationA2AStaffAgentPasswordSecret:
+      typeof input.servstationA2AStaffAgentPasswordSecret === "string"
+        ? input.servstationA2AStaffAgentPasswordSecret
+        : undefined,
   };
 }
 
@@ -392,9 +440,9 @@ function normalizeModelProviders(input: LegacyRuntimeStateInput, initial: ModelP
   const fallback = initial[0] || { ...defaultModelProviderConfig };
   const seen = new Set<string>();
   const providers = Array.isArray(input.modelProviders)
-    ? input.modelProviders
+    ? (input.modelProviders
         .map((provider, index) => normalizeModelProvider(provider, fallback, index, seen))
-        .filter(Boolean) as ModelProviderState[]
+        .filter(Boolean) as ModelProviderState[])
     : [];
   if (providers.length > 0) {
     return providers;
@@ -417,22 +465,28 @@ function normalizeModelProviders(input: LegacyRuntimeStateInput, initial: ModelP
       apiKeySaved: Boolean(secret),
       apiKeyStorage: secret ? apiKeyStorage : undefined,
       createdAt: timestamp,
-      updatedAt: timestamp
-    }
+      updatedAt: timestamp,
+    },
   ];
 }
 
-function normalizeModelProvider(value: unknown, fallback: ModelProviderState, index: number, seen: Set<string>): ModelProviderState | undefined {
+function normalizeModelProvider(
+  value: unknown,
+  fallback: ModelProviderState,
+  index: number,
+  seen: Set<string>,
+): ModelProviderState | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
   }
   const input = value as Partial<ModelProviderState>;
   const now = new Date().toISOString();
-  const rawId = typeof input.id === "string" && input.id.trim()
-    ? input.id.trim()
-    : index === 0
-      ? fallback.id
-      : `model-provider-${index + 1}`;
+  const rawId =
+    typeof input.id === "string" && input.id.trim()
+      ? input.id.trim()
+      : index === 0
+        ? fallback.id
+        : `model-provider-${index + 1}`;
   const id = uniqueModelProviderId(rawId, seen);
   const apiKeySecret = typeof input.apiKeySecret === "string" ? input.apiKeySecret : undefined;
   return {
@@ -447,7 +501,7 @@ function normalizeModelProvider(value: unknown, fallback: ModelProviderState, in
     apiKeySaved: Boolean(apiKeySecret),
     apiKeyStorage: apiKeySecret ? normalizeApiKeyStorage(input.apiKeyStorage) : undefined,
     createdAt: typeof input.createdAt === "string" && input.createdAt ? input.createdAt : now,
-    updatedAt: typeof input.updatedAt === "string" && input.updatedAt ? input.updatedAt : now
+    updatedAt: typeof input.updatedAt === "string" && input.updatedAt ? input.updatedAt : now,
   };
 }
 
@@ -488,12 +542,14 @@ function normalizeMemory(value: unknown): MemorySnapshot {
     links: Array.isArray(memory?.links) ? memory.links : [],
     candidates: Array.isArray(memory?.candidates) ? memory.candidates : [],
     recallHistory: Array.isArray(memory?.recallHistory) ? memory.recallHistory : [],
-    recallFeedback: Array.isArray(memory?.recallFeedback) ? memory.recallFeedback : []
+    recallFeedback: Array.isArray(memory?.recallFeedback) ? memory.recallFeedback : [],
   };
 }
 
 function normalizePermissionMode(value: unknown): PermissionMode {
-  return value === "acceptEdits" || value === "bypassPermissions" || value === "plan" || value === "default" ? value : "default";
+  return value === "acceptEdits" || value === "bypassPermissions" || value === "plan" || value === "default"
+    ? value
+    : "default";
 }
 
 function normalizeToolMarketSource(value: unknown): ToolMarketConfig["source"] {
@@ -504,7 +560,11 @@ function normalizeToolMarketConfig(input: Partial<RuntimeState>, initial: ToolMa
   const current: Partial<ToolMarketConfig> = input.toolMarketConfig || {};
   const apiUrl = stringOr(current.apiUrl, initial.apiUrl);
   const accountEmail = typeof current.accountEmail === "string" ? current.accountEmail : initial.accountEmail;
-  const hasRemoteConfig = Boolean(apiUrl.trim()) || Boolean(accountEmail.trim()) || Boolean(input.toolMarketSecret) || Boolean(input.toolMarketPasswordSecret);
+  const hasRemoteConfig =
+    Boolean(apiUrl.trim()) ||
+    Boolean(accountEmail.trim()) ||
+    Boolean(input.toolMarketSecret) ||
+    Boolean(input.toolMarketPasswordSecret);
   const source = normalizeToolMarketSource(current.source);
   return {
     ...initial,
@@ -515,34 +575,40 @@ function normalizeToolMarketConfig(input: Partial<RuntimeState>, initial: ToolMa
     accessTokenSaved: Boolean(input.toolMarketSecret),
     passwordSaved: Boolean(input.toolMarketPasswordSecret),
     tokenStorage: input.toolMarketSecret ? current.tokenStorage || "file" : undefined,
-    passwordStorage: input.toolMarketPasswordSecret ? current.passwordStorage || "file" : undefined
+    passwordStorage: input.toolMarketPasswordSecret ? current.passwordStorage || "file" : undefined,
   };
 }
 
 function normalizeConversation(conversation: Conversation): Conversation {
   return {
     ...conversation,
-    projectId: typeof conversation.projectId === "string" && conversation.projectId ? conversation.projectId : undefined,
-    messages: Array.isArray(conversation.messages) ? conversation.messages.map(normalizeMessage) : []
+    projectId:
+      typeof conversation.projectId === "string" && conversation.projectId ? conversation.projectId : undefined,
+    messages: Array.isArray(conversation.messages) ? conversation.messages.map(normalizeMessage) : [],
   };
 }
 
 function normalizeAgentJob(job: AgentJob): AgentJob {
   return {
     ...job,
-    projectId: typeof job.projectId === "string" && job.projectId ? job.projectId : undefined
+    projectId: typeof job.projectId === "string" && job.projectId ? job.projectId : undefined,
   };
 }
 
 function normalizeScheduledJob(job: ScheduledJob): ScheduledJob {
   return {
     ...job,
-    projectId: typeof job.projectId === "string" && job.projectId ? job.projectId : undefined
+    projectId: typeof job.projectId === "string" && job.projectId ? job.projectId : undefined,
   };
 }
 
 function normalizeProject(project: Project): Project | undefined {
-  if (!project || typeof project !== "object" || typeof project.id !== "string" || typeof project.rootPath !== "string") {
+  if (
+    !project ||
+    typeof project !== "object" ||
+    typeof project.id !== "string" ||
+    typeof project.rootPath !== "string"
+  ) {
     return undefined;
   }
   const now = new Date().toISOString();
@@ -555,7 +621,7 @@ function normalizeProject(project: Project): Project | undefined {
     createdAt: typeof project.createdAt === "string" ? project.createdAt : now,
     updatedAt: typeof project.updatedAt === "string" ? project.updatedAt : now,
     lastRunAt: typeof project.lastRunAt === "string" ? project.lastRunAt : undefined,
-    error: typeof project.error === "string" ? project.error : undefined
+    error: typeof project.error === "string" ? project.error : undefined,
   };
 }
 
@@ -574,24 +640,32 @@ function normalizeAutopilotRun(run: AutopilotRun): AutopilotRun | undefined {
     currentStage: normalizeAutopilotStage(run.currentStage),
     writePolicy: {
       mode: "projectSandbox",
-      allowedWriteRoots: Array.isArray(run.writePolicy?.allowedWriteRoots) ? run.writePolicy.allowedWriteRoots.filter((item): item is string => typeof item === "string") : [],
+      allowedWriteRoots: Array.isArray(run.writePolicy?.allowedWriteRoots)
+        ? run.writePolicy.allowedWriteRoots.filter((item): item is string => typeof item === "string")
+        : [],
       allowNetwork: run.writePolicy?.allowNetwork !== false,
       allowMcp: run.writePolicy?.allowMcp !== false,
       maxRuntimeMinutes: normalizePositiveNumber(run.writePolicy?.maxRuntimeMinutes, 120),
       maxTasks: normalizePositiveNumber(run.writePolicy?.maxTasks, 16),
-      maxRetries: normalizePositiveNumber(run.writePolicy?.maxRetries, 1)
+      maxRetries: normalizePositiveNumber(run.writePolicy?.maxRetries, 1),
     },
     dataSources: Array.isArray(run.dataSources) ? run.dataSources : [],
     taskIds: Array.isArray(run.taskIds) ? run.taskIds.filter((item): item is string => typeof item === "string") : [],
-    artifactIds: Array.isArray(run.artifactIds) ? run.artifactIds.filter((item): item is string => typeof item === "string") : [],
-    checkpointIds: Array.isArray(run.checkpointIds) ? run.checkpointIds.filter((item): item is string => typeof item === "string") : [],
-    evidence: Array.isArray(run.evidence) ? run.evidence.filter((item): item is string => typeof item === "string") : [],
+    artifactIds: Array.isArray(run.artifactIds)
+      ? run.artifactIds.filter((item): item is string => typeof item === "string")
+      : [],
+    checkpointIds: Array.isArray(run.checkpointIds)
+      ? run.checkpointIds.filter((item): item is string => typeof item === "string")
+      : [],
+    evidence: Array.isArray(run.evidence)
+      ? run.evidence.filter((item): item is string => typeof item === "string")
+      : [],
     reportPath: typeof run.reportPath === "string" ? run.reportPath : undefined,
     error: typeof run.error === "string" ? run.error : undefined,
     createdAt: typeof run.createdAt === "string" ? run.createdAt : now,
     updatedAt: typeof run.updatedAt === "string" ? run.updatedAt : now,
     startedAt: typeof run.startedAt === "string" ? run.startedAt : undefined,
-    finishedAt: typeof run.finishedAt === "string" ? run.finishedAt : undefined
+    finishedAt: typeof run.finishedAt === "string" ? run.finishedAt : undefined,
   };
 }
 
@@ -611,14 +685,18 @@ function normalizeAutopilotTask(task: AutopilotTask): AutopilotTask | undefined 
     status: normalizeAutopilotTaskStatus(task.status),
     attempts: normalizeNonNegativeNumber(task.attempts, 0),
     maxAttempts: normalizePositiveNumber(task.maxAttempts, 2),
-    artifactIds: Array.isArray(task.artifactIds) ? task.artifactIds.filter((item): item is string => typeof item === "string") : [],
-    evidence: Array.isArray(task.evidence) ? task.evidence.filter((item): item is string => typeof item === "string") : [],
+    artifactIds: Array.isArray(task.artifactIds)
+      ? task.artifactIds.filter((item): item is string => typeof item === "string")
+      : [],
+    evidence: Array.isArray(task.evidence)
+      ? task.evidence.filter((item): item is string => typeof item === "string")
+      : [],
     output: typeof task.output === "string" ? task.output : undefined,
     error: typeof task.error === "string" ? task.error : undefined,
     startedAt: typeof task.startedAt === "string" ? task.startedAt : undefined,
     finishedAt: typeof task.finishedAt === "string" ? task.finishedAt : undefined,
     createdAt: typeof task.createdAt === "string" ? task.createdAt : now,
-    updatedAt: typeof task.updatedAt === "string" ? task.updatedAt : now
+    updatedAt: typeof task.updatedAt === "string" ? task.updatedAt : now,
   };
 }
 
@@ -634,12 +712,17 @@ function normalizeAutopilotEvent(event: AutopilotEvent): AutopilotEvent | undefi
     level: event.level === "warning" || event.level === "error" ? event.level : "info",
     message: typeof event.message === "string" ? event.message : "",
     createdAt: typeof event.createdAt === "string" ? event.createdAt : new Date().toISOString(),
-    data: event.data
+    data: event.data,
   };
 }
 
 function normalizeAutopilotCheckpoint(checkpoint: AutopilotCheckpoint): AutopilotCheckpoint | undefined {
-  if (!checkpoint || typeof checkpoint !== "object" || typeof checkpoint.id !== "string" || typeof checkpoint.runId !== "string") {
+  if (
+    !checkpoint ||
+    typeof checkpoint !== "object" ||
+    typeof checkpoint.id !== "string" ||
+    typeof checkpoint.runId !== "string"
+  ) {
     return undefined;
   }
   return {
@@ -649,14 +732,23 @@ function normalizeAutopilotCheckpoint(checkpoint: AutopilotCheckpoint): Autopilo
     stage: normalizeAutopilotStage(checkpoint.stage) || "clarify",
     status: normalizeAutopilotRunStatus(checkpoint.status),
     summary: typeof checkpoint.summary === "string" ? checkpoint.summary : "",
-    taskIds: Array.isArray(checkpoint.taskIds) ? checkpoint.taskIds.filter((item): item is string => typeof item === "string") : [],
-    artifactIds: Array.isArray(checkpoint.artifactIds) ? checkpoint.artifactIds.filter((item): item is string => typeof item === "string") : [],
-    createdAt: typeof checkpoint.createdAt === "string" ? checkpoint.createdAt : new Date().toISOString()
+    taskIds: Array.isArray(checkpoint.taskIds)
+      ? checkpoint.taskIds.filter((item): item is string => typeof item === "string")
+      : [],
+    artifactIds: Array.isArray(checkpoint.artifactIds)
+      ? checkpoint.artifactIds.filter((item): item is string => typeof item === "string")
+      : [],
+    createdAt: typeof checkpoint.createdAt === "string" ? checkpoint.createdAt : new Date().toISOString(),
   };
 }
 
 function normalizeDataArtifact(artifact: DataArtifact): DataArtifact | undefined {
-  if (!artifact || typeof artifact !== "object" || typeof artifact.id !== "string" || typeof artifact.path !== "string") {
+  if (
+    !artifact ||
+    typeof artifact !== "object" ||
+    typeof artifact.id !== "string" ||
+    typeof artifact.path !== "string"
+  ) {
     return undefined;
   }
   return {
@@ -664,15 +756,22 @@ function normalizeDataArtifact(artifact: DataArtifact): DataArtifact | undefined
     projectId: typeof artifact.projectId === "string" ? artifact.projectId : "",
     runId: typeof artifact.runId === "string" ? artifact.runId : "",
     taskId: typeof artifact.taskId === "string" ? artifact.taskId : undefined,
-    kind: artifact.kind === "raw" || artifact.kind === "processed" || artifact.kind === "analysis" || artifact.kind === "report" ? artifact.kind : "output",
+    kind:
+      artifact.kind === "raw" ||
+      artifact.kind === "processed" ||
+      artifact.kind === "analysis" ||
+      artifact.kind === "report"
+        ? artifact.kind
+        : "output",
     stage: normalizeAutopilotStage(artifact.stage) || "collect",
     name: typeof artifact.name === "string" ? artifact.name : artifact.id,
     path: artifact.path,
     source: typeof artifact.source === "string" ? artifact.source : "autopilot",
     size: typeof artifact.size === "number" && Number.isFinite(artifact.size) ? artifact.size : 0,
     sha256: typeof artifact.sha256 === "string" ? artifact.sha256 : undefined,
-    lineCount: typeof artifact.lineCount === "number" && Number.isFinite(artifact.lineCount) ? artifact.lineCount : undefined,
-    createdAt: typeof artifact.createdAt === "string" ? artifact.createdAt : new Date().toISOString()
+    lineCount:
+      typeof artifact.lineCount === "number" && Number.isFinite(artifact.lineCount) ? artifact.lineCount : undefined,
+    createdAt: typeof artifact.createdAt === "string" ? artifact.createdAt : new Date().toISOString(),
   };
 }
 
@@ -690,12 +789,16 @@ function normalizeMessage(message: ChatMessage): ChatMessage {
       "你的消息已经保存，本地运行时工作正常。请在“配置 > 模型”中添加 OpenAI-compatible Base URL、API 密钥和模型名，以启用真实模型调用。",
       "",
       `${message.text.split("\n", 1)[0]} Add an OpenAI-compatible base URL, API key, and model in Config > Model to enable real model calls.`,
-      lastPrompt ? `\n最近提示词 / Last prompt: ${lastPrompt}` : ""
-    ].join("\n")
+      lastPrompt ? `\n最近提示词 / Last prompt: ${lastPrompt}` : "",
+    ].join("\n"),
   };
 }
 
-function mergeDefaultCapabilities(current: CapabilityDefinition[], defaults: CapabilityDefinition[], deletedIds: string[] = []): CapabilityDefinition[] {
+function mergeDefaultCapabilities(
+  current: CapabilityDefinition[],
+  defaults: CapabilityDefinition[],
+  deletedIds: string[] = [],
+): CapabilityDefinition[] {
   const byId = new Map(current.map((item) => [item.id, item]));
   const deleted = new Set(deletedIds);
   for (const item of defaults) {
@@ -709,7 +812,13 @@ function mergeDefaultCapabilities(current: CapabilityDefinition[], defaults: Cap
 
 function normalizeDeletedCapabilityIds(value: unknown): string[] {
   return Array.isArray(value)
-    ? [...new Set(value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim()))]
+    ? [
+        ...new Set(
+          value
+            .filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
+            .map((item) => item.trim()),
+        ),
+      ]
     : [];
 }
 
@@ -728,14 +837,17 @@ function normalizeMcpServer(server: McpServerConfig): McpServerConfig | undefine
   if (!id || !name || !command) {
     return undefined;
   }
-  const env = server.env && typeof server.env === "object" && !Array.isArray(server.env)
-    ? Object.fromEntries(Object.entries(server.env).filter(([key, value]) => key.trim() && typeof value === "string"))
-    : undefined;
+  const env =
+    server.env && typeof server.env === "object" && !Array.isArray(server.env)
+      ? Object.fromEntries(Object.entries(server.env).filter(([key, value]) => key.trim() && typeof value === "string"))
+      : undefined;
   return {
     id,
     name,
     command,
-    args: Array.isArray(server.args) ? server.args.filter((item: unknown): item is string => typeof item === "string") : [],
+    args: Array.isArray(server.args)
+      ? server.args.filter((item: unknown): item is string => typeof item === "string")
+      : [],
     cwd: typeof server.cwd === "string" && server.cwd.trim() ? server.cwd.trim() : undefined,
     env,
     requestTimeoutMs: normalizeRequestTimeout(server.requestTimeoutMs),
@@ -743,7 +855,7 @@ function normalizeMcpServer(server: McpServerConfig): McpServerConfig | undefine
     autoConnect: Boolean(server.autoConnect),
     createdAt: typeof server.createdAt === "string" ? server.createdAt : now,
     updatedAt: typeof server.updatedAt === "string" ? server.updatedAt : now,
-    source: normalizeMcpServerSource(server.source)
+    source: normalizeMcpServerSource(server.source),
   };
 }
 
@@ -757,9 +869,12 @@ function normalizeMcpServerSource(source: McpServerConfig["source"]): McpServerC
   return {
     kind: source.kind,
     packageId: typeof source.packageId === "string" ? source.packageId : undefined,
-    packageKind: source.packageKind === "skill" || source.packageKind === "plugin" || source.packageKind === "mcp" ? source.packageKind : undefined,
+    packageKind:
+      source.packageKind === "skill" || source.packageKind === "plugin" || source.packageKind === "mcp"
+        ? source.packageKind
+        : undefined,
     packagePath: typeof source.packagePath === "string" ? source.packagePath : undefined,
-    componentId: typeof source.componentId === "string" ? source.componentId : undefined
+    componentId: typeof source.componentId === "string" ? source.componentId : undefined,
   };
 }
 
@@ -787,34 +902,65 @@ function normalizeWorktree(value: TaskWorktree): TaskWorktree | undefined {
     diffStatus: normalizeDiffStatus(value.diffStatus),
     createdAt: typeof value.createdAt === "string" ? value.createdAt : now,
     updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : now,
-    rootDir: typeof value.rootDir === "string" && value.rootDir ? value.rootDir : undefined
+    rootDir: typeof value.rootDir === "string" && value.rootDir ? value.rootDir : undefined,
   };
 }
 
 function normalizeWorktreeStatus(value: unknown): TaskWorktree["status"] {
-  return value === "creating" || value === "active" || value === "completed" || value === "applied" || value === "discarded" || value === "failed" || value === "abandoned"
+  return value === "creating" ||
+    value === "active" ||
+    value === "completed" ||
+    value === "applied" ||
+    value === "discarded" ||
+    value === "failed" ||
+    value === "abandoned"
     ? value
     : "active";
 }
 
 function normalizeDiffStatus(value: unknown): TaskWorktree["diffStatus"] {
-  return value === "none" || value === "dirty" || value === "applied" || value === "discarded" || value === "unavailable" ? value : "unavailable";
+  return value === "none" ||
+    value === "dirty" ||
+    value === "applied" ||
+    value === "discarded" ||
+    value === "unavailable"
+    ? value
+    : "unavailable";
 }
 
 function normalizeAutopilotRunStatus(value: unknown): AutopilotRun["status"] {
-  return value === "queued" || value === "planning" || value === "running" || value === "paused" || value === "blocked" || value === "reviewing" || value === "completed" || value === "failed" || value === "canceled"
+  return value === "queued" ||
+    value === "planning" ||
+    value === "running" ||
+    value === "paused" ||
+    value === "blocked" ||
+    value === "reviewing" ||
+    value === "completed" ||
+    value === "failed" ||
+    value === "canceled"
     ? value
     : "queued";
 }
 
 function normalizeAutopilotTaskStatus(value: unknown): AutopilotTask["status"] {
-  return value === "queued" || value === "running" || value === "completed" || value === "failed" || value === "blocked" || value === "skipped"
+  return value === "queued" ||
+    value === "running" ||
+    value === "completed" ||
+    value === "failed" ||
+    value === "blocked" ||
+    value === "skipped"
     ? value
     : "queued";
 }
 
 function normalizeAutopilotStage(value: unknown): AutopilotTask["stage"] | undefined {
-  return value === "clarify" || value === "inventory" || value === "collect" || value === "process" || value === "analyze" || value === "report" || value === "review"
+  return value === "clarify" ||
+    value === "inventory" ||
+    value === "collect" ||
+    value === "process" ||
+    value === "analyze" ||
+    value === "report" ||
+    value === "review"
     ? value
     : undefined;
 }
@@ -837,35 +983,61 @@ function normalizeRemoteBridgeConfig(value: unknown, tokenSaved: boolean): Remot
     tokenSaved,
     allowRemoteBind: Boolean(input?.allowRemoteBind),
     pairingCode: typeof input?.pairingCode === "string" ? input.pairingCode : undefined,
-    updatedAt: typeof input?.updatedAt === "string" ? input.updatedAt : undefined
+    updatedAt: typeof input?.updatedAt === "string" ? input.updatedAt : undefined,
   };
 }
 
-function normalizeServstationA2AConfig(value: unknown, bearerTokenSaved: boolean, oidcTokenSaved = false, staffAgentPasswordSaved = false): ServstationA2AConfig {
+function normalizeServstationA2AConfig(
+  value: unknown,
+  bearerTokenSaved: boolean,
+  oidcTokenSaved = false,
+  staffAgentPasswordSaved = false,
+): ServstationA2AConfig {
   const input = value as Partial<ServstationA2AConfig> | undefined;
   const rawBaseUrl = typeof input?.baseUrl === "string" ? input.baseUrl.trim() : "";
   const normalizedBaseUrl = rawBaseUrl ? normalizeHttpUrl(rawBaseUrl) : "";
-  const baseUrl = shouldUseLocalBotstationDefault(rawBaseUrl, normalizedBaseUrl) ? defaultBotstationA2A.baseUrl : normalizedBaseUrl;
-  const wasUnconfigured = !rawBaseUrl && !input?.staffAgentAccount && !input?.agentInstanceId && !input?.oidc?.issuerUrl && !input?.oidc?.clientId;
-  const staffAgentAccount = typeof input?.staffAgentAccount === "string" && input.staffAgentAccount.trim() ? input.staffAgentAccount.trim() : defaultBotstationA2A.userId;
+  const baseUrl = shouldUseLocalBotstationDefault(rawBaseUrl, normalizedBaseUrl)
+    ? defaultBotstationA2A.baseUrl
+    : normalizedBaseUrl;
+  const wasUnconfigured =
+    !rawBaseUrl &&
+    !input?.staffAgentAccount &&
+    !input?.agentInstanceId &&
+    !input?.oidc?.issuerUrl &&
+    !input?.oidc?.clientId;
+  const staffAgentAccount =
+    typeof input?.staffAgentAccount === "string" && input.staffAgentAccount.trim()
+      ? input.staffAgentAccount.trim()
+      : defaultBotstationA2A.userId;
   const oidc = normalizeServstationA2AOidcConfig(input?.oidc, oidcTokenSaved);
-  const forceLocalOidc = wasUnconfigured || (
-    input?.authMode === "identityHeaders" &&
-    baseUrl === defaultBotstationA2A.baseUrl &&
-    staffAgentAccount === defaultBotstationA2A.userId &&
-    oidc.issuerUrl === defaultBotstationA2A.issuerUrl &&
-    oidc.clientId === defaultBotstationA2A.clientId
-  );
+  const forceLocalOidc =
+    wasUnconfigured ||
+    (input?.authMode === "identityHeaders" &&
+      baseUrl === defaultBotstationA2A.baseUrl &&
+      staffAgentAccount === defaultBotstationA2A.userId &&
+      oidc.issuerUrl === defaultBotstationA2A.issuerUrl &&
+      oidc.clientId === defaultBotstationA2A.clientId);
   let authMode: ServstationA2AConfig["authMode"] = "oidc";
-  if (!forceLocalOidc && (input?.authMode === "bearer" || input?.authMode === "identityHeaders" || input?.authMode === "oidc")) {
+  if (
+    !forceLocalOidc &&
+    (input?.authMode === "bearer" || input?.authMode === "identityHeaders" || input?.authMode === "oidc")
+  ) {
     authMode = input.authMode;
   }
   const reverse = normalizeServstationA2AReverseConfig(input?.reverse);
-  const nextReverse = forceLocalOidc && !oidcTokenSaved
-    ? { ...reverse, enabled: false, status: "disconnected" as const, connectedAt: undefined, lastHeartbeatAt: undefined, lastError: undefined }
-    : reverse;
+  const nextReverse =
+    forceLocalOidc && !oidcTokenSaved
+      ? {
+          ...reverse,
+          enabled: false,
+          status: "disconnected" as const,
+          connectedAt: undefined,
+          lastHeartbeatAt: undefined,
+          lastError: undefined,
+        }
+      : reverse;
   return {
-    enabled: forceLocalOidc ? true : input?.enabled ?? true,
+    enabled: forceLocalOidc ? true : (input?.enabled ?? true),
     baseUrl,
     authMode,
     bearerTokenSaved,
@@ -874,25 +1046,32 @@ function normalizeServstationA2AConfig(value: unknown, bearerTokenSaved: boolean
     staffAgentPasswordStorage: staffAgentPasswordSaved ? input?.staffAgentPasswordStorage || "file" : undefined,
     oidc,
     reverse: nextReverse,
-    agentInstanceId: typeof input?.agentInstanceId === "string" && input.agentInstanceId.trim() ? input.agentInstanceId.trim() : undefined,
-    updatedAt: typeof input?.updatedAt === "string" ? input.updatedAt : undefined
+    agentInstanceId:
+      typeof input?.agentInstanceId === "string" && input.agentInstanceId.trim()
+        ? input.agentInstanceId.trim()
+        : undefined,
+    updatedAt: typeof input?.updatedAt === "string" ? input.updatedAt : undefined,
   };
 }
 
 function normalizeServstationA2AReverseConfig(value: unknown): NonNullable<ServstationA2AConfig["reverse"]> {
   const input = value as Partial<NonNullable<ServstationA2AConfig["reverse"]>> | undefined;
-  const status = input?.status === "connecting" || input?.status === "connected" || input?.status === "error"
-    ? input.status
-    : "disconnected";
+  const status =
+    input?.status === "connecting" || input?.status === "connected" || input?.status === "error"
+      ? input.status
+      : "disconnected";
   return {
     enabled: Boolean(input?.enabled),
     status: input?.enabled ? status : "disconnected",
     peerId: typeof input?.peerId === "string" && input.peerId.trim() ? input.peerId.trim() : undefined,
-    clientInstanceId: typeof input?.clientInstanceId === "string" && input.clientInstanceId.trim() ? input.clientInstanceId.trim() : undefined,
+    clientInstanceId:
+      typeof input?.clientInstanceId === "string" && input.clientInstanceId.trim()
+        ? input.clientInstanceId.trim()
+        : undefined,
     connectedAt: typeof input?.connectedAt === "string" ? input.connectedAt : undefined,
     lastHeartbeatAt: typeof input?.lastHeartbeatAt === "string" ? input.lastHeartbeatAt : undefined,
     lastError: typeof input?.lastError === "string" && input.lastError.trim() ? input.lastError.trim() : undefined,
-    updatedAt: typeof input?.updatedAt === "string" ? input.updatedAt : undefined
+    updatedAt: typeof input?.updatedAt === "string" ? input.updatedAt : undefined,
   };
 }
 
@@ -904,12 +1083,15 @@ function normalizeServstationA2AOidcConfig(value: unknown, refreshTokenSaved: bo
   const redirectUri = normalizeLocalBotstationOidcUrl(rawRedirectUri, defaultBotstationA2A.redirectUri);
   return {
     issuerUrl,
-    clientId: typeof input?.clientId === "string" && input.clientId.trim() ? input.clientId.trim() : defaultBotstationA2A.clientId,
+    clientId:
+      typeof input?.clientId === "string" && input.clientId.trim()
+        ? input.clientId.trim()
+        : defaultBotstationA2A.clientId,
     scope: typeof input?.scope === "string" && input.scope.trim() ? input.scope.trim() : defaultBotstationA2A.scope,
     redirectUri,
     accessTokenExpiresAt: typeof input?.accessTokenExpiresAt === "string" ? input.accessTokenExpiresAt : undefined,
     refreshTokenSaved,
-    userId: typeof input?.userId === "string" && input.userId.trim() ? input.userId.trim() : undefined
+    userId: typeof input?.userId === "string" && input.userId.trim() ? input.userId.trim() : undefined,
   };
 }
 
@@ -960,11 +1142,19 @@ export function normalizeIdentityContext(value: unknown): IdentityContext | unde
     organizationId,
     departmentId,
     userId,
-    roleIds: Array.isArray(input.roleIds) ? input.roleIds.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim()) : [],
+    roleIds: Array.isArray(input.roleIds)
+      ? input.roleIds
+          .filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
+          .map((item) => item.trim())
+      : [],
     source,
-    agentInstanceId: typeof input.agentInstanceId === "string" && input.agentInstanceId.trim() ? input.agentInstanceId.trim() : undefined,
-    servstationUrl: typeof input.servstationUrl === "string" && input.servstationUrl.trim() ? input.servstationUrl.trim() : undefined,
-    updatedAt: typeof input.updatedAt === "string" ? input.updatedAt : undefined
+    agentInstanceId:
+      typeof input.agentInstanceId === "string" && input.agentInstanceId.trim()
+        ? input.agentInstanceId.trim()
+        : undefined,
+    servstationUrl:
+      typeof input.servstationUrl === "string" && input.servstationUrl.trim() ? input.servstationUrl.trim() : undefined,
+    updatedAt: typeof input.updatedAt === "string" ? input.updatedAt : undefined,
   };
 }
 
@@ -992,7 +1182,7 @@ function normalizeRemoteBridgeSession(value: RemoteBridgeSession): RemoteBridgeS
     tokenPrefix: typeof value.tokenPrefix === "string" ? value.tokenPrefix : "",
     createdAt: typeof value.createdAt === "string" ? value.createdAt : new Date().toISOString(),
     lastSeenAt: typeof value.lastSeenAt === "string" ? value.lastSeenAt : undefined,
-    revokedAt: typeof value.revokedAt === "string" ? value.revokedAt : undefined
+    revokedAt: typeof value.revokedAt === "string" ? value.revokedAt : undefined,
   };
 }
 
@@ -1014,7 +1204,7 @@ function normalizeRemoteBridgeAudit(value: RemoteBridgeAuditRecord): RemoteBridg
     agentInstanceId: typeof value.agentInstanceId === "string" ? value.agentInstanceId : undefined,
     peerId: typeof value.peerId === "string" ? value.peerId : undefined,
     caller: normalizeCallerMetadata(value.caller),
-    identity: normalizeIdentityContext(value.identity)
+    identity: normalizeIdentityContext(value.identity),
   };
 }
 
@@ -1028,6 +1218,6 @@ function normalizeCallerMetadata(value: unknown) {
     agentInstanceId: typeof input.agentInstanceId === "string" ? input.agentInstanceId : undefined,
     peerId: typeof input.peerId === "string" ? input.peerId : undefined,
     clientId: typeof input.clientId === "string" ? input.clientId : undefined,
-    userContext: normalizeIdentityContext(input.userContext)
+    userContext: normalizeIdentityContext(input.userContext),
   };
 }

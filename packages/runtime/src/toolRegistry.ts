@@ -1,5 +1,11 @@
 import { isAbsolute, resolve } from "node:path";
-import type { GeneratedFile, LocalPackageInspection, LocalPackageInstallResult, SubagentConfig, ToolCallRecord } from "@supbot/shared";
+import type {
+  GeneratedFile,
+  LocalPackageInspection,
+  LocalPackageInstallResult,
+  SubagentConfig,
+  ToolCallRecord,
+} from "@supbot/shared";
 import type { OpenAiToolDefinition } from "./modelAdapter";
 import { readLocalFile, shellLocalCommand, writeLocalFile, type LocalToolHost } from "./localTools";
 
@@ -61,10 +67,7 @@ export class ToolRegistry {
   }
 
   list(): ToolDefinition[] {
-    return [
-      ...this.tools.values(),
-      ...this.providers.flatMap((provider) => provider.list())
-    ];
+    return [...this.tools.values(), ...this.providers.flatMap((provider) => provider.list())];
   }
 
   get(name: string): ToolDefinition | undefined {
@@ -85,8 +88,8 @@ export class ToolRegistry {
       function: {
         name: tool.modelName || tool.name,
         description: tool.description,
-        parameters: tool.parameters
-      }
+        parameters: tool.parameters,
+      },
     }));
   }
 }
@@ -95,7 +98,8 @@ export function defaultToolDefinitions(): ToolDefinition[] {
   return [
     {
       name: "InspectPackageArchive",
-      description: "Inspect an uploaded ZIP package archive before installation. Supports Skill, Plugin, and MCP packages.",
+      description:
+        "Inspect an uploaded ZIP package archive before installation. Supports Skill, Plugin, and MCP packages.",
       risk: "read",
       concurrency: "safe",
       interruptBehavior: "cancel",
@@ -103,10 +107,10 @@ export function defaultToolDefinitions(): ToolDefinition[] {
       parameters: {
         type: "object",
         properties: {
-          path: { type: "string", description: "Absolute path to a ZIP file uploaded in the current conversation." }
+          path: { type: "string", description: "Absolute path to a ZIP file uploaded in the current conversation." },
         },
         required: ["path"],
-        additionalProperties: false
+        additionalProperties: false,
       },
       summarize(input) {
         const parsed = objectInput(input);
@@ -119,13 +123,14 @@ export function defaultToolDefinitions(): ToolDefinition[] {
         }
         const result = await context.inspectPackageArchive({ path: requiredString(parsed.path, "path") });
         return {
-          text: formatPackageInspection(result)
+          text: formatPackageInspection(result),
         };
-      }
+      },
     },
     {
       name: "InstallPackageArchive",
-      description: "Install an inspected uploaded ZIP package archive into the app data directory, replacing an existing package with the same id atomically. Requires the SHA-256 from InspectPackageArchive.",
+      description:
+        "Install an inspected uploaded ZIP package archive into the app data directory, replacing an existing package with the same id atomically. Requires the SHA-256 from InspectPackageArchive.",
       risk: "dangerous",
       concurrency: "exclusive",
       interruptBehavior: "block",
@@ -134,10 +139,10 @@ export function defaultToolDefinitions(): ToolDefinition[] {
         type: "object",
         properties: {
           path: { type: "string", description: "Absolute path to a ZIP file uploaded in the current conversation." },
-          expectedSha256: { type: "string", description: "SHA-256 returned by InspectPackageArchive." }
+          expectedSha256: { type: "string", description: "SHA-256 returned by InspectPackageArchive." },
         },
         required: ["path", "expectedSha256"],
-        additionalProperties: false
+        additionalProperties: false,
       },
       summarize(input) {
         const parsed = objectInput(input);
@@ -150,12 +155,12 @@ export function defaultToolDefinitions(): ToolDefinition[] {
         }
         const result = await context.installPackageArchive({
           path: requiredString(parsed.path, "path"),
-          expectedSha256: requiredString(parsed.expectedSha256, "expectedSha256")
+          expectedSha256: requiredString(parsed.expectedSha256, "expectedSha256"),
         });
         return {
-          text: formatPackageInstallResult(result)
+          text: formatPackageInstallResult(result),
         };
-      }
+      },
     },
     {
       name: "ReadFile",
@@ -166,10 +171,10 @@ export function defaultToolDefinitions(): ToolDefinition[] {
       parameters: {
         type: "object",
         properties: {
-          path: { type: "string", description: "Absolute path to the file to read." }
+          path: { type: "string", description: "Absolute path to the file to read." },
         },
         required: ["path"],
-        additionalProperties: false
+        additionalProperties: false,
       },
       summarize(input) {
         const parsed = objectInput(input);
@@ -178,12 +183,15 @@ export function defaultToolDefinitions(): ToolDefinition[] {
       async execute(input, context) {
         const parsed = objectInput(input);
         const filePath = requiredString(parsed.path, "path");
-        return readLocalFile(context.projectRoot && !isAbsolute(filePath) ? resolve(context.projectRoot, filePath) : filePath);
-      }
+        return readLocalFile(
+          context.projectRoot && !isAbsolute(filePath) ? resolve(context.projectRoot, filePath) : filePath,
+        );
+      },
     },
     {
       name: "WriteFile",
-      description: "Write UTF-8 text to a local file. Relative paths are written under the app generated-files directory.",
+      description:
+        "Write UTF-8 text to a local file. Relative paths are written under the app generated-files directory.",
       risk: "dangerous",
       concurrency: "exclusive",
       interruptBehavior: "block",
@@ -191,10 +199,10 @@ export function defaultToolDefinitions(): ToolDefinition[] {
         type: "object",
         properties: {
           path: { type: "string", description: "Target file path or generated file name." },
-          content: { type: "string", description: "UTF-8 text content to write." }
+          content: { type: "string", description: "UTF-8 text content to write." },
         },
         required: ["path", "content"],
-        additionalProperties: false
+        additionalProperties: false,
       },
       summarize(input) {
         const parsed = objectInput(input);
@@ -202,8 +210,12 @@ export function defaultToolDefinitions(): ToolDefinition[] {
       },
       async execute(input, context) {
         const parsed = objectInput(input);
-        return writeLocalFile(requiredString(parsed.path, "path"), requiredString(parsed.content, "content"), context.host);
-      }
+        return writeLocalFile(
+          requiredString(parsed.path, "path"),
+          requiredString(parsed.content, "content"),
+          context.host,
+        );
+      },
     },
     {
       name: "Shell",
@@ -215,10 +227,10 @@ export function defaultToolDefinitions(): ToolDefinition[] {
         type: "object",
         properties: {
           command: { type: "string", description: "Command to execute." },
-          timeoutMs: { type: "number", description: "Optional timeout in milliseconds, between 1000 and 300000." }
+          timeoutMs: { type: "number", description: "Optional timeout in milliseconds, between 1000 and 300000." },
         },
         required: ["command"],
-        additionalProperties: false
+        additionalProperties: false,
       },
       summarize(input) {
         const parsed = objectInput(input);
@@ -230,9 +242,9 @@ export function defaultToolDefinitions(): ToolDefinition[] {
           requiredString(parsed.command, "command"),
           context.signal,
           normalizeTimeoutMs(parsed.timeoutMs, context.host.shellTimeoutMs),
-          context.host.cwd || context.host.workspacePath
+          context.host.cwd || context.host.workspacePath,
         );
-      }
+      },
     },
     {
       name: "Agent",
@@ -244,10 +256,10 @@ export function defaultToolDefinitions(): ToolDefinition[] {
         type: "object",
         properties: {
           subagent_type: { type: "string", description: "Subagent id or name, such as research or builder." },
-          prompt: { type: "string", description: "Task for the subagent." }
+          prompt: { type: "string", description: "Task for the subagent." },
         },
         required: ["prompt"],
-        additionalProperties: false
+        additionalProperties: false,
       },
       summarize(input) {
         const parsed = objectInput(input);
@@ -259,10 +271,10 @@ export function defaultToolDefinitions(): ToolDefinition[] {
         return context.runSubagent({
           subagentType: typeof parsed.subagent_type === "string" ? parsed.subagent_type : undefined,
           prompt: requiredString(parsed.prompt, "prompt"),
-          signal: context.signal
+          signal: context.signal,
         });
-      }
-    }
+      },
+    },
   ];
 }
 
@@ -297,12 +309,20 @@ function formatPackageInspection(result: LocalPackageInspection): string {
     `Install path: ${result.installPath}`,
     result.rootPrefix ? `Wrapper directory: ${result.rootPrefix}` : "",
     result.description ? `Description: ${result.description}` : "",
-    result.skills.length ? `Skills:\n${result.skills.map((skill) => `- ${skill.name} (${skill.capabilityId})\n  ${skill.description}\n  ${skill.path}`).join("\n")}` : "Skills: none",
-    result.mcpServers.length ? `MCP servers:\n${result.mcpServers.map((server) => `- ${server.name}${server.skipped ? " [skipped]" : ""}${server.serverId ? ` (${server.serverId})` : ""}${server.reason ? `\n  ${server.reason}` : ""}${server.command ? `\n  ${server.command} ${(server.args || []).join(" ")}` : ""}`).join("\n")}` : "MCP servers: none",
-    result.dependencyPlan.length ? `Dependency plan:\n${result.dependencyPlan.map((step) => `- ${step.manager}: ${step.command} ${step.args.join(" ")}\n  cwd: ${step.cwd}\n  reason: ${step.reason}`).join("\n")}` : "Dependency plan: none",
+    result.skills.length
+      ? `Skills:\n${result.skills.map((skill) => `- ${skill.name} (${skill.capabilityId})\n  ${skill.description}\n  ${skill.path}`).join("\n")}`
+      : "Skills: none",
+    result.mcpServers.length
+      ? `MCP servers:\n${result.mcpServers.map((server) => `- ${server.name}${server.skipped ? " [skipped]" : ""}${server.serverId ? ` (${server.serverId})` : ""}${server.reason ? `\n  ${server.reason}` : ""}${server.command ? `\n  ${server.command} ${(server.args || []).join(" ")}` : ""}`).join("\n")}`
+      : "MCP servers: none",
+    result.dependencyPlan.length
+      ? `Dependency plan:\n${result.dependencyPlan.map((step) => `- ${step.manager}: ${step.command} ${step.args.join(" ")}\n  cwd: ${step.cwd}\n  reason: ${step.reason}`).join("\n")}`
+      : "Dependency plan: none",
     result.warnings.length ? `Warnings:\n${result.warnings.map((warning) => `- ${warning}`).join("\n")}` : "",
-    "Call InstallPackageArchive with this exact SHA-256 after the user approves installation."
-  ].filter(Boolean).join("\n");
+    "Call InstallPackageArchive with this exact SHA-256 after the user approves installation.",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function formatPackageInstallResult(result: LocalPackageInstallResult): string {
@@ -316,9 +336,15 @@ function formatPackageInstallResult(result: LocalPackageInstallResult): string {
     `Replaced existing package: ${result.replaced ? "yes" : "no"}`,
     result.capabilityIds.length ? `Capabilities: ${result.capabilityIds.join(", ")}` : "",
     result.activatedMcpServerIds.length ? `Activated MCP servers: ${result.activatedMcpServerIds.join(", ")}` : "",
-    result.dependencyResults.length ? `Dependency installs:\n${result.dependencyResults.map((step) => `- ${step.manager}: exit ${step.exitCode}\n  ${step.command} ${step.args.join(" ")}\n  cwd: ${step.cwd}`).join("\n")}` : "Dependency installs: none",
+    result.dependencyResults.length
+      ? `Dependency installs:\n${result.dependencyResults.map((step) => `- ${step.manager}: exit ${step.exitCode}\n  ${step.command} ${step.args.join(" ")}\n  cwd: ${step.cwd}`).join("\n")}`
+      : "Dependency installs: none",
     result.warnings.length ? `Warnings:\n${result.warnings.map((warning) => `- ${warning}`).join("\n")}` : "",
-    result.skills.length ? `Installed skills:\n${result.skills.map((skill) => `- ${skill.name} (${skill.capabilityId})\n  ${skill.path}`).join("\n")}` : "",
-    result.skillContext ? `\nInstalled skill instructions available now:\n${result.skillContext}` : ""
-  ].filter(Boolean).join("\n");
+    result.skills.length
+      ? `Installed skills:\n${result.skills.map((skill) => `- ${skill.name} (${skill.capabilityId})\n  ${skill.path}`).join("\n")}`
+      : "",
+    result.skillContext ? `\nInstalled skill instructions available now:\n${result.skillContext}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }

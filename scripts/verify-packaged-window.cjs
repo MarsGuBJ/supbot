@@ -13,11 +13,13 @@ async function evaluate(wsUrl, expression) {
         resolve(msg);
       }
     });
-    ws.send(JSON.stringify({
-      id: 1,
-      method: "Runtime.evaluate",
-      params: { expression, returnByValue: true }
-    }));
+    ws.send(
+      JSON.stringify({
+        id: 1,
+        method: "Runtime.evaluate",
+        params: { expression, returnByValue: true },
+      }),
+    );
   });
   ws.close();
   if (data.exceptionDetails) {
@@ -37,26 +39,37 @@ async function main() {
     throw new Error("No packaged HBClient page found on port 9333.");
   }
   const wsUrl = page.webSocketDebuggerUrl;
-  const clickByText = (text, selector = ".ant-segmented-item-label, .ant-tabs-tab-btn, button") => evaluate(wsUrl, `(() => {
+  const clickByText = (text, selector = ".ant-segmented-item-label, .ant-tabs-tab-btn, button") =>
+    evaluate(
+      wsUrl,
+      `(() => {
     const elements = [...document.querySelectorAll(${JSON.stringify(selector)})];
     const target = elements.find((item) => (item.textContent || '').includes(${JSON.stringify(text)}));
     if (!target) return false;
     target.click();
     return true;
-  })()`);
+  })()`,
+    );
 
   await clickByText("对话", ".topbar .ant-segmented-item-label");
   await sleep(300);
   const initialBody = String(await evaluate(wsUrl, "document.body.innerText"));
   const leftPanel = String(await evaluate(wsUrl, "document.querySelector('.side-panel')?.innerText || ''"));
   const railToggleCount = Number(await evaluate(wsUrl, "document.querySelectorAll('.rail-toggle').length"));
-  const topbarToggleCount = Number(await evaluate(wsUrl, `document.querySelectorAll('.topbar-actions button [aria-label="menu-fold"], .topbar-actions button [aria-label="menu-unfold"]').length`));
+  const topbarToggleCount = Number(
+    await evaluate(
+      wsUrl,
+      `document.querySelectorAll('.topbar-actions button [aria-label="menu-fold"], .topbar-actions button [aria-label="menu-unfold"]').length`,
+    ),
+  );
 
-  if (!await clickByText("工具市场", ".topbar .ant-segmented-item-label")) {
+  if (!(await clickByText("工具市场", ".topbar .ant-segmented-item-label"))) {
     throw new Error("Tool market tab was not clickable.");
   }
   await sleep(3500);
-  const market = await evaluate(wsUrl, `(() => {
+  const market = await evaluate(
+    wsUrl,
+    `(() => {
     const body = document.body.innerText;
     return {
       hasMarketTitle: body.includes('工具市场'),
@@ -65,13 +78,16 @@ async function main() {
       hasInstallAction: [...document.querySelectorAll('.market-product-action')].some((item) => /安装|卸载/.test(item.textContent || '')),
       bodyStart: body.slice(0, 900)
     };
-  })()`);
+  })()`,
+  );
 
-  if (!await clickByText("市场配置", "button")) {
+  if (!(await clickByText("市场配置", "button"))) {
     throw new Error("Market settings button was not clickable.");
   }
   await sleep(600);
-  const config = await evaluate(wsUrl, `(() => {
+  const config = await evaluate(
+    wsUrl,
+    `(() => {
     const body = document.body.innerText;
     const inputs = [...document.querySelectorAll('input')].map((input) => input.value);
     return {
@@ -81,7 +97,8 @@ async function main() {
       hasPasswordLabel: body.includes('市场密码'),
       bodyStart: body.slice(0, 900)
     };
-  })()`);
+  })()`,
+  );
 
   const result = {
     url: page.url,
@@ -92,7 +109,7 @@ async function main() {
     topbarToggleCount,
     leftPanelStart: leftPanel.slice(0, 260),
     market,
-    config
+    config,
   };
   console.log(JSON.stringify(result, null, 2));
   if (

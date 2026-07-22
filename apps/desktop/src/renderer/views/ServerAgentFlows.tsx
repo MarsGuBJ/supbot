@@ -1,11 +1,70 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ApiOutlined, CalendarOutlined, CheckCircleOutlined, ClockCircleOutlined, CloseCircleOutlined, DeleteOutlined, DownloadOutlined, OrderedListOutlined, PaperClipOutlined, PauseCircleOutlined, PlayCircleOutlined, PlusOutlined, RobotOutlined, StopOutlined, ThunderboltOutlined } from "@ant-design/icons";
-import { Alert, Button, Descriptions, Empty, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Spin, Tag, Typography, message } from "antd";
+import {
+  ApiOutlined,
+  CalendarOutlined,
+  CheckCircleOutlined,
+  ClockCircleOutlined,
+  CloseCircleOutlined,
+  DeleteOutlined,
+  DownloadOutlined,
+  OrderedListOutlined,
+  PaperClipOutlined,
+  PauseCircleOutlined,
+  PlayCircleOutlined,
+  PlusOutlined,
+  RobotOutlined,
+  StopOutlined,
+  ThunderboltOutlined,
+} from "@ant-design/icons";
+import {
+  Alert,
+  Button,
+  Descriptions,
+  Empty,
+  Form,
+  Input,
+  InputNumber,
+  Modal,
+  Popconfirm,
+  Select,
+  Space,
+  Spin,
+  Tag,
+  Typography,
+  message,
+} from "antd";
 import type { FormInstance } from "antd/es/form";
-import type { IdentityContext, ServstationAutopilotRun, ServstationClientSnapshot, ServstationFlowEngineExecutionEvent, ServstationFlowEngineInitiatedExecution, ServstationFlowEngineSnapshot, ServstationScheduledJob } from "@supbot/shared";
+import type {
+  IdentityContext,
+  ServstationAutopilotRun,
+  ServstationClientSnapshot,
+  ServstationFlowEngineExecutionEvent,
+  ServstationFlowEngineInitiatedExecution,
+  ServstationFlowEngineSnapshot,
+  ServstationScheduledJob,
+} from "@supbot/shared";
 import { formatDateTime } from "@supbot/shared";
-import { servstationAutopilotControls, servstationAutopilotDecisionReason, servstationAutopilotEvidenceCount, servstationAutopilotLatestStep } from "../servstationAutopilot";
-import { buildDefaultFlowInput, coerceFlowInputValues, downloadFlowFilePayload, fileToFlowFilePayload, formatBytesFromBase64, getFlowInputFields, isFlowFilePayload, parseFlowInputJson, shouldUseJsonFlowInput, type FlowFilePayload, type FlowInputField, type FlowJsonSchema, type FlowLaunchFormValues } from "../lib/flowSchema";
+import {
+  servstationAutopilotControls,
+  servstationAutopilotDecisionReason,
+  servstationAutopilotEvidenceCount,
+  servstationAutopilotLatestStep,
+} from "../servstationAutopilot";
+import {
+  buildDefaultFlowInput,
+  coerceFlowInputValues,
+  downloadFlowFilePayload,
+  fileToFlowFilePayload,
+  formatBytesFromBase64,
+  getFlowInputFields,
+  isFlowFilePayload,
+  parseFlowInputJson,
+  shouldUseJsonFlowInput,
+  type FlowFilePayload,
+  type FlowInputField,
+  type FlowJsonSchema,
+  type FlowLaunchFormValues,
+} from "../lib/flowSchema";
 import { formatMessageTime, servstationScheduleLabel, servstationStatusColor } from "../lib/servstationFormat";
 import type { Translator } from "../lib/types";
 
@@ -23,7 +82,7 @@ export function ServerAgentFlows({
   onDeleteSchedule,
   onStartAutopilot,
   onUpdateAutopilot,
-  t
+  t,
 }: {
   scheduledJobs: ServstationScheduledJob[];
   autopilotRun: ServstationAutopilotRun | null;
@@ -46,15 +105,21 @@ export function ServerAgentFlows({
   const activeTarget = autopilotRun?.activeTargetId || "-";
   const currentJob = autopilotRun?.currentJobId || latestStep?.jobId || "-";
   const latestEvent = autopilotEvents[0];
-  const latestDecision = latestStep ? servstationAutopilotDecisionReason(latestStep) : autopilotRun?.lastDecision?.reason;
+  const latestDecision = latestStep
+    ? servstationAutopilotDecisionReason(latestStep)
+    : autopilotRun?.lastDecision?.reason;
   const submitDisabled = disabled || controls.promptLocked || !autopilotPrompt.trim();
 
   return (
     <div className="server-agent-flow-grid">
       <section className="server-agent-flow-column">
         <div className="panel-heading">
-          <div className="section-title"><CalendarOutlined /> {t("Schedule")}</div>
-          <Button size="small" type="primary" icon={<PlusOutlined />} disabled={disabled} onClick={onCreateSchedule}>{t("New scheduled prompt")}</Button>
+          <div className="section-title">
+            <CalendarOutlined /> {t("Schedule")}
+          </div>
+          <Button size="small" type="primary" icon={<PlusOutlined />} disabled={disabled} onClick={onCreateSchedule}>
+            {t("New scheduled prompt")}
+          </Button>
         </div>
         <div className="server-agent-schedule-list">
           {scheduledJobs.map((job) => (
@@ -68,20 +133,34 @@ export function ServerAgentFlows({
               </div>
               {job.lastError ? <small className="danger-text">{job.lastError}</small> : null}
               <Space wrap size="small">
-                <Button size="small" loading={busyId === `schedule:${job.id}`} onClick={() => void onToggleSchedule(job)}>{job.enabled ? t("Disable") : t("Enable")}</Button>
+                <Button
+                  size="small"
+                  loading={busyId === `schedule:${job.id}`}
+                  onClick={() => void onToggleSchedule(job)}
+                >
+                  {job.enabled ? t("Disable") : t("Enable")}
+                </Button>
                 <Popconfirm title={t("Delete scheduled prompt?")} onConfirm={() => void onDeleteSchedule(job)}>
-                  <Button size="small" danger icon={<DeleteOutlined />} loading={busyId === `schedule:${job.id}`}>{t("Delete")}</Button>
+                  <Button size="small" danger icon={<DeleteOutlined />} loading={busyId === `schedule:${job.id}`}>
+                    {t("Delete")}
+                  </Button>
                 </Popconfirm>
               </Space>
             </div>
           ))}
-          {!scheduledJobs.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("No scheduled prompts")} /> : null}
+          {!scheduledJobs.length ? (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("No scheduled prompts")} />
+          ) : null}
         </div>
       </section>
       <section className="server-agent-flow-column">
         <div className="panel-heading">
-          <div className="section-title"><RobotOutlined /> {t("Autopilot")}</div>
-          {autopilotRun ? <Tag color={servstationStatusColor(autopilotRun.status)}>{t(autopilotRun.status)}</Tag> : null}
+          <div className="section-title">
+            <RobotOutlined /> {t("Autopilot")}
+          </div>
+          {autopilotRun ? (
+            <Tag color={servstationStatusColor(autopilotRun.status)}>{t(autopilotRun.status)}</Tag>
+          ) : null}
         </div>
         <div className="server-agent-autopilot">
           <div className="server-agent-autopilot-composer">
@@ -99,13 +178,43 @@ export function ServerAgentFlows({
               }}
             />
             <Space wrap>
-              <Button type="primary" icon={<ThunderboltOutlined />} disabled={submitDisabled} loading={busyId === "autopilot:start"} onClick={() => void onStartAutopilot()}>{t("Submit prompt")}</Button>
+              <Button
+                type="primary"
+                icon={<ThunderboltOutlined />}
+                disabled={submitDisabled}
+                loading={busyId === "autopilot:start"}
+                onClick={() => void onStartAutopilot()}
+              >
+                {t("Submit prompt")}
+              </Button>
               {controls.canResume ? (
-                <Button icon={<PlayCircleOutlined />} disabled={disabled || !controls.canResume} loading={busyId === "autopilot:watching"} onClick={() => void onUpdateAutopilot("watching")}>{t("Resume")}</Button>
+                <Button
+                  icon={<PlayCircleOutlined />}
+                  disabled={disabled || !controls.canResume}
+                  loading={busyId === "autopilot:watching"}
+                  onClick={() => void onUpdateAutopilot("watching")}
+                >
+                  {t("Resume")}
+                </Button>
               ) : (
-                <Button icon={<PauseCircleOutlined />} disabled={disabled || !controls.canPause} loading={busyId === "autopilot:paused"} onClick={() => void onUpdateAutopilot("paused")}>{t("Pause")}</Button>
+                <Button
+                  icon={<PauseCircleOutlined />}
+                  disabled={disabled || !controls.canPause}
+                  loading={busyId === "autopilot:paused"}
+                  onClick={() => void onUpdateAutopilot("paused")}
+                >
+                  {t("Pause")}
+                </Button>
               )}
-              <Button danger icon={<StopOutlined />} disabled={disabled || !controls.canStop} loading={busyId === "autopilot:stopped"} onClick={() => void onUpdateAutopilot("stopped")}>{t("Stop")}</Button>
+              <Button
+                danger
+                icon={<StopOutlined />}
+                disabled={disabled || !controls.canStop}
+                loading={busyId === "autopilot:stopped"}
+                onClick={() => void onUpdateAutopilot("stopped")}
+              >
+                {t("Stop")}
+              </Button>
             </Space>
           </div>
           {autopilotRun ? (
@@ -115,19 +224,43 @@ export function ServerAgentFlows({
                 <strong>{autopilotRun.goal || t("Waiting for the server Agent to derive a goal")}</strong>
               </div>
               <div className="server-agent-autopilot-stats">
-                <div><span>{t("Phase")}</span><strong>{t(autopilotRun.phase || autopilotRun.status)}</strong></div>
-                <div><span>{t("Steps")}</span><strong>{autopilotRun.stepCount ?? autopilotSteps.length}/{autopilotRun.maxSteps ?? "-"}</strong></div>
-                <div><span>{t("Evidence")}</span><strong>{evidence.met}/{evidence.total}</strong></div>
-                <div><span>{t("Retries")}</span><strong>{autopilotRun.totalRetries || 0}</strong></div>
+                <div>
+                  <span>{t("Phase")}</span>
+                  <strong>{t(autopilotRun.phase || autopilotRun.status)}</strong>
+                </div>
+                <div>
+                  <span>{t("Steps")}</span>
+                  <strong>
+                    {autopilotRun.stepCount ?? autopilotSteps.length}/{autopilotRun.maxSteps ?? "-"}
+                  </strong>
+                </div>
+                <div>
+                  <span>{t("Evidence")}</span>
+                  <strong>
+                    {evidence.met}/{evidence.total}
+                  </strong>
+                </div>
+                <div>
+                  <span>{t("Retries")}</span>
+                  <strong>{autopilotRun.totalRetries || 0}</strong>
+                </div>
               </div>
               <div className="server-agent-autopilot-targets">
-                <div><span>{t("Active target")}</span><code>{activeTarget}</code></div>
-                <div><span>{t("Current job")}</span><code>{currentJob}</code></div>
+                <div>
+                  <span>{t("Active target")}</span>
+                  <code>{activeTarget}</code>
+                </div>
+                <div>
+                  <span>{t("Current job")}</span>
+                  <code>{currentJob}</code>
+                </div>
               </div>
               {latestStep ? (
                 <div className="server-agent-autopilot-highlight">
                   <span>{t("Latest step")}</span>
-                  <strong>#{latestStep.sequence} {latestStep.kind} / {t(latestStep.status)}</strong>
+                  <strong>
+                    #{latestStep.sequence} {latestStep.kind} / {t(latestStep.status)}
+                  </strong>
                 </div>
               ) : null}
               <div className="server-agent-autopilot-highlight">
@@ -140,23 +273,33 @@ export function ServerAgentFlows({
                   <strong>{latestDecision}</strong>
                 </div>
               ) : null}
-              {autopilotRun.failureMessage ? <Alert type="error" showIcon message={autopilotRun.failureMessage} /> : null}
+              {autopilotRun.failureMessage ? (
+                <Alert type="error" showIcon message={autopilotRun.failureMessage} />
+              ) : null}
             </div>
-          ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("Waiting for an Autopilot prompt")} />}
+          ) : (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("Waiting for an Autopilot prompt")} />
+          )}
           <div className="server-agent-autopilot-details">
             <section>
-              <div className="section-title"><OrderedListOutlined /> {t("Steps")}</div>
+              <div className="section-title">
+                <OrderedListOutlined /> {t("Steps")}
+              </div>
               <div className="server-agent-autopilot-step-list">
                 {autopilotSteps.slice(0, 10).map((step) => {
                   const reason = servstationAutopilotDecisionReason(step);
                   return (
                     <div className="server-agent-autopilot-step" key={step.id}>
                       <div className="activity-head">
-                        <strong>#{step.sequence} {step.kind}</strong>
+                        <strong>
+                          #{step.sequence} {step.kind}
+                        </strong>
                         <Tag color={servstationStatusColor(step.status)}>{t(step.status)}</Tag>
                       </div>
                       <div className="server-agent-autopilot-step-meta">
-                        <span>{t("Attempt")} {step.attempt}</span>
+                        <span>
+                          {t("Attempt")} {step.attempt}
+                        </span>
                         {step.jobId ? <code>{step.jobId}</code> : null}
                         <span>{formatDateTime(step.updatedAt)}</span>
                       </div>
@@ -165,11 +308,15 @@ export function ServerAgentFlows({
                     </div>
                   );
                 })}
-                {!autopilotSteps.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("No Autopilot steps yet")} /> : null}
+                {!autopilotSteps.length ? (
+                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("No Autopilot steps yet")} />
+                ) : null}
               </div>
             </section>
             <section>
-              <div className="section-title"><ClockCircleOutlined /> {t("Events")}</div>
+              <div className="section-title">
+                <ClockCircleOutlined /> {t("Events")}
+              </div>
               <div className="server-agent-event-list">
                 {autopilotEvents.slice(0, 10).map((event) => (
                   <div className="runtime-event" key={event.id}>
@@ -177,7 +324,9 @@ export function ServerAgentFlows({
                     <small>{event.message || event.eventType}</small>
                   </div>
                 ))}
-                {!autopilotEvents.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("No Autopilot events yet")} /> : null}
+                {!autopilotEvents.length ? (
+                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("No Autopilot events yet")} />
+                ) : null}
               </div>
             </section>
           </div>
@@ -192,7 +341,7 @@ export function ServerAgentFlowWorkspace({
   disabled,
   identity,
   onPendingCountChange,
-  t
+  t,
 }: {
   connected: boolean;
   disabled: boolean;
@@ -221,45 +370,56 @@ export function ServerAgentFlowWorkspace({
   const executions = snapshot?.executions || [];
   const selectedWorkflow = useMemo(
     () => launchable.find((workflow) => workflow.id === selectedWorkflowId) || null,
-    [launchable, selectedWorkflowId]
+    [launchable, selectedWorkflowId],
   );
   const selectedTask = useMemo(
     () => tasks.find((task) => task.id === selectedTaskId) || tasks[0] || null,
-    [tasks, selectedTaskId]
+    [tasks, selectedTaskId],
   );
   const selectedExecutionSummary = useMemo(
     () => executions.find((execution) => execution.id === selectedExecutionId) || executions[0] || null,
-    [executions, selectedExecutionId]
+    [executions, selectedExecutionId],
   );
 
-  const refresh = useCallback(async (notify = false) => {
-    if (!connected) {
-      setSnapshot(null);
-      setSelectedWorkflowId("");
-      setSelectedTaskId(null);
-      setSelectedExecutionId(null);
-      setSelectedExecution(null);
-      setEvents([]);
-      onPendingCountChange(0);
-      return;
-    }
-    setLoading(true);
-    try {
-      const next = await window.supbot.getServstationFlowEngineSnapshot();
-      setSnapshot(next);
-      onPendingCountChange(next.pendingTasks.length);
-      setSelectedWorkflowId((current) => current && next.launchableWorkflows.some((item) => item.id === current) ? current : next.launchableWorkflows[0]?.id || "");
-      setSelectedTaskId((current) => current && next.pendingTasks.some((item) => item.id === current) ? current : next.pendingTasks[0]?.id || null);
-      setSelectedExecutionId((current) => current && next.executions.some((item) => item.id === current) ? current : next.executions[0]?.id || null);
-      if (notify) {
-        messageApi.success(t("Flow refreshed."));
+  const refresh = useCallback(
+    async (notify = false) => {
+      if (!connected) {
+        setSnapshot(null);
+        setSelectedWorkflowId("");
+        setSelectedTaskId(null);
+        setSelectedExecutionId(null);
+        setSelectedExecution(null);
+        setEvents([]);
+        onPendingCountChange(0);
+        return;
       }
-    } catch (error) {
-      messageApi.error((error as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [connected, messageApi, onPendingCountChange, t]);
+      setLoading(true);
+      try {
+        const next = await window.supbot.getServstationFlowEngineSnapshot();
+        setSnapshot(next);
+        onPendingCountChange(next.pendingTasks.length);
+        setSelectedWorkflowId((current) =>
+          current && next.launchableWorkflows.some((item) => item.id === current)
+            ? current
+            : next.launchableWorkflows[0]?.id || "",
+        );
+        setSelectedTaskId((current) =>
+          current && next.pendingTasks.some((item) => item.id === current) ? current : next.pendingTasks[0]?.id || null,
+        );
+        setSelectedExecutionId((current) =>
+          current && next.executions.some((item) => item.id === current) ? current : next.executions[0]?.id || null,
+        );
+        if (notify) {
+          messageApi.success(t("Flow refreshed."));
+        }
+      } catch (error) {
+        messageApi.error((error as Error).message);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [connected, messageApi, onPendingCountChange, t],
+  );
 
   useEffect(() => {
     void refresh();
@@ -275,7 +435,7 @@ export function ServerAgentFlowWorkspace({
     setDetailLoading(true);
     Promise.all([
       window.supbot.getServstationFlowEngineExecution(executionId),
-      window.supbot.getServstationFlowEngineExecutionEvents(executionId)
+      window.supbot.getServstationFlowEngineExecutionEvents(executionId),
     ])
       .then(([execution, nextEvents]) => {
         setSelectedExecution(execution);
@@ -305,11 +465,13 @@ export function ServerAgentFlowWorkspace({
     try {
       const input = shouldUseJsonFlowInput(selectedWorkflow.inputSchema)
         ? parseFlowInputJson(launchJson, t("Flow launch input JSON is invalid."))
-        : await launchForm.validateFields().then((values) => coerceFlowInputValues(values, selectedWorkflow.inputSchema));
+        : await launchForm
+            .validateFields()
+            .then((values) => coerceFlowInputValues(values, selectedWorkflow.inputSchema));
       setActionLoading(true);
       const execution = await window.supbot.launchServstationFlowEngineWorkflow({
         workflowId: selectedWorkflow.id,
-        input
+        input,
       });
       messageApi.success(t("Flow launched."));
       setLaunchOpen(false);
@@ -339,7 +501,7 @@ export function ServerAgentFlowWorkspace({
       await window.supbot.decideServstationFlowEngineApproval({
         approvalId: selectedTask.id,
         decision,
-        comment: approvalComment
+        comment: approvalComment,
       });
       messageApi.success(decision === "approved" ? t("Flow approved.") : t("Flow rejected."));
       setApprovalComment("");
@@ -357,16 +519,20 @@ export function ServerAgentFlowWorkspace({
       <div className="server-agent-mail-toolbar">
         <div>
           <Typography.Title level={3}>{t("Flows")}</Typography.Title>
-          <div className="muted">{identity ? `${identity.userId} / ${identity.organizationId}/${identity.departmentId}` : t("Servstation identity is missing.")}</div>
+          <div className="muted">
+            {identity
+              ? `${identity.userId} / ${identity.organizationId}/${identity.departmentId}`
+              : t("Servstation identity is missing.")}
+          </div>
         </div>
         <Space wrap>
-          <Tag color="gold">{t("Pending approvals")}: {tasks.length}</Tag>
+          <Tag color="gold">
+            {t("Pending approvals")}: {tasks.length}
+          </Tag>
         </Space>
       </div>
 
-      {!connected ? (
-        <Alert type="warning" showIcon message={t("Servstation reverse A2A is not connected.")} />
-      ) : null}
+      {!connected ? <Alert type="warning" showIcon message={t("Servstation reverse A2A is not connected.")} /> : null}
 
       <div className="server-agent-engine-grid">
         <aside className="server-agent-engine-list-panel">
@@ -387,12 +553,19 @@ export function ServerAgentFlowWorkspace({
                   placeholder={t("Select workflow")}
                 />
                 <div className="muted">{selectedWorkflow?.description || t("Select a workflow to launch.")}</div>
-                <Button type="primary" icon={<PlayCircleOutlined />} disabled={disabled || !selectedWorkflowId} onClick={openSelectedLaunchForm}>
+                <Button
+                  type="primary"
+                  icon={<PlayCircleOutlined />}
+                  disabled={disabled || !selectedWorkflowId}
+                  onClick={openSelectedLaunchForm}
+                >
                   {t("Launch")}
                 </Button>
               </>
             ) : (
-              <div className="server-agent-mail-empty">{connected ? t("No launchable workflows") : t("Servstation reverse A2A is not connected.")}</div>
+              <div className="server-agent-mail-empty">
+                {connected ? t("No launchable workflows") : t("Servstation reverse A2A is not connected.")}
+              </div>
             )}
           </section>
 
@@ -402,22 +575,28 @@ export function ServerAgentFlowWorkspace({
               {tasks.length ? <Tag color="gold">{tasks.length}</Tag> : null}
             </div>
             <div className="server-agent-engine-list">
-              {tasks.length ? tasks.map((task) => (
-                <button
-                  className={`server-agent-mail-list-item${selectedTask?.id === task.id ? " is-selected" : ""}`}
-                  key={task.id}
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => setSelectedTaskId(task.id)}
-                >
-                  <span className="server-agent-mail-list-line">
-                    <strong>{task.title}</strong>
-                    {flowEngineStatusTag(task.status, t)}
-                  </span>
-                  <span className="server-agent-mail-preview mono">{task.workflowId}</span>
-                  <span className="server-agent-mail-preview">{task.instructions || task.approverRoles.join(", ")}</span>
-                </button>
-              )) : <div className="server-agent-mail-empty">{t("No pending approvals")}</div>}
+              {tasks.length ? (
+                tasks.map((task) => (
+                  <button
+                    className={`server-agent-mail-list-item${selectedTask?.id === task.id ? " is-selected" : ""}`}
+                    key={task.id}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => setSelectedTaskId(task.id)}
+                  >
+                    <span className="server-agent-mail-list-line">
+                      <strong>{task.title}</strong>
+                      {flowEngineStatusTag(task.status, t)}
+                    </span>
+                    <span className="server-agent-mail-preview mono">{task.workflowId}</span>
+                    <span className="server-agent-mail-preview">
+                      {task.instructions || task.approverRoles.join(", ")}
+                    </span>
+                  </button>
+                ))
+              ) : (
+                <div className="server-agent-mail-empty">{t("No pending approvals")}</div>
+              )}
             </div>
           </section>
 
@@ -426,22 +605,26 @@ export function ServerAgentFlowWorkspace({
               <strong>{t("My flow executions")}</strong>
             </div>
             <div className="server-agent-engine-list">
-              {executions.length ? executions.map((execution) => (
-                <button
-                  className={`server-agent-mail-list-item${selectedExecutionSummary?.id === execution.id ? " is-selected" : ""}`}
-                  key={execution.id}
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => setSelectedExecutionId(execution.id)}
-                >
-                  <span className="server-agent-mail-list-line">
-                    <strong>{execution.workflowName || execution.workflowId}</strong>
-                    {flowEngineStatusTag(execution.status, t)}
-                  </span>
-                  <span className="server-agent-mail-preview mono">{execution.id}</span>
-                  <span className="server-agent-mail-preview">{formatMessageTime(execution.createdAt)}</span>
-                </button>
-              )) : <div className="server-agent-mail-empty">{t("No flow executions")}</div>}
+              {executions.length ? (
+                executions.map((execution) => (
+                  <button
+                    className={`server-agent-mail-list-item${selectedExecutionSummary?.id === execution.id ? " is-selected" : ""}`}
+                    key={execution.id}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => setSelectedExecutionId(execution.id)}
+                  >
+                    <span className="server-agent-mail-list-line">
+                      <strong>{execution.workflowName || execution.workflowId}</strong>
+                      {flowEngineStatusTag(execution.status, t)}
+                    </span>
+                    <span className="server-agent-mail-preview mono">{execution.id}</span>
+                    <span className="server-agent-mail-preview">{formatMessageTime(execution.createdAt)}</span>
+                  </button>
+                ))
+              ) : (
+                <div className="server-agent-mail-empty">{t("No flow executions")}</div>
+              )}
             </div>
           </section>
         </aside>
@@ -454,14 +637,20 @@ export function ServerAgentFlowWorkspace({
                 <div className="muted">{selectedTask ? selectedTask.workflowId : t("No pending approvals")}</div>
               </div>
               {selectedTask?.openUrl ? (
-                <Button icon={<ApiOutlined />} disabled={disabled} onClick={() => window.open(selectedTask.openUrl, "_blank", "noopener,noreferrer")}>
+                <Button
+                  icon={<ApiOutlined />}
+                  disabled={disabled}
+                  onClick={() => window.open(selectedTask.openUrl, "_blank", "noopener,noreferrer")}
+                >
                   {t("Open task")}
                 </Button>
               ) : null}
             </div>
             {selectedTask ? (
               <>
-                <div className="server-agent-engine-body">{selectedTask.instructions || selectedTask.approverRoles.join(", ")}</div>
+                <div className="server-agent-engine-body">
+                  {selectedTask.instructions || selectedTask.approverRoles.join(", ")}
+                </div>
                 <div className="server-agent-engine-input-section">
                   <strong>{t("Approval input")}</strong>
                   <FlowExecutionInputView input={selectedTask.executionInput} t={t} />
@@ -474,10 +663,22 @@ export function ServerAgentFlowWorkspace({
                   placeholder={t("Approval comment")}
                 />
                 <Space wrap>
-                  <Button type="primary" icon={<CheckCircleOutlined />} loading={actionLoading} disabled={disabled} onClick={() => void decideSelectedTask("approved")}>
+                  <Button
+                    type="primary"
+                    icon={<CheckCircleOutlined />}
+                    loading={actionLoading}
+                    disabled={disabled}
+                    onClick={() => void decideSelectedTask("approved")}
+                  >
                     {t("Approve")}
                   </Button>
-                  <Button danger icon={<CloseCircleOutlined />} loading={actionLoading} disabled={disabled} onClick={() => void decideSelectedTask("rejected")}>
+                  <Button
+                    danger
+                    icon={<CloseCircleOutlined />}
+                    loading={actionLoading}
+                    disabled={disabled}
+                    onClick={() => void decideSelectedTask("rejected")}
+                  >
                     {t("Reject")}
                   </Button>
                 </Space>
@@ -503,11 +704,23 @@ export function ServerAgentFlowWorkspace({
                     {flowEngineStatusTag(selectedExecution.status, t)}
                   </div>
                   <Descriptions size="small" column={1}>
-                    <Descriptions.Item label={t("Created at")}>{formatMessageTime(selectedExecution.createdAt)}</Descriptions.Item>
-                    <Descriptions.Item label={t("Started at")}>{formatMessageTime(selectedExecution.startedAt)}</Descriptions.Item>
-                    <Descriptions.Item label={t("Finished at")}>{formatMessageTime(selectedExecution.finishedAt)}</Descriptions.Item>
+                    <Descriptions.Item label={t("Created at")}>
+                      {formatMessageTime(selectedExecution.createdAt)}
+                    </Descriptions.Item>
+                    <Descriptions.Item label={t("Started at")}>
+                      {formatMessageTime(selectedExecution.startedAt)}
+                    </Descriptions.Item>
+                    <Descriptions.Item label={t("Finished at")}>
+                      {formatMessageTime(selectedExecution.finishedAt)}
+                    </Descriptions.Item>
                   </Descriptions>
-                  <pre className="server-agent-engine-json">{JSON.stringify(selectedExecution.output ?? selectedExecution.error ?? selectedExecution.input, null, 2)}</pre>
+                  <pre className="server-agent-engine-json">
+                    {JSON.stringify(
+                      selectedExecution.output ?? selectedExecution.error ?? selectedExecution.input,
+                      null,
+                      2,
+                    )}
+                  </pre>
                   <div className="server-agent-engine-timeline">
                     {events.map((event) => (
                       <div key={event.id} className="server-agent-engine-timeline-event">
@@ -517,7 +730,9 @@ export function ServerAgentFlowWorkspace({
                     ))}
                   </div>
                 </>
-              ) : t("No flow executions")}
+              ) : (
+                t("No flow executions")
+              )}
             </div>
           </article>
         </section>
@@ -562,7 +777,7 @@ export function FlowLaunchInputForm({
   t,
   jsonValue,
   jsonError,
-  onJsonChange
+  onJsonChange,
 }: {
   disabled: boolean;
   form: FormInstance<FlowLaunchFormValues>;
@@ -623,13 +838,15 @@ export function renderFlowInputControl(field: FlowInputField, disabled: boolean,
         disabled={disabled}
         options={[
           { label: "true", value: true },
-          { label: "false", value: false }
+          { label: "false", value: false },
         ]}
       />
     );
   }
   if (field.kind === "number" || field.kind === "integer") {
-    return <InputNumber style={{ width: "100%" }} precision={field.kind === "integer" ? 0 : undefined} disabled={disabled} />;
+    return (
+      <InputNumber style={{ width: "100%" }} precision={field.kind === "integer" ? 0 : undefined} disabled={disabled} />
+    );
   }
   if (field.kind === "file") {
     return <FlowFileInput disabled={disabled} t={t} />;
@@ -641,7 +858,7 @@ export function FlowFileInput({
   value,
   onChange,
   disabled,
-  t
+  t,
 }: {
   value?: string | FlowFilePayload;
   onChange?: (value: FlowFilePayload | null) => void;
@@ -653,7 +870,13 @@ export function FlowFileInput({
   const [loading, setLoading] = useState(false);
   return (
     <Space.Compact style={{ width: "100%" }}>
-      <Input readOnly value={display} placeholder={disabled ? "" : t("No file selected")} style={{ width: "60%" }} disabled={disabled} />
+      <Input
+        readOnly
+        value={display}
+        placeholder={disabled ? "" : t("No file selected")}
+        style={{ width: "60%" }}
+        disabled={disabled}
+      />
       <input
         ref={inputRef}
         type="file"
@@ -674,7 +897,12 @@ export function FlowFileInput({
             });
         }}
       />
-      <Button icon={<PaperClipOutlined />} loading={loading} disabled={disabled} onClick={() => inputRef.current?.click()}>
+      <Button
+        icon={<PaperClipOutlined />}
+        loading={loading}
+        disabled={disabled}
+        onClick={() => inputRef.current?.click()}
+      >
         {loading ? "" : t("Select file")}
       </Button>
     </Space.Compact>
@@ -696,8 +924,15 @@ export function FlowExecutionInputView({ input, t }: { input?: Record<string, un
               <Space size="small" wrap>
                 <PaperClipOutlined />
                 <span>{value.fileName}</span>
-                <span className="muted">({t("File size")} {formatBytesFromBase64(value.contentBase64)})</span>
-                <Button size="small" type="link" icon={<DownloadOutlined />} onClick={() => downloadFlowFilePayload(value)}>
+                <span className="muted">
+                  ({t("File size")} {formatBytesFromBase64(value.contentBase64)})
+                </span>
+                <Button
+                  size="small"
+                  type="link"
+                  icon={<DownloadOutlined />}
+                  onClick={() => downloadFlowFilePayload(value)}
+                >
                   {t("Download")}
                 </Button>
               </Space>
@@ -739,7 +974,7 @@ export function flowEngineStatusLabel(status: string | undefined, t: Translator)
     canceled: "Canceled",
     pending: "Pending",
     approved: "Approved",
-    rejected: "Rejected"
+    rejected: "Rejected",
   };
   return t(labels[normalized] || status || "Unknown");
 }

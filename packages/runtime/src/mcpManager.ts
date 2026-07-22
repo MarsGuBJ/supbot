@@ -12,7 +12,7 @@ import type {
   McpServerStatus,
   McpServerUpdate,
   McpToolInfo,
-  ToolCallRecord
+  ToolCallRecord,
 } from "@supbot/shared";
 import { nowIso } from "@supbot/shared";
 import { inspectJsonSchema } from "./jsonSchema";
@@ -41,7 +41,11 @@ type McpToolPayload = {
 };
 
 class McpProtocolError extends Error {
-  constructor(message: string, readonly code?: number, readonly data?: unknown) {
+  constructor(
+    message: string,
+    readonly code?: number,
+    readonly data?: unknown,
+  ) {
     super(message);
     this.name = "McpProtocolError";
   }
@@ -58,7 +62,10 @@ interface McpConnection {
   process?: ChildProcessWithoutNullStreams;
   status: McpServerStatus;
   tools: McpToolInfo[];
-  pending: Map<number, { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>;
+  pending: Map<
+    number,
+    { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }
+  >;
   buffer: Buffer;
   nextRequestId: number;
   manualDisconnect: boolean;
@@ -97,10 +104,10 @@ export class McpManager implements ToolProvider {
         const connection = this.connectionFor(server.id);
         return {
           ...cloneServer(server),
-          status: { ...connection.status }
+          status: { ...connection.status },
         };
       }),
-      mcpTools: this.listToolInfos()
+      mcpTools: this.listToolInfos(),
     };
   }
 
@@ -114,12 +121,17 @@ export class McpManager implements ToolProvider {
   }
 
   list(): ToolDefinition[] {
-    return [...this.connections.values()]
-      .flatMap((connection) => connection.tools.map((tool) => this.toToolDefinition(connection, tool)));
+    return [...this.connections.values()].flatMap((connection) =>
+      connection.tools.map((tool) => this.toToolDefinition(connection, tool)),
+    );
   }
 
   async autoConnectEnabled(): Promise<void> {
-    await Promise.all(this.servers.filter((server) => server.enabled && server.autoConnect).map((server) => this.connect(server.id).catch(() => undefined)));
+    await Promise.all(
+      this.servers
+        .filter((server) => server.enabled && server.autoConnect)
+        .map((server) => this.connect(server.id).catch(() => undefined)),
+    );
   }
 
   async disconnectAll(): Promise<void> {
@@ -136,11 +148,11 @@ export class McpManager implements ToolProvider {
       exportedAt: this.host.nowIso(),
       servers: this.servers.map((server) => ({
         ...cloneServer(server),
-        env: redactEnv(server.env)
+        env: redactEnv(server.env),
       })),
       permissionRules: permissionRules
         .filter((rule) => rule.toolName.startsWith("mcp."))
-        .map((rule) => ({ toolName: rule.toolName, behavior: rule.behavior }))
+        .map((rule) => ({ toolName: rule.toolName, behavior: rule.behavior })),
     };
   }
 
@@ -158,21 +170,18 @@ export class McpManager implements ToolProvider {
       const server = normalizeServerInput(
         { ...input, autoConnect: false },
         uniqueServerId(input.name, [...this.servers, ...imported]),
-        now
+        now,
       );
       imported.push(server);
     }
-    this.servers = [
-      ...imported,
-      ...this.servers
-    ];
+    this.servers = [...imported, ...this.servers];
     for (const server of imported) {
       this.connections.set(server.id, createDisconnectedConnection(server, now));
     }
     return {
       servers: imported.map(cloneServer),
       imported: imported.length,
-      skipped
+      skipped,
     };
   }
 
@@ -190,7 +199,7 @@ export class McpManager implements ToolProvider {
         cwd: server.cwd || process.cwd(),
         env: { ...process.env, ...(server.env || {}) },
         windowsHide: true,
-        stdio: "pipe"
+        stdio: "pipe",
       });
       connection.process = child;
       child.stdout.on("data", (chunk) => this.handleData(connection, chunk));
@@ -212,7 +221,7 @@ export class McpManager implements ToolProvider {
       const initializeResult = await this.request(connection, "initialize", {
         protocolVersion: "2024-11-05",
         capabilities: {},
-        clientInfo: { name: "hbclient", version: "4.3.0" }
+        clientInfo: { name: "hbclient", version: "4.3.0" },
       });
       recordInitializeResult(connection, initializeResult);
       initializeMs = Date.now() - initializeStart;
@@ -231,7 +240,7 @@ export class McpManager implements ToolProvider {
         initializeMs,
         toolsListMs,
         protocolVersion: connection.protocolVersion,
-        capabilities: connection.capabilities
+        capabilities: connection.capabilities,
       });
     } catch (error) {
       const protocolError = error instanceof McpProtocolError ? error : undefined;
@@ -248,7 +257,7 @@ export class McpManager implements ToolProvider {
         protocolVersion: connection.protocolVersion,
         capabilities: connection.capabilities,
         errorCode: protocolError?.code,
-        errorData: protocolError?.data
+        errorData: protocolError?.data,
       });
     } finally {
       this.rejectPending(connection, new Error("MCP diagnostic finished."));
@@ -272,7 +281,7 @@ export class McpManager implements ToolProvider {
       throw new Error(`MCP server not found: ${serverId}`);
     }
     const next = normalizeServerInput({ ...current, ...update }, serverId, this.host.nowIso(), current.createdAt);
-    this.servers = this.servers.map((server) => server.id === serverId ? next : server);
+    this.servers = this.servers.map((server) => (server.id === serverId ? next : server));
     const connection = this.connectionFor(serverId);
     connection.config = cloneServer(next);
     if (!next.enabled) {
@@ -315,7 +324,7 @@ export class McpManager implements ToolProvider {
         cwd: server.cwd || process.cwd(),
         env: { ...process.env, ...(server.env || {}) },
         windowsHide: true,
-        stdio: "pipe"
+        stdio: "pipe",
       });
       connection.process = child;
       this.setStatus(connection, "connecting", { pid: child.pid });
@@ -342,7 +351,7 @@ export class McpManager implements ToolProvider {
           pid: undefined,
           connectedAt: undefined,
           lastExitReason: message,
-          lastError: preserveError ? connection.status.lastError : (manual || wasConnected ? undefined : message)
+          lastError: preserveError ? connection.status.lastError : manual || wasConnected ? undefined : message,
         });
         if (manual) {
           this.pushLog(serverId, "info", message, { code, signal });
@@ -352,14 +361,19 @@ export class McpManager implements ToolProvider {
       });
       child.on("error", (error) => {
         this.rejectPending(connection, error);
-        this.setStatus(connection, "error", { lastError: error.message, lastExitReason: error.message, pid: undefined, toolCount: 0 });
+        this.setStatus(connection, "error", {
+          lastError: error.message,
+          lastExitReason: error.message,
+          pid: undefined,
+          toolCount: 0,
+        });
         void this.emit("MCP server failed to start", serverId, { error: error.message }, "error");
       });
 
       const initializeResult = await this.request(connection, "initialize", {
         protocolVersion: "2024-11-05",
         capabilities: {},
-        clientInfo: { name: "hbclient", version: "4.3.0" }
+        clientInfo: { name: "hbclient", version: "4.3.0" },
       });
       recordInitializeResult(connection, initializeResult);
       this.notify(connection, "notifications/initialized", {});
@@ -414,17 +428,22 @@ export class McpManager implements ToolProvider {
       concurrency: "exclusive",
       interruptBehavior: "cancel",
       parameters: tool.inputSchema,
-      validationError: tool.schemaValid === false
-        ? `MCP tool schema is invalid for ${tool.runtimeToolName}: ${tool.schemaWarnings.join("; ")}`
-        : undefined,
+      validationError:
+        tool.schemaValid === false
+          ? `MCP tool schema is invalid for ${tool.runtimeToolName}: ${tool.schemaWarnings.join("; ")}`
+          : undefined,
       summarize(input) {
         return `${tool.runtimeToolName} ${JSON.stringify(input).slice(0, 160)}`;
       },
-      execute: async (input, context) => this.callTool(tool, input, context)
+      execute: async (input, context) => this.callTool(tool, input, context),
     };
   }
 
-  private async callTool(tool: McpToolInfo, input: unknown, context: ToolExecutionContext): Promise<ToolExecutionResult> {
+  private async callTool(
+    tool: McpToolInfo,
+    input: unknown,
+    context: ToolExecutionContext,
+  ): Promise<ToolExecutionResult> {
     const connection = this.connectionFor(tool.serverId);
     if (!connection.process || connection.status.state !== "connected") {
       throw new Error(`MCP server is not connected: ${tool.serverName}`);
@@ -433,21 +452,31 @@ export class McpManager implements ToolProvider {
       throw new Error("MCP tool call canceled.");
     }
     try {
-      const result = await this.request(connection, "tools/call", {
-        name: tool.name,
-        arguments: input
-      }, context.signal);
+      const result = await this.request(
+        connection,
+        "tools/call",
+        {
+          name: tool.name,
+          arguments: input,
+        },
+        context.signal,
+      );
       const formatted = formatMcpToolResult(result);
       return { text: formatted.text, outputParts: formatted.parts, outputTruncated: formatted.truncated };
     } catch (error) {
       if (error instanceof McpProtocolError) {
-        throw new Error(formatMcpProtocolError(error));
+        throw new Error(formatMcpProtocolError(error), { cause: error });
       }
       throw error;
     }
   }
 
-  private async request(connection: McpConnection, method: string, params?: unknown, signal?: AbortSignal): Promise<unknown> {
+  private async request(
+    connection: McpConnection,
+    method: string,
+    params?: unknown,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
     if (!connection.process) {
       throw new Error(`MCP server is not running: ${connection.config.name}`);
     }
@@ -483,7 +512,7 @@ export class McpManager implements ToolProvider {
           signal?.removeEventListener("abort", abort);
           reject(error);
         },
-        timer
+        timer,
       });
       connection.process!.stdin.write(frame, (error) => {
         if (error) {
@@ -502,7 +531,9 @@ export class McpManager implements ToolProvider {
       return;
     }
     const payload = Buffer.from(JSON.stringify({ jsonrpc: "2.0", method, params }), "utf8");
-    connection.process.stdin.write(Buffer.concat([Buffer.from(`Content-Length: ${payload.length}\r\n\r\n`, "utf8"), payload]));
+    connection.process.stdin.write(
+      Buffer.concat([Buffer.from(`Content-Length: ${payload.length}\r\n\r\n`, "utf8"), payload]),
+    );
   }
 
   private handleData(connection: McpConnection, chunk: Buffer): void {
@@ -548,7 +579,12 @@ export class McpManager implements ToolProvider {
     }
     const pending = connection.pending.get(message.id);
     if (!pending) {
-      this.pushLog(connection.config.id, "warning", `Ignored MCP response for unknown request id ${message.id}.`, message);
+      this.pushLog(
+        connection.config.id,
+        "warning",
+        `Ignored MCP response for unknown request id ${message.id}.`,
+        message,
+      );
       return;
     }
     clearTimeout(pending.timer);
@@ -582,7 +618,7 @@ export class McpManager implements ToolProvider {
       serverId: connection.config.id,
       state,
       toolCount: patch.toolCount ?? connection.tools.length,
-      updatedAt: this.host.nowIso()
+      updatedAt: this.host.nowIso(),
     };
   }
 
@@ -601,14 +637,19 @@ export class McpManager implements ToolProvider {
       level,
       message,
       createdAt: this.host.nowIso(),
-      data
+      data,
     };
     const next = [record, ...(this.logs.get(serverId) || [])].slice(0, 100);
     this.logs.set(serverId, next);
     return record;
   }
 
-  private async emit(message: string, serverId?: string, data?: unknown, level: McpLogRecord["level"] = "info"): Promise<void> {
+  private async emit(
+    message: string,
+    serverId?: string,
+    data?: unknown,
+    level: McpLogRecord["level"] = "info",
+  ): Promise<void> {
     if (serverId) {
       this.pushLog(serverId, level, message, data);
     }
@@ -623,13 +664,13 @@ function createDisconnectedConnection(server: McpServerConfig, now: string): Mcp
       serverId: server.id,
       state: "disconnected",
       toolCount: 0,
-      updatedAt: now
+      updatedAt: now,
     },
     tools: [],
     pending: new Map(),
     buffer: Buffer.alloc(0),
     nextRequestId: 1,
-    manualDisconnect: false
+    manualDisconnect: false,
   };
 }
 
@@ -642,14 +683,17 @@ function normalizeServerInput(input: McpServerInput, id: string, now: string, cr
   if (!command) {
     throw new Error("MCP server command is required.");
   }
-  const env = input.env && typeof input.env === "object"
-    ? Object.fromEntries(Object.entries(input.env).filter(([key, value]) => key.trim() && typeof value === "string"))
-    : undefined;
+  const env =
+    input.env && typeof input.env === "object"
+      ? Object.fromEntries(Object.entries(input.env).filter(([key, value]) => key.trim() && typeof value === "string"))
+      : undefined;
   return {
     id: sanitizeServerId(id),
     name,
     command,
-    args: Array.isArray(input.args) ? input.args.filter((item: unknown): item is string => typeof item === "string") : [],
+    args: Array.isArray(input.args)
+      ? input.args.filter((item: unknown): item is string => typeof item === "string")
+      : [],
     cwd: input.cwd?.trim() || undefined,
     env,
     requestTimeoutMs: normalizeRequestTimeout(input.requestTimeoutMs),
@@ -657,7 +701,7 @@ function normalizeServerInput(input: McpServerInput, id: string, now: string, cr
     autoConnect: Boolean(input.autoConnect),
     createdAt,
     updatedAt: now,
-    source: cloneServerSource(input.source)
+    source: cloneServerSource(input.source),
   };
 }
 
@@ -666,7 +710,7 @@ function cloneServer(server: McpServerConfig): McpServerConfig {
     ...server,
     args: [...server.args],
     env: server.env ? { ...server.env } : undefined,
-    source: cloneServerSource(server.source)
+    source: cloneServerSource(server.source),
   };
 }
 
@@ -695,32 +739,46 @@ function parseTools(result: unknown, server: McpServerConfig): McpToolInfo[] {
         inputSchema: normalized.schema,
         schemaValid: normalized.warnings.length === 0,
         schemaWarnings: normalized.warnings,
-        connected: true
+        connected: true,
       };
     });
 }
 
-function normalizeInputSchema(schema: unknown, path: string): { schema: McpToolInfo["inputSchema"]; warnings: string[] } {
+function normalizeInputSchema(
+  schema: unknown,
+  path: string,
+): { schema: McpToolInfo["inputSchema"]; warnings: string[] } {
   const warnings = inspectJsonSchema(schema, path);
-  const value = schema && typeof schema === "object" && !Array.isArray(schema)
-    ? schema as Partial<McpToolInfo["inputSchema"]>
-    : {};
+  const value =
+    schema && typeof schema === "object" && !Array.isArray(schema)
+      ? (schema as Partial<McpToolInfo["inputSchema"]>)
+      : {};
   if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
     warnings.push(`${path} must be an object schema.`);
   }
   return {
     schema: {
       type: "object",
-      properties: value.properties && typeof value.properties === "object" && !Array.isArray(value.properties) ? value.properties : {},
-      required: Array.isArray(value.required) ? value.required.filter((item: unknown): item is string => typeof item === "string") : undefined,
-      additionalProperties: typeof value.additionalProperties === "boolean" ? value.additionalProperties : true
+      properties:
+        value.properties && typeof value.properties === "object" && !Array.isArray(value.properties)
+          ? value.properties
+          : {},
+      required: Array.isArray(value.required)
+        ? value.required.filter((item: unknown): item is string => typeof item === "string")
+        : undefined,
+      additionalProperties: typeof value.additionalProperties === "boolean" ? value.additionalProperties : true,
     },
-    warnings: [...new Set(warnings)]
+    warnings: [...new Set(warnings)],
   };
 }
 
 function sanitizeServerId(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "") || "mcp";
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, "-")
+      .replace(/^-|-$/g, "") || "mcp"
+  );
 }
 
 function uniqueServerId(name: string, servers: McpServerConfig[]): string {
@@ -759,10 +817,9 @@ function appendPreview(current: string | undefined, text: string, maxLength: num
 }
 
 function formatExitReason(code: number | null, signal: NodeJS.Signals | null): string {
-  const detail = [
-    typeof code === "number" ? `code ${code}` : undefined,
-    signal ? `signal ${signal}` : undefined
-  ].filter(Boolean).join(", ");
+  const detail = [typeof code === "number" ? `code ${code}` : undefined, signal ? `signal ${signal}` : undefined]
+    .filter(Boolean)
+    .join(", ");
   return detail ? `MCP server exited (${detail}).` : "MCP server exited.";
 }
 
@@ -770,15 +827,16 @@ function formatMcpProtocolError(error: McpProtocolError): string {
   const details = [
     error.message,
     typeof error.code === "number" ? `MCP code ${error.code}` : undefined,
-    error.data !== undefined ? `data ${stringifyCompact(error.data, 600)}` : undefined
+    error.data !== undefined ? `data ${stringifyCompact(error.data, 600)}` : undefined,
   ].filter(Boolean);
   return details.join("; ");
 }
 
 function recordInitializeResult(connection: McpConnection, result: unknown): void {
-  const payload = result && typeof result === "object" && !Array.isArray(result)
-    ? result as { protocolVersion?: unknown; capabilities?: unknown }
-    : undefined;
+  const payload =
+    result && typeof result === "object" && !Array.isArray(result)
+      ? (result as { protocolVersion?: unknown; capabilities?: unknown })
+      : undefined;
   if (typeof payload?.protocolVersion === "string") {
     connection.protocolVersion = payload.protocolVersion;
   }
@@ -787,19 +845,28 @@ function recordInitializeResult(connection: McpConnection, result: unknown): voi
   }
 }
 
-function formatMcpToolResult(result: unknown): { text: string; parts: ToolCallRecord["outputParts"]; truncated: boolean } {
+function formatMcpToolResult(result: unknown): {
+  text: string;
+  parts: ToolCallRecord["outputParts"];
+  truncated: boolean;
+} {
   const payload = result as { content?: unknown[]; isError?: boolean } | undefined;
   let parts: ToolCallRecord["outputParts"] = [];
   if (Array.isArray(payload?.content)) {
-    parts = payload.content.map(formatContentPart).filter((part): part is NonNullable<typeof parts>[number] => Boolean(part));
-    const text = parts.map((part) => part.text).filter(Boolean).join("\n");
+    parts = payload.content
+      .map(formatContentPart)
+      .filter((part): part is NonNullable<typeof parts>[number] => Boolean(part));
+    const text = parts
+      .map((part) => part.text)
+      .filter(Boolean)
+      .join("\n");
     if (text.trim()) {
       const formattedText = payload.isError ? `Error: ${text}` : text;
       const truncated = formattedText.length > 8_000;
       return {
         text: truncated ? `${formattedText.slice(0, 8_000)}\n[truncated]` : formattedText,
         parts,
-        truncated
+        truncated,
       };
     }
   }
@@ -807,7 +874,7 @@ function formatMcpToolResult(result: unknown): { text: string; parts: ToolCallRe
   return {
     text,
     parts: [{ type: "json", text }],
-    truncated: text.endsWith("\n[truncated]")
+    truncated: text.endsWith("\n[truncated]"),
   };
 }
 
@@ -825,21 +892,30 @@ function formatContentPart(part: unknown): NonNullable<ToolCallRecord["outputPar
     return {
       type: "image",
       mimeType,
-      text: `[image${mimeType ? ` ${mimeType}` : ""}${dataLength ? `, ${dataLength} base64 chars` : ""}]`
+      text: `[image${mimeType ? ` ${mimeType}` : ""}${dataLength ? `, ${dataLength} base64 chars` : ""}]`,
     };
   }
   if (value.type === "resource") {
-    const resource = value.resource && typeof value.resource === "object" && !Array.isArray(value.resource)
-      ? value.resource as { uri?: unknown; name?: unknown; mimeType?: unknown; text?: unknown; blob?: unknown }
-      : undefined;
-    const mimeType = typeof resource?.mimeType === "string" ? resource.mimeType : typeof value.mimeType === "string" ? value.mimeType : undefined;
+    const resource =
+      value.resource && typeof value.resource === "object" && !Array.isArray(value.resource)
+        ? (value.resource as { uri?: unknown; name?: unknown; mimeType?: unknown; text?: unknown; blob?: unknown })
+        : undefined;
+    const mimeType =
+      typeof resource?.mimeType === "string"
+        ? resource.mimeType
+        : typeof value.mimeType === "string"
+          ? value.mimeType
+          : undefined;
     const label = [
       typeof resource?.uri === "string" ? resource.uri : undefined,
-      typeof resource?.name === "string" ? resource.name : undefined
-    ].filter(Boolean).join(" ");
-    const text = typeof resource?.text === "string"
-      ? resource.text
-      : `[resource${label ? ` ${label}` : ""}${mimeType ? ` ${mimeType}` : ""}]`;
+      typeof resource?.name === "string" ? resource.name : undefined,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const text =
+      typeof resource?.text === "string"
+        ? resource.text
+        : `[resource${label ? ` ${label}` : ""}${mimeType ? ` ${mimeType}` : ""}]`;
     return { type: "resource", mimeType, text };
   }
   return { type: value.type || "unknown", text: stringifyCompact(value, 2_000) };
@@ -859,7 +935,9 @@ function redactEnv(env: McpServerConfig["env"]): McpConfigTransfer["servers"][nu
   if (!env) {
     return undefined;
   }
-  const entries = Object.keys(env).filter(Boolean).map((key) => [key, { redacted: true as const }]);
+  const entries = Object.keys(env)
+    .filter(Boolean)
+    .map((key) => [key, { redacted: true as const }]);
   return entries.length ? Object.fromEntries(entries) : undefined;
 }
 
@@ -881,7 +959,7 @@ function transferServerToInput(item: unknown): McpServerInput | undefined {
     env: importEnvPlaceholders(value.env),
     requestTimeoutMs: value.requestTimeoutMs,
     enabled: value.enabled !== false,
-    autoConnect: false
+    autoConnect: false,
   };
 }
 
@@ -928,7 +1006,7 @@ function finishDiagnostic(input: {
     protocolVersion: input.protocolVersion,
     capabilities: input.capabilities,
     initializeMs: input.initializeMs,
-    toolsListMs: input.toolsListMs
+    toolsListMs: input.toolsListMs,
   };
 }
 
@@ -953,9 +1031,9 @@ function clonePreset(preset: McpServerPreset): McpServerPreset {
     serverInput: {
       ...preset.serverInput,
       args: [...(preset.serverInput.args || [])],
-      env: preset.serverInput.env ? { ...preset.serverInput.env } : undefined
+      env: preset.serverInput.env ? { ...preset.serverInput.env } : undefined,
     },
-    recommendedPermissionRules: preset.recommendedPermissionRules.map((rule) => ({ ...rule }))
+    recommendedPermissionRules: preset.recommendedPermissionRules.map((rule) => ({ ...rule })),
   };
 }
 
@@ -978,9 +1056,9 @@ const mcpServerPresets: McpServerPreset[] = [
       env: { API_KEY: "" },
       requestTimeoutMs: 30000,
       enabled: true,
-      autoConnect: false
+      autoConnect: false,
     },
-    recommendedPermissionRules: [{ toolName: "mcp.node-mcp.*", behavior: "ask" }]
+    recommendedPermissionRules: [{ toolName: "mcp.node-mcp.*", behavior: "ask" }],
   },
   {
     id: "python-stdio",
@@ -1000,9 +1078,9 @@ const mcpServerPresets: McpServerPreset[] = [
       env: { PYTHONPATH: "" },
       requestTimeoutMs: 30000,
       enabled: true,
-      autoConnect: false
+      autoConnect: false,
     },
-    recommendedPermissionRules: [{ toolName: "mcp.python-mcp.*", behavior: "ask" }]
+    recommendedPermissionRules: [{ toolName: "mcp.python-mcp.*", behavior: "ask" }],
   },
   {
     id: "npx-stdio",
@@ -1012,7 +1090,8 @@ const mcpServerPresets: McpServerPreset[] = [
     argsTemplate: ["-y", "@example/mcp-server"],
     envHints: [{ key: "TOKEN", description: "Optional token used by the MCP package.", required: false }],
     docsUrl: "https://modelcontextprotocol.io",
-    riskNote: "Does not install from HBClient, but npx may execute package code available on this machine or registry cache.",
+    riskNote:
+      "Does not install from HBClient, but npx may execute package code available on this machine or registry cache.",
     serverInput: {
       name: "npx-mcp",
       command: "npx",
@@ -1020,8 +1099,8 @@ const mcpServerPresets: McpServerPreset[] = [
       env: { TOKEN: "" },
       requestTimeoutMs: 30000,
       enabled: true,
-      autoConnect: false
+      autoConnect: false,
     },
-    recommendedPermissionRules: [{ toolName: "mcp.npx-mcp.*", behavior: "ask" }]
-  }
+    recommendedPermissionRules: [{ toolName: "mcp.npx-mcp.*", behavior: "ask" }],
+  },
 ];

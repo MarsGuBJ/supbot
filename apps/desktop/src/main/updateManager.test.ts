@@ -25,15 +25,15 @@ const updaterMock = vi.hoisted(() => {
     setFeedURL: vi.fn(),
     checkForUpdates: vi.fn(),
     downloadUpdate: vi.fn(),
-    quitAndInstall: vi.fn()
+    quitAndInstall: vi.fn(),
   };
 });
 
 vi.mock("electron", () => ({
   app: {
     getVersion: () => "1.0.0",
-    isPackaged: true
-  }
+    isPackaged: true,
+  },
 }));
 
 vi.mock("electron-updater", () => ({ autoUpdater: updaterMock }));
@@ -57,7 +57,7 @@ describe("HBClientUpdateManager", () => {
     const states: string[] = [];
     const manager = new HBClientUpdateManager({
       getFeedContext,
-      emitState: (state) => states.push(state.status)
+      emitState: (state) => states.push(state.status),
     });
     updaterMock.checkForUpdates.mockImplementation(async () => {
       updaterMock.emit("checking-for-update");
@@ -72,11 +72,15 @@ describe("HBClientUpdateManager", () => {
 
     await manager.check(true);
     expect(updaterMock.disableDifferentialDownload).toBe(false);
-    expect(manager.getState()).toMatchObject({ status: "available", currentVersion: "1.0.0", availableVersion: "1.1.0" });
+    expect(manager.getState()).toMatchObject({
+      status: "available",
+      currentVersion: "1.0.0",
+      availableVersion: "1.1.0",
+    });
     expect(updaterMock.setFeedURL).toHaveBeenCalledWith({
       provider: "generic",
       url: "https://botstation.example/api/v1/hbclient/updates/stable/win32-x64",
-      useMultipleRangeRequest: false
+      useMultipleRangeRequest: false,
     });
     expect(updaterMock.requestHeaders).toEqual({ Authorization: "Bearer token-1" });
 
@@ -84,7 +88,7 @@ describe("HBClientUpdateManager", () => {
     expect(manager.getState()).toMatchObject({
       status: "downloaded",
       availableVersion: "1.1.0",
-      progress: { percent: 100, bytesPerSecond: 2048, transferred: 485, total: 1000 }
+      progress: { percent: 100, bytesPerSecond: 2048, transferred: 485, total: 1000 },
     });
     manager.install();
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -131,17 +135,28 @@ describe("HBClientUpdateManager", () => {
   it("maps a missing manifest to no update", async () => {
     const manager = new HBClientUpdateManager({
       getFeedContext: vi.fn().mockResolvedValue({ baseUrl: "https://botstation.example", accessToken: "token" }),
-      emitState: vi.fn()
+      emitState: vi.fn(),
     });
     updaterMock.checkForUpdates.mockRejectedValue(Object.assign(new Error("HTTP 404"), { statusCode: 404 }));
 
     await expect(manager.check(true)).resolves.toMatchObject({ status: "not_available", error: undefined });
   });
 
+  it("refuses an unencrypted update feed before contacting the updater", async () => {
+    const manager = new HBClientUpdateManager({
+      getFeedContext: vi.fn().mockResolvedValue({ baseUrl: "http://botstation.example", accessToken: "token" }),
+      emitState: vi.fn(),
+    });
+
+    await expect(manager.check(true)).rejects.toThrow("requires HTTPS");
+    expect(updaterMock.setFeedURL).not.toHaveBeenCalled();
+    expect(updaterMock.checkForUpdates).not.toHaveBeenCalled();
+  });
+
   it("keeps background failures silent and exposes manual failures", async () => {
     const manager = new HBClientUpdateManager({
       getFeedContext: vi.fn().mockRejectedValue(new Error("offline")),
-      emitState: vi.fn()
+      emitState: vi.fn(),
     });
 
     await expect(manager.check(false)).resolves.toMatchObject({ status: "idle", error: undefined });

@@ -1,11 +1,39 @@
 import { useEffect, useState } from "react";
 import { CopyOutlined, DeleteOutlined, ReloadOutlined, SaveOutlined, ToolOutlined } from "@ant-design/icons";
-import { Alert, Button, Empty, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Spin, Switch, Tag, message } from "antd";
-import type { McpConfigTransfer, McpDiagnosticResult, McpLogRecord, McpServerInput, McpServerPreset, McpServerSnapshot, PermissionRule, RuntimeSnapshot } from "@supbot/shared";
+import {
+  Alert,
+  Button,
+  Empty,
+  Form,
+  Input,
+  InputNumber,
+  Modal,
+  Popconfirm,
+  Select,
+  Space,
+  Spin,
+  Switch,
+  Tag,
+  message,
+} from "antd";
+import type {
+  McpConfigTransfer,
+  McpDiagnosticResult,
+  McpLogRecord,
+  McpServerInput,
+  McpServerPreset,
+  McpServerSnapshot,
+  PermissionRule,
+  RuntimeSnapshot,
+} from "@supbot/shared";
 import { formatDateTime } from "@supbot/shared";
 import { formatJsonSnippet } from "../lib/chatFormat";
 
-export function McpServersCard({ snapshot, refresh, t }: {
+export function McpServersCard({
+  snapshot,
+  refresh,
+  t,
+}: {
   snapshot: RuntimeSnapshot;
   refresh: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
@@ -23,7 +51,10 @@ export function McpServersCard({ snapshot, refresh, t }: {
   const [diagnosticOpen, setDiagnosticOpen] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
   useEffect(() => {
-    void window.supbot.listMcpPresets().then(setPresets).catch(() => setPresets([]));
+    void window.supbot
+      .listMcpPresets()
+      .then(setPresets)
+      .catch(() => setPresets([]));
   }, []);
   const save = async (values: McpServerInput & { envText?: string; argsText?: string }) => {
     const input: McpServerInput = {
@@ -34,7 +65,7 @@ export function McpServersCard({ snapshot, refresh, t }: {
       env: parseEnvText(values.envText),
       requestTimeoutMs: values.requestTimeoutMs,
       enabled: values.enabled,
-      autoConnect: values.autoConnect
+      autoConnect: values.autoConnect,
     };
     try {
       if (editing) {
@@ -74,7 +105,7 @@ export function McpServersCard({ snapshot, refresh, t }: {
       envText: formatEnvText(server.env),
       requestTimeoutMs: server.requestTimeoutMs || 30000,
       enabled: server.enabled,
-      autoConnect: server.autoConnect
+      autoConnect: server.autoConnect,
     });
   };
   const applyPreset = (presetId: string) => {
@@ -91,7 +122,7 @@ export function McpServersCard({ snapshot, refresh, t }: {
       envText: formatEnvText(preset.serverInput.env),
       requestTimeoutMs: preset.serverInput.requestTimeoutMs || 30000,
       enabled: preset.serverInput.enabled,
-      autoConnect: false
+      autoConnect: false,
     });
     messageApi.info(t("Preset loaded as a draft."));
   };
@@ -119,7 +150,7 @@ export function McpServersCard({ snapshot, refresh, t }: {
     env: parseEnvText(values.envText),
     requestTimeoutMs: values.requestTimeoutMs,
     enabled: true,
-    autoConnect: false
+    autoConnect: false,
   });
   const diagnoseValues = async () => {
     try {
@@ -167,12 +198,20 @@ export function McpServersCard({ snapshot, refresh, t }: {
       <div className="settings-card">
         <div className="panel-heading">
           <div>
-            <div className="section-title"><ToolOutlined /> {t("MCP Servers")}</div>
-            <div className="muted">{t("Connect local stdio MCP servers. Tools are registered through HBClient permissions.")}</div>
+            <div className="section-title">
+              <ToolOutlined /> {t("MCP Servers")}
+            </div>
+            <div className="muted">
+              {t("Connect local stdio MCP servers. Tools are registered through HBClient permissions.")}
+            </div>
           </div>
           <Space wrap>
-            <Tag color="cyan">{snapshot.mcpServers.length} {t("servers")}</Tag>
-            <Tag color="green">{snapshot.mcpTools.length} {t("tools")}</Tag>
+            <Tag color="cyan">
+              {snapshot.mcpServers.length} {t("servers")}
+            </Tag>
+            <Tag color="green">
+              {snapshot.mcpTools.length} {t("tools")}
+            </Tag>
           </Space>
         </div>
         <div className="mcp-preset-bar">
@@ -183,10 +222,14 @@ export function McpServersCard({ snapshot, refresh, t }: {
             onChange={applyPreset}
           />
           <Button onClick={() => void exportConfig()}>{t("Export MCP")}</Button>
-          <Button onClick={() => {
-            setTransferText("");
-            setTransferOpen(true);
-          }}>{t("Import MCP")}</Button>
+          <Button
+            onClick={() => {
+              setTransferText("");
+              setTransferOpen(true);
+            }}
+          >
+            {t("Import MCP")}
+          </Button>
         </div>
         <Form
           form={form}
@@ -223,12 +266,20 @@ export function McpServersCard({ snapshot, refresh, t }: {
             </div>
           </div>
           <Space wrap>
-            <Button type="primary" icon={<SaveOutlined />} htmlType="submit">{editing ? t("Save") : t("Add server")}</Button>
+            <Button type="primary" icon={<SaveOutlined />} htmlType="submit">
+              {editing ? t("Save") : t("Add server")}
+            </Button>
             <Button onClick={() => void diagnoseValues()}>{t("Diagnose draft")}</Button>
-            {editing ? <Button onClick={() => {
-              setEditing(null);
-              form.resetFields();
-            }}>{t("Cancel")}</Button> : null}
+            {editing ? (
+              <Button
+                onClick={() => {
+                  setEditing(null);
+                  form.resetFields();
+                }}
+              >
+                {t("Cancel")}
+              </Button>
+            ) : null}
           </Space>
         </Form>
       </div>
@@ -240,55 +291,105 @@ export function McpServersCard({ snapshot, refresh, t }: {
               <div className="activity-head">
                 <div>
                   <strong>{server.name}</strong>
-                  <div className="muted mono">{server.command} {server.args.join(" ")}</div>
+                  <div className="muted mono">
+                    {server.command} {server.args.join(" ")}
+                  </div>
                 </div>
                 <Space wrap>
                   <Tag color={mcpStatusColor(server.status.state)}>{t(server.status.state)}</Tag>
-                  <Tag>{tools.length} {t("tools")}</Tag>
+                  <Tag>
+                    {tools.length} {t("tools")}
+                  </Tag>
                   {!server.enabled ? <Tag>{t("disabled")}</Tag> : null}
                 </Space>
               </div>
               <div className="mcp-status-grid">
-                <span>{t("PID")}: <strong>{server.status.pid || "-"}</strong></span>
-                <span>{t("Timeout")}: <strong>{server.requestTimeoutMs || 30000}ms</strong></span>
-                <span>{t("Last connected")}: <strong>{server.status.lastConnectedAt ? formatDateTime(server.status.lastConnectedAt) : "-"}</strong></span>
-                <span>{t("Exit")}: <strong>{server.status.lastExitReason || "-"}</strong></span>
+                <span>
+                  {t("PID")}: <strong>{server.status.pid || "-"}</strong>
+                </span>
+                <span>
+                  {t("Timeout")}: <strong>{server.requestTimeoutMs || 30000}ms</strong>
+                </span>
+                <span>
+                  {t("Last connected")}:{" "}
+                  <strong>{server.status.lastConnectedAt ? formatDateTime(server.status.lastConnectedAt) : "-"}</strong>
+                </span>
+                <span>
+                  {t("Exit")}: <strong>{server.status.lastExitReason || "-"}</strong>
+                </span>
               </div>
               {server.status.lastError ? <Alert type="warning" showIcon message={server.status.lastError} /> : null}
-              {server.status.stderrPreview ? <Alert type="info" showIcon message={t("stderr preview")} description={<pre className="mcp-log-preview">{server.status.stderrPreview}</pre>} /> : null}
+              {server.status.stderrPreview ? (
+                <Alert
+                  type="info"
+                  showIcon
+                  message={t("stderr preview")}
+                  description={<pre className="mcp-log-preview">{server.status.stderrPreview}</pre>}
+                />
+              ) : null}
               <div className="mcp-tool-list">
-                {tools.length ? tools.map((tool) => (
-                  <div className="mcp-tool-row" key={tool.runtimeToolName}>
-                    <div>
-                      <strong>{tool.runtimeToolName}</strong>
-                      <span className="muted mono">{tool.modelToolName}</span>
-                      <span className="muted">{tool.description || t("No description")}</span>
+                {tools.length ? (
+                  tools.map((tool) => (
+                    <div className="mcp-tool-row" key={tool.runtimeToolName}>
+                      <div>
+                        <strong>{tool.runtimeToolName}</strong>
+                        <span className="muted mono">{tool.modelToolName}</span>
+                        <span className="muted">{tool.description || t("No description")}</span>
+                      </div>
+                      <Space wrap>
+                        <Tag>
+                          {Object.keys(tool.inputSchema.properties || {}).length} {t("params")}
+                        </Tag>
+                        {tool.schemaValid === false ? <Tag color="orange">{t("schema warning")}</Tag> : null}
+                        <Select
+                          size="small"
+                          className="mcp-tool-rule-select"
+                          placeholder={t("Rule")}
+                          onChange={(behavior) =>
+                            void addMcpRule(tool.runtimeToolName, behavior as PermissionRule["behavior"])
+                          }
+                          options={[
+                            { value: "allow", label: t("allow") },
+                            { value: "ask", label: t("ask") },
+                            { value: "deny", label: t("deny") },
+                          ]}
+                        />
+                      </Space>
+                      {tool.schemaWarnings?.length ? (
+                        <pre className="mcp-log-preview">{tool.schemaWarnings.slice(0, 4).join("\n")}</pre>
+                      ) : null}
                     </div>
-                    <Space wrap>
-                      <Tag>{Object.keys(tool.inputSchema.properties || {}).length} {t("params")}</Tag>
-                      {tool.schemaValid === false ? <Tag color="orange">{t("schema warning")}</Tag> : null}
-                      <Select
-                        size="small"
-                        className="mcp-tool-rule-select"
-                        placeholder={t("Rule")}
-                        onChange={(behavior) => void addMcpRule(tool.runtimeToolName, behavior as PermissionRule["behavior"])}
-                        options={[
-                          { value: "allow", label: t("allow") },
-                          { value: "ask", label: t("ask") },
-                          { value: "deny", label: t("deny") }
-                        ]}
-                      />
-                    </Space>
-                    {tool.schemaWarnings?.length ? <pre className="mcp-log-preview">{tool.schemaWarnings.slice(0, 4).join("\n")}</pre> : null}
-                  </div>
-                )) : <span className="muted">{t("No tools discovered")}</span>}
+                  ))
+                ) : (
+                  <span className="muted">{t("No tools discovered")}</span>
+                )}
               </div>
               <Space wrap>
-                <Button size="small" onClick={() => beginEdit(server)}>{t("Edit")}</Button>
-                <Button size="small" onClick={() => void showLogs(server)}>{t("Logs")}</Button>
-                <Button size="small" onClick={() => void diagnoseServer(server)}>{t("Diagnose")}</Button>
-                <Button size="small" icon={<CopyOutlined />} onClick={() => void copyMcpText(formatMcpDiagnosticSummary(server, tools), "Copied diagnostic summary.")}>{t("Copy diagnostic summary")}</Button>
-                <Button size="small" icon={<CopyOutlined />} onClick={() => void copyMcpText(formatMcpToolList(server, tools), "Copied tool list.")}>{t("Copy tool list")}</Button>
+                <Button size="small" onClick={() => beginEdit(server)}>
+                  {t("Edit")}
+                </Button>
+                <Button size="small" onClick={() => void showLogs(server)}>
+                  {t("Logs")}
+                </Button>
+                <Button size="small" onClick={() => void diagnoseServer(server)}>
+                  {t("Diagnose")}
+                </Button>
+                <Button
+                  size="small"
+                  icon={<CopyOutlined />}
+                  onClick={() =>
+                    void copyMcpText(formatMcpDiagnosticSummary(server, tools), "Copied diagnostic summary.")
+                  }
+                >
+                  {t("Copy diagnostic summary")}
+                </Button>
+                <Button
+                  size="small"
+                  icon={<CopyOutlined />}
+                  onClick={() => void copyMcpText(formatMcpToolList(server, tools), "Copied tool list.")}
+                >
+                  {t("Copy tool list")}
+                </Button>
                 <Select
                   size="small"
                   className="mcp-rule-select"
@@ -297,13 +398,15 @@ export function McpServersCard({ snapshot, refresh, t }: {
                   options={[
                     { value: "allow", label: t("allow server") },
                     { value: "ask", label: t("ask server") },
-                    { value: "deny", label: t("deny server") }
+                    { value: "deny", label: t("deny server") },
                   ]}
                 />
                 <Button
                   size="small"
                   loading={busyId === server.id}
-                  onClick={() => void run(server.id, () => window.supbot.connectMcpServer(server.id), "MCP server connected.")}
+                  onClick={() =>
+                    void run(server.id, () => window.supbot.connectMcpServer(server.id), "MCP server connected.")
+                  }
                   disabled={!server.enabled || server.status.state === "connected"}
                 >
                   {t("Connect")}
@@ -311,7 +414,9 @@ export function McpServersCard({ snapshot, refresh, t }: {
                 <Button
                   size="small"
                   loading={busyId === server.id}
-                  onClick={() => void run(server.id, () => window.supbot.disconnectMcpServer(server.id), "MCP server disconnected.")}
+                  onClick={() =>
+                    void run(server.id, () => window.supbot.disconnectMcpServer(server.id), "MCP server disconnected.")
+                  }
                   disabled={server.status.state !== "connected"}
                 >
                   {t("Disconnect")}
@@ -320,13 +425,22 @@ export function McpServersCard({ snapshot, refresh, t }: {
                   size="small"
                   icon={<ReloadOutlined />}
                   loading={busyId === server.id}
-                  onClick={() => void run(server.id, () => window.supbot.refreshMcpTools(server.id), "MCP tools refreshed.")}
+                  onClick={() =>
+                    void run(server.id, () => window.supbot.refreshMcpTools(server.id), "MCP tools refreshed.")
+                  }
                   disabled={server.status.state !== "connected"}
                 >
                   {t("Refresh tools")}
                 </Button>
-                <Popconfirm title={t("Delete MCP server?")} onConfirm={() => void run(server.id, () => window.supbot.removeMcpServer(server.id), "MCP server removed.")}>
-                  <Button size="small" danger icon={<DeleteOutlined />}>{t("Delete")}</Button>
+                <Popconfirm
+                  title={t("Delete MCP server?")}
+                  onConfirm={() =>
+                    void run(server.id, () => window.supbot.removeMcpServer(server.id), "MCP server removed.")
+                  }
+                >
+                  <Button size="small" danger icon={<DeleteOutlined />}>
+                    {t("Delete")}
+                  </Button>
                 </Popconfirm>
               </Space>
             </div>
@@ -340,7 +454,9 @@ export function McpServersCard({ snapshot, refresh, t }: {
         onCancel={() => setLogServer(null)}
         footer={null}
       >
-        {logsLoading ? <Spin /> : logs.length ? (
+        {logsLoading ? (
+          <Spin />
+        ) : logs.length ? (
           <div className="mcp-log-list">
             {logs.map((log) => (
               <div className={`mcp-log-row mcp-log-${log.level}`} key={log.id}>
@@ -350,7 +466,9 @@ export function McpServersCard({ snapshot, refresh, t }: {
               </div>
             ))}
           </div>
-        ) : <Empty description={t("No logs")} />}
+        ) : (
+          <Empty description={t("No logs")} />
+        )}
       </Modal>
       <Modal
         title={t("MCP import / export")}
@@ -376,19 +494,65 @@ export function McpServersCard({ snapshot, refresh, t }: {
       >
         {diagnostic ? (
           <div className="mcp-diagnostic">
-            <Alert type={diagnostic.ok ? "success" : "error"} showIcon message={diagnostic.ok ? t("Diagnostic passed") : diagnostic.error || t("Diagnostic failed")} />
+            <Alert
+              type={diagnostic.ok ? "success" : "error"}
+              showIcon
+              message={diagnostic.ok ? t("Diagnostic passed") : diagnostic.error || t("Diagnostic failed")}
+            />
             <div className="config-grid">
-              <div><span>{t("Server")}</span><strong>{diagnostic.serverName}</strong></div>
-              <div><span>{t("Duration")}</span><strong>{diagnostic.durationMs}ms</strong></div>
-              <div><span>{t("Tools")}</span><strong>{diagnostic.toolCount}</strong></div>
-              <div><span>{t("Initialize")}</span><strong>{diagnostic.initializeMs ?? "-"}ms</strong></div>
-              <div><span>{t("tools/list")}</span><strong>{diagnostic.toolsListMs ?? "-"}ms</strong></div>
-              <div><span>{t("Protocol")}</span><strong>{diagnostic.protocolVersion || "-"}</strong></div>
-              <div><span>{t("Error code")}</span><strong>{diagnostic.errorCode ?? "-"}</strong></div>
+              <div>
+                <span>{t("Server")}</span>
+                <strong>{diagnostic.serverName}</strong>
+              </div>
+              <div>
+                <span>{t("Duration")}</span>
+                <strong>{diagnostic.durationMs}ms</strong>
+              </div>
+              <div>
+                <span>{t("Tools")}</span>
+                <strong>{diagnostic.toolCount}</strong>
+              </div>
+              <div>
+                <span>{t("Initialize")}</span>
+                <strong>{diagnostic.initializeMs ?? "-"}ms</strong>
+              </div>
+              <div>
+                <span>{t("tools/list")}</span>
+                <strong>{diagnostic.toolsListMs ?? "-"}ms</strong>
+              </div>
+              <div>
+                <span>{t("Protocol")}</span>
+                <strong>{diagnostic.protocolVersion || "-"}</strong>
+              </div>
+              <div>
+                <span>{t("Error code")}</span>
+                <strong>{diagnostic.errorCode ?? "-"}</strong>
+              </div>
             </div>
-            {diagnostic.capabilities !== undefined ? <Alert type="info" showIcon message={t("Capabilities")} description={<pre className="mcp-log-preview">{formatJsonSnippet(diagnostic.capabilities)}</pre>} /> : null}
-            {diagnostic.errorData !== undefined ? <Alert type="error" showIcon message={t("Error data")} description={<pre className="mcp-log-preview">{formatJsonSnippet(diagnostic.errorData)}</pre>} /> : null}
-            {diagnostic.schemaWarnings.length ? <Alert type="warning" showIcon message={t("Schema warnings")} description={<pre className="mcp-log-preview">{diagnostic.schemaWarnings.join("\n")}</pre>} /> : null}
+            {diagnostic.capabilities !== undefined ? (
+              <Alert
+                type="info"
+                showIcon
+                message={t("Capabilities")}
+                description={<pre className="mcp-log-preview">{formatJsonSnippet(diagnostic.capabilities)}</pre>}
+              />
+            ) : null}
+            {diagnostic.errorData !== undefined ? (
+              <Alert
+                type="error"
+                showIcon
+                message={t("Error data")}
+                description={<pre className="mcp-log-preview">{formatJsonSnippet(diagnostic.errorData)}</pre>}
+              />
+            ) : null}
+            {diagnostic.schemaWarnings.length ? (
+              <Alert
+                type="warning"
+                showIcon
+                message={t("Schema warnings")}
+                description={<pre className="mcp-log-preview">{diagnostic.schemaWarnings.join("\n")}</pre>}
+              />
+            ) : null}
             {diagnostic.stderrPreview ? <pre className="mcp-log-preview">{diagnostic.stderrPreview}</pre> : null}
             <div className="mcp-tool-list">
               {diagnostic.tools.map((tool) => (
@@ -399,15 +563,21 @@ export function McpServersCard({ snapshot, refresh, t }: {
                     <span className="muted">{tool.description || t("No description")}</span>
                   </div>
                   <Space wrap>
-                    <Tag>{Object.keys(tool.inputSchema.properties || {}).length} {t("params")}</Tag>
+                    <Tag>
+                      {Object.keys(tool.inputSchema.properties || {}).length} {t("params")}
+                    </Tag>
                     {tool.schemaValid === false ? <Tag color="orange">{t("schema warning")}</Tag> : null}
                   </Space>
-                  {tool.schemaWarnings?.length ? <pre className="mcp-log-preview">{tool.schemaWarnings.slice(0, 4).join("\n")}</pre> : null}
+                  {tool.schemaWarnings?.length ? (
+                    <pre className="mcp-log-preview">{tool.schemaWarnings.slice(0, 4).join("\n")}</pre>
+                  ) : null}
                 </div>
               ))}
             </div>
           </div>
-        ) : <Empty description={t("No diagnostic result")} />}
+        ) : (
+          <Empty description={t("No diagnostic result")} />
+        )}
       </Modal>
     </div>
   );
@@ -437,7 +607,9 @@ export function parseEnvText(value?: string): Record<string, string> | undefined
 }
 
 export function formatEnvText(env?: Record<string, string>): string {
-  return Object.entries(env || {}).map(([key, value]) => `${key}=${value}`).join("\n");
+  return Object.entries(env || {})
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
 }
 
 export function formatMcpDiagnosticSummary(server: McpServerSnapshot, tools: RuntimeSnapshot["mcpTools"]): string {
@@ -451,8 +623,10 @@ export function formatMcpDiagnosticSummary(server: McpServerSnapshot, tools: Run
     `Last connected: ${server.status.lastConnectedAt || "-"}`,
     `Last exit: ${server.status.lastExitReason || "-"}`,
     `Last error: ${server.status.lastError || "-"}`,
-    server.status.stderrPreview ? `stderr tail:\n${server.status.stderrPreview}` : undefined
-  ].filter(Boolean).join("\n");
+    server.status.stderrPreview ? `stderr tail:\n${server.status.stderrPreview}` : undefined,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function formatMcpToolList(server: McpServerSnapshot, tools: RuntimeSnapshot["mcpTools"]): string {
@@ -461,13 +635,17 @@ export function formatMcpToolList(server: McpServerSnapshot, tools: RuntimeSnaps
   }
   return [
     `MCP server: ${server.name} (${server.id})`,
-    ...tools.map((tool) => [
-      `- ${tool.runtimeToolName}`,
-      `  model: ${tool.modelToolName}`,
-      `  params: ${Object.keys(tool.inputSchema.properties || {}).join(", ") || "-"}`,
-      `  schema: ${tool.schemaValid ? "valid" : "warning"}`,
-      tool.schemaWarnings?.length ? `  warnings: ${tool.schemaWarnings.join("; ")}` : undefined
-    ].filter(Boolean).join("\n"))
+    ...tools.map((tool) =>
+      [
+        `- ${tool.runtimeToolName}`,
+        `  model: ${tool.modelToolName}`,
+        `  params: ${Object.keys(tool.inputSchema.properties || {}).join(", ") || "-"}`,
+        `  schema: ${tool.schemaValid ? "valid" : "warning"}`,
+        tool.schemaWarnings?.length ? `  warnings: ${tool.schemaWarnings.join("; ")}` : undefined,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    ),
   ].join("\n");
 }
 

@@ -8,7 +8,7 @@ import type {
   ServstationA2AConfig,
   ServstationA2AConfigUpdate,
   ServstationA2AReverseConfig,
-  TranscriptLoadResult
+  TranscriptLoadResult,
 } from "@supbot/shared";
 
 interface ReverseBridgeHost {
@@ -101,20 +101,56 @@ interface ReverseRequestEvent {
 export interface ReverseWorkspaceSnapshot {
   status: RuntimeSnapshot["status"];
   scheduledJobs: ScheduledJob[];
-  autopilotRuns: Array<Pick<AutopilotRun,
-    "id" | "projectId" | "title" | "goal" | "status" | "currentStage" | "taskIds" | "artifactIds" |
-    "error" | "createdAt" | "updatedAt" | "startedAt" | "finishedAt"
-  >>;
-  autopilotTasks: Array<Pick<RuntimeSnapshot["autopilotTasks"][number],
-    "id" | "runId" | "projectId" | "stage" | "staffAgent" | "title" | "status" | "attempts" |
-    "maxAttempts" | "artifactIds" | "error" | "startedAt" | "finishedAt" | "createdAt" | "updatedAt"
-  >>;
-  autopilotEvents: Array<Pick<RuntimeSnapshot["autopilotEvents"][number],
-    "id" | "runId" | "projectId" | "taskId" | "level" | "message" | "createdAt"
-  >>;
-  dataArtifacts: Array<Pick<RuntimeSnapshot["dataArtifacts"][number],
-    "id" | "projectId" | "runId" | "taskId" | "kind" | "stage" | "name" | "size" | "lineCount" | "createdAt"
-  >>;
+  autopilotRuns: Array<
+    Pick<
+      AutopilotRun,
+      | "id"
+      | "projectId"
+      | "title"
+      | "goal"
+      | "status"
+      | "currentStage"
+      | "taskIds"
+      | "artifactIds"
+      | "error"
+      | "createdAt"
+      | "updatedAt"
+      | "startedAt"
+      | "finishedAt"
+    >
+  >;
+  autopilotTasks: Array<
+    Pick<
+      RuntimeSnapshot["autopilotTasks"][number],
+      | "id"
+      | "runId"
+      | "projectId"
+      | "stage"
+      | "staffAgent"
+      | "title"
+      | "status"
+      | "attempts"
+      | "maxAttempts"
+      | "artifactIds"
+      | "error"
+      | "startedAt"
+      | "finishedAt"
+      | "createdAt"
+      | "updatedAt"
+    >
+  >;
+  autopilotEvents: Array<
+    Pick<
+      RuntimeSnapshot["autopilotEvents"][number],
+      "id" | "runId" | "projectId" | "taskId" | "level" | "message" | "createdAt"
+    >
+  >;
+  dataArtifacts: Array<
+    Pick<
+      RuntimeSnapshot["dataArtifacts"][number],
+      "id" | "projectId" | "runId" | "taskId" | "kind" | "stage" | "name" | "size" | "lineCount" | "createdAt"
+    >
+  >;
   fetchedAt: string;
 }
 
@@ -167,7 +203,7 @@ export class ServstationReverseBridgeClient {
       ...(disable ? { enabled: false } : {}),
       status: "disconnected",
       connectedAt: undefined,
-      lastError: undefined
+      lastError: undefined,
     });
   }
 
@@ -186,7 +222,7 @@ export class ServstationReverseBridgeClient {
           enabled: true,
           status: "error",
           connectedAt: undefined,
-          lastError: (error as Error).message
+          lastError: (error as Error).message,
         });
         await this.waitBeforeRetry(this.retryDelayMs);
         this.retryDelayMs = Math.min(30_000, Math.round(this.retryDelayMs * 1.8));
@@ -209,14 +245,16 @@ export class ServstationReverseBridgeClient {
     if (!peerId) {
       throw new Error("Botstation HBClient reverse registration did not return a peer id.");
     }
-    const streamUrl = registration.streamUrl || `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/a2a-peers/${encodeURIComponent(peerId)}/events`;
+    const streamUrl =
+      registration.streamUrl ||
+      `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/a2a-peers/${encodeURIComponent(peerId)}/events`;
     await this.host.updateReverseState({
       enabled: true,
       status: "connected",
       peerId,
       clientInstanceId,
       connectedAt: this.host.nowIso(),
-      lastError: undefined
+      lastError: undefined,
     });
     await this.openEventStream(baseUrl, streamUrl, agentInstanceId, peerId, signal);
   }
@@ -225,7 +263,7 @@ export class ServstationReverseBridgeClient {
     baseUrl: string,
     agentInstanceId: string,
     clientInstanceId: string,
-    signal: AbortSignal
+    signal: AbortSignal,
   ): Promise<ReverseRegisterResponse> {
     try {
       return await this.request<ReverseRegisterResponse>(
@@ -241,11 +279,11 @@ export class ServstationReverseBridgeClient {
               "prompt.readOnly",
               SERVSTATION_PROJECT_AWARE_CAPABILITY,
               SERVSTATION_SCHEDULE_MANAGE_CAPABILITY,
-              SERVSTATION_AUTOPILOT_MANAGE_CAPABILITY
+              SERVSTATION_AUTOPILOT_MANAGE_CAPABILITY,
             ],
-            hbclientVersion: "0.1.2"
-          })
-        }
+            hbclientVersion: "0.1.2",
+          }),
+        },
       );
     } catch (error) {
       if (!isRecoverableReverseRegistrationError(error)) {
@@ -257,7 +295,7 @@ export class ServstationReverseBridgeClient {
       }
       return {
         peer: { id: peer.id },
-        streamUrl: `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/a2a-peers/${encodeURIComponent(peer.id)}/events`
+        streamUrl: `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/a2a-peers/${encodeURIComponent(peer.id)}/events`,
       };
     }
   }
@@ -266,17 +304,15 @@ export class ServstationReverseBridgeClient {
     baseUrl: string,
     agentInstanceId: string,
     clientInstanceId: string,
-    signal: AbortSignal
+    signal: AbortSignal,
   ): Promise<ReversePeerLink | undefined> {
     const response = await this.request<ReversePeerListResponse>(
       baseUrl,
       `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/a2a-peers`,
-      { method: "GET", signal }
+      { method: "GET", signal },
     );
-    return (response.peers || []).find((peer) =>
-      peer.connectionMode === "reverse_sse" &&
-      peer.clientInstanceId === clientInstanceId &&
-      Boolean(peer.id)
+    return (response.peers || []).find(
+      (peer) => peer.connectionMode === "reverse_sse" && peer.clientInstanceId === clientInstanceId && Boolean(peer.id),
     );
   }
 
@@ -289,7 +325,7 @@ export class ServstationReverseBridgeClient {
     const connected = await this.request<AgentConnectResponse>(baseUrl, "/api/v1/agent/connect", {
       method: "POST",
       signal,
-      body: JSON.stringify({ clientId: "hbclient-reverse-a2a" })
+      body: JSON.stringify({ clientId: "hbclient-reverse-a2a" }),
     });
     const agentInstanceId = connected.agentInstanceId;
     if (!agentInstanceId) {
@@ -304,12 +340,12 @@ export class ServstationReverseBridgeClient {
     streamUrl: string,
     agentInstanceId: string,
     peerId: string,
-    signal: AbortSignal
+    signal: AbortSignal,
   ): Promise<void> {
     const response = await fetch(joinUrl(baseUrl, streamUrl), {
       method: "GET",
       signal,
-      headers: await this.headers(signal)
+      headers: await this.headers(signal),
     });
     if (!response.ok || !response.body) {
       const text = await response.text().catch(() => "");
@@ -320,7 +356,7 @@ export class ServstationReverseBridgeClient {
       status: "connected",
       peerId,
       connectedAt: this.host.nowIso(),
-      lastError: undefined
+      lastError: undefined,
     });
 
     for await (const event of parseSse(response.body, signal)) {
@@ -329,7 +365,7 @@ export class ServstationReverseBridgeClient {
           await this.request(baseUrl, heartbeatPath(agentInstanceId, peerId), {
             method: "POST",
             signal,
-            body: JSON.stringify({ at: this.host.nowIso() })
+            body: JSON.stringify({ at: this.host.nowIso() }),
           });
         } catch (error) {
           if (!isRecoverableHeartbeatError(error)) {
@@ -339,7 +375,7 @@ export class ServstationReverseBridgeClient {
         await this.host.updateReverseState({
           status: "connected",
           lastHeartbeatAt: this.host.nowIso(),
-          lastError: undefined
+          lastError: undefined,
         });
         continue;
       }
@@ -373,7 +409,7 @@ export class ServstationReverseBridgeClient {
     agentInstanceId: string,
     peerId: string,
     event: SseEvent,
-    signal: AbortSignal
+    signal: AbortSignal,
   ): Promise<void> {
     const payload = safeJson(event.data) as ReverseInvocationEvent;
     const invocationId = requiredString(payload.invocationId || event.id, "invocationId");
@@ -383,7 +419,7 @@ export class ServstationReverseBridgeClient {
       await this.request(baseUrl, invocationPath(agentInstanceId, peerId, invocationId, "ack"), {
         method: "POST",
         signal,
-        body: JSON.stringify({ requestId })
+        body: JSON.stringify({ requestId }),
       });
       const result = await this.host.sendReadOnlyPromptAndWait({
         prompt,
@@ -396,13 +432,13 @@ export class ServstationReverseBridgeClient {
           agentInstanceId: payload.agentInstanceId || agentInstanceId,
           peerId,
           clientId: "hbclient-reverse",
-          userContext: payload.userContext
-        }
+          userContext: payload.userContext,
+        },
       });
       await this.request(baseUrl, invocationPath(agentInstanceId, peerId, invocationId, "result"), {
         method: "POST",
         signal,
-        body: JSON.stringify(result)
+        body: JSON.stringify(result),
       });
     } catch (error) {
       await this.request(baseUrl, invocationPath(agentInstanceId, peerId, invocationId, "result"), {
@@ -410,8 +446,8 @@ export class ServstationReverseBridgeClient {
         signal,
         body: JSON.stringify({
           status: "failed",
-          error: (error as Error).message
-        })
+          error: (error as Error).message,
+        }),
       }).catch(() => undefined);
     }
   }
@@ -421,7 +457,7 @@ export class ServstationReverseBridgeClient {
     agentInstanceId: string,
     peerId: string,
     event: SseEvent,
-    signal: AbortSignal
+    signal: AbortSignal,
   ): Promise<void> {
     const payload = safeJson(event.data) as ReverseRequestEvent;
     const requestId = requiredString(payload.requestId || event.id, "requestId");
@@ -429,19 +465,19 @@ export class ServstationReverseBridgeClient {
       await this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "ack"), {
         method: "POST",
         signal,
-        body: JSON.stringify({ requestId })
+        body: JSON.stringify({ requestId }),
       });
       const snapshot = this.host.getSnapshot();
       await this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "result"), {
         method: "POST",
         signal,
-        body: JSON.stringify({ status: "completed", result: snapshot })
+        body: JSON.stringify({ status: "completed", result: snapshot }),
       });
     } catch (error) {
       await this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "result"), {
         method: "POST",
         signal,
-        body: JSON.stringify({ status: "failed", error: (error as Error).message })
+        body: JSON.stringify({ status: "failed", error: (error as Error).message }),
       }).catch(() => undefined);
     }
   }
@@ -451,7 +487,7 @@ export class ServstationReverseBridgeClient {
     agentInstanceId: string,
     peerId: string,
     event: SseEvent,
-    signal: AbortSignal
+    signal: AbortSignal,
   ): Promise<void> {
     const payload = safeJson(event.data) as ReverseRequestEvent;
     const requestId = requiredString(payload.requestId || event.id, "requestId");
@@ -460,19 +496,19 @@ export class ServstationReverseBridgeClient {
       await this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "ack"), {
         method: "POST",
         signal,
-        body: JSON.stringify({ requestId })
+        body: JSON.stringify({ requestId }),
       });
       const transcript = await this.host.loadTranscript(conversationId);
       await this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "result"), {
         method: "POST",
         signal,
-        body: JSON.stringify({ status: "completed", result: transcript })
+        body: JSON.stringify({ status: "completed", result: transcript }),
       });
     } catch (error) {
       await this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "result"), {
         method: "POST",
         signal,
-        body: JSON.stringify({ status: "failed", error: (error as Error).message })
+        body: JSON.stringify({ status: "failed", error: (error as Error).message }),
       }).catch(() => undefined);
     }
   }
@@ -482,7 +518,7 @@ export class ServstationReverseBridgeClient {
     agentInstanceId: string,
     peerId: string,
     event: SseEvent,
-    signal: AbortSignal
+    signal: AbortSignal,
   ): Promise<void> {
     const payload = safeJson(event.data) as ReverseRequestEvent;
     const requestId = requiredString(payload.requestId || event.id, "requestId");
@@ -490,19 +526,19 @@ export class ServstationReverseBridgeClient {
       await this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "ack"), {
         method: "POST",
         signal,
-        body: JSON.stringify({ requestId })
+        body: JSON.stringify({ requestId }),
       });
       const workspace = buildReverseWorkspaceSnapshot(this.host.getSnapshot(), this.host.nowIso());
       await this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "result"), {
         method: "POST",
         signal,
-        body: JSON.stringify({ status: "completed", result: workspace })
+        body: JSON.stringify({ status: "completed", result: workspace }),
       });
     } catch (error) {
       await this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "result"), {
         method: "POST",
         signal,
-        body: JSON.stringify({ status: "failed", error: (error as Error).message })
+        body: JSON.stringify({ status: "failed", error: (error as Error).message }),
       }).catch(() => undefined);
     }
   }
@@ -512,7 +548,7 @@ export class ServstationReverseBridgeClient {
     agentInstanceId: string,
     peerId: string,
     event: SseEvent,
-    signal: AbortSignal
+    signal: AbortSignal,
   ): Promise<void> {
     const request = safeJson(event.data) as ReverseRequestEvent;
     const requestId = requiredString(request.requestId || event.id, "requestId");
@@ -522,19 +558,19 @@ export class ServstationReverseBridgeClient {
       await this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "ack"), {
         method: "POST",
         signal,
-        body: JSON.stringify({ requestId })
+        body: JSON.stringify({ requestId }),
       });
       const result = await this.executeWorkspaceAction(action, payload);
       await this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "result"), {
         method: "POST",
         signal,
-        body: JSON.stringify({ status: "completed", result })
+        body: JSON.stringify({ status: "completed", result }),
       });
     } catch (error) {
       await this.request(baseUrl, requestPath(agentInstanceId, peerId, requestId, "result"), {
         method: "POST",
         signal,
-        body: JSON.stringify({ status: "failed", error: (error as Error).message })
+        body: JSON.stringify({ status: "failed", error: (error as Error).message }),
       }).catch(() => undefined);
     }
   }
@@ -545,7 +581,7 @@ export class ServstationReverseBridgeClient {
         return this.host.createScheduledJob(scheduledJobInput(payload));
       case "schedule.update":
         return this.host.updateScheduledJob(requiredString(payload.id, "scheduled job id"), {
-          enabled: requiredBoolean(payload.enabled, "enabled")
+          enabled: requiredBoolean(payload.enabled, "enabled"),
         });
       case "schedule.delete":
         await this.host.deleteScheduledJob(requiredString(payload.id, "scheduled job id"));
@@ -555,7 +591,7 @@ export class ServstationReverseBridgeClient {
           projectId: requiredString(payload.projectId, "project id"),
           goal: requiredString(payload.goal, "autopilot goal"),
           title: optionalString(payload.title),
-          dataSources: []
+          dataSources: [],
         });
       case "autopilot.pause":
         return this.host.pauseAutopilotRun(requiredString(payload.id, "autopilot run id"));
@@ -572,14 +608,18 @@ export class ServstationReverseBridgeClient {
     const response = await fetch(joinUrl(baseUrl, path), {
       ...init,
       headers: {
-        ...await this.headers(init.signal instanceof AbortSignal ? init.signal : undefined),
-        ...(init.headers || {})
-      }
+        ...(await this.headers(init.signal instanceof AbortSignal ? init.signal : undefined)),
+        ...(init.headers || {}),
+      },
     });
     const text = await response.text();
     const payload = text.trim() ? safeJson(text) : {};
     if (!response.ok) {
-      throw new ServstationHttpError(errorMessage(payload) || text || `HTTP ${response.status}`, response.status, payload);
+      throw new ServstationHttpError(
+        errorMessage(payload) || text || `HTTP ${response.status}`,
+        response.status,
+        payload,
+      );
     }
     return payload as T;
   }
@@ -593,7 +633,7 @@ export class ServstationReverseBridgeClient {
       "x-organization-id": identity.organizationId,
       "x-department-id": identity.departmentId,
       "x-user-id": identity.userId,
-      "x-role-ids": identity.roleIds.join(",")
+      "x-role-ids": identity.roleIds.join(","),
     };
     if (token) {
       headers.Authorization = `Bearer ${token}`;
@@ -637,7 +677,12 @@ export class ServstationReverseBridgeClient {
   }
 }
 
-function invocationPath(agentInstanceId: string, peerId: string, invocationId: string, action: "ack" | "result"): string {
+function invocationPath(
+  agentInstanceId: string,
+  peerId: string,
+  invocationId: string,
+  action: "ack" | "result",
+): string {
   return `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/a2a-peers/${encodeURIComponent(peerId)}/invocations/${encodeURIComponent(invocationId)}/${action}`;
 }
 
@@ -650,7 +695,11 @@ function heartbeatPath(agentInstanceId: string, peerId: string): string {
 }
 
 class ServstationHttpError extends Error {
-  constructor(message: string, readonly status: number, readonly payload: unknown) {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly payload: unknown,
+  ) {
     super(message);
     this.name = "ServstationHttpError";
   }
@@ -668,9 +717,11 @@ function isRecoverableHeartbeatError(error: unknown): boolean {
     return false;
   }
   const message = error.message.toLowerCase();
-  return (error.status === 400 && message.includes("missing agent instance id"))
-    || error.status === 404
-    || error.status === 405;
+  return (
+    (error.status === 400 && message.includes("missing agent instance id")) ||
+    error.status === 404 ||
+    error.status === 405
+  );
 }
 
 function normalizeBaseUrl(value: string | undefined): string | undefined {
@@ -716,7 +767,7 @@ function requiredBoolean(value: unknown, label: string): boolean {
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 function scheduledJobInput(payload: Record<string, unknown>): ScheduledJobInput {
@@ -742,7 +793,7 @@ function scheduledJobInput(payload: Record<string, unknown>): ScheduledJobInput 
     scheduleKind,
     runAt,
     cronExpr,
-    enabled: typeof payload.enabled === "boolean" ? payload.enabled : true
+    enabled: typeof payload.enabled === "boolean" ? payload.enabled : true,
   };
 }
 
@@ -761,7 +812,7 @@ export function buildReverseWorkspaceSnapshot(snapshot: RuntimeSnapshot, fetched
       createdAt: job.createdAt,
       updatedAt: job.updatedAt,
       lastRunAt: job.lastRunAt,
-      nextRunAt: job.nextRunAt
+      nextRunAt: job.nextRunAt,
     })),
     autopilotRuns: snapshot.autopilotRuns.map((run) => ({
       id: run.id,
@@ -776,7 +827,7 @@ export function buildReverseWorkspaceSnapshot(snapshot: RuntimeSnapshot, fetched
       createdAt: run.createdAt,
       updatedAt: run.updatedAt,
       startedAt: run.startedAt,
-      finishedAt: run.finishedAt
+      finishedAt: run.finishedAt,
     })),
     autopilotTasks: snapshot.autopilotTasks.map((task) => ({
       id: task.id,
@@ -793,7 +844,7 @@ export function buildReverseWorkspaceSnapshot(snapshot: RuntimeSnapshot, fetched
       startedAt: task.startedAt,
       finishedAt: task.finishedAt,
       createdAt: task.createdAt,
-      updatedAt: task.updatedAt
+      updatedAt: task.updatedAt,
     })),
     autopilotEvents: snapshot.autopilotEvents.map((event) => ({
       id: event.id,
@@ -802,7 +853,7 @@ export function buildReverseWorkspaceSnapshot(snapshot: RuntimeSnapshot, fetched
       taskId: event.taskId,
       level: event.level,
       message: event.message,
-      createdAt: event.createdAt
+      createdAt: event.createdAt,
     })),
     dataArtifacts: snapshot.dataArtifacts.map((artifact) => ({
       id: artifact.id,
@@ -814,9 +865,9 @@ export function buildReverseWorkspaceSnapshot(snapshot: RuntimeSnapshot, fetched
       name: artifact.name,
       size: artifact.size,
       lineCount: artifact.lineCount,
-      createdAt: artifact.createdAt
+      createdAt: artifact.createdAt,
     })),
-    fetchedAt
+    fetchedAt,
   };
 }
 
@@ -840,7 +891,11 @@ function errorMessage(value: unknown): string | undefined {
     return undefined;
   }
   const record = value as Record<string, unknown>;
-  return typeof record.error === "string" ? record.error : typeof record.message === "string" ? record.message : undefined;
+  return typeof record.error === "string"
+    ? record.error
+    : typeof record.message === "string"
+      ? record.message
+      : undefined;
 }
 
 async function* parseSse(body: ReadableStream<Uint8Array>, signal: AbortSignal): AsyncGenerator<SseEvent> {

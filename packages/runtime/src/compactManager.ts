@@ -46,7 +46,7 @@ export class CompactManager {
       summary: summarizeMessages(summarized),
       preservedMessageIds: input.messages.slice(-keepRecentMessages).map((message) => message.id),
       originalMessageCount: input.messages.length,
-      createdAt: input.nowIso()
+      createdAt: input.nowIso(),
     };
   }
 }
@@ -67,7 +67,7 @@ function summarizeMessages(messages: ChatMessage[]): string {
   return [
     `Conversation compacted after ${messages.length} earlier messages.`,
     "Recent pre-compact highlights:",
-    truncate(lines, 12_000)
+    truncate(lines, 12_000),
   ].join("\n");
 }
 

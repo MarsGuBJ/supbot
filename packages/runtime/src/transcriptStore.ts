@@ -1,13 +1,21 @@
 import { appendFile, mkdir, readFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { ChatMessage, CompactBoundary, TranscriptDiagnostic, TranscriptLoadResult, TranscriptRecord, RuntimeEventRecord } from "@supbot/shared";
+import type {
+  ChatMessage,
+  CompactBoundary,
+  TranscriptDiagnostic,
+  TranscriptLoadResult,
+  TranscriptPage,
+  TranscriptRecord,
+  RuntimeEventRecord,
+} from "@supbot/shared";
 
 export type TranscriptEntry =
   | { type: "message"; message: ChatMessage }
   | { type: "event"; event: RuntimeEventRecord }
   | { type: "compact"; boundary: CompactBoundary };
 
-export type { TranscriptLoadResult, TranscriptRecord } from "@supbot/shared";
+export type { TranscriptLoadResult, TranscriptPage, TranscriptRecord } from "@supbot/shared";
 
 export class TranscriptStore {
   constructor(private readonly dataDir: string) {}
@@ -22,7 +30,30 @@ export class TranscriptStore {
     return (await this.readEntries(conversationId)).entries;
   }
 
-  async loadRecoverable(conversationId: string, stateMessages: ChatMessage[], stateBoundaries: CompactBoundary[]): Promise<TranscriptLoadResult> {
+  async loadPage(
+    conversationId: string,
+    options: { beforeMessageId?: string; limit?: number } = {},
+  ): Promise<TranscriptPage> {
+    const messages = messagesFromEntries((await this.readEntries(conversationId)).entries, conversationId);
+    const beforeIndex = options.beforeMessageId
+      ? messages.findIndex((message) => message.id === options.beforeMessageId)
+      : messages.length;
+    const end = beforeIndex >= 0 ? beforeIndex : messages.length;
+    const limit = Math.max(1, Math.min(200, Math.floor(options.limit || 50)));
+    const start = Math.max(0, end - limit);
+    return {
+      conversationId,
+      messages: messages.slice(start, end),
+      hasMore: start > 0,
+      total: messages.length,
+    };
+  }
+
+  async loadRecoverable(
+    conversationId: string,
+    stateMessages: ChatMessage[],
+    stateBoundaries: CompactBoundary[],
+  ): Promise<TranscriptLoadResult> {
     const read = await this.readEntries(conversationId);
     if (!read.entries.length) {
       const compactBoundary = latestBoundary(conversationId, stateBoundaries);
@@ -32,30 +63,36 @@ export class TranscriptStore {
         activeMessages: activeMessagesAfterBoundary(stateMessages, compactBoundary),
         compactBoundary,
         source: "state",
-        diagnostics: read.diagnostics.length ? read.diagnostics : [{
-          level: "warning",
-          message: "Transcript file was not found. Falling back to conversation state.",
-          createdAt: new Date().toISOString()
-        }]
+        diagnostics: read.diagnostics.length
+          ? read.diagnostics
+          : [
+              {
+                level: "warning",
+                message: "Transcript file was not found. Falling back to conversation state.",
+                createdAt: new Date().toISOString(),
+              },
+            ],
       };
     }
-    const compactBoundary = latestEntryBoundary(read.entries, conversationId) || latestBoundary(conversationId, stateBoundaries);
-    const transcriptMessages = read.entries
-      .filter((entry): entry is TranscriptRecord & { type: "message" } => entry.type === "message")
-      .map((entry) => entry.message)
-      .filter((message) => message.conversationId === conversationId);
+    const compactBoundary =
+      latestEntryBoundary(read.entries, conversationId) || latestBoundary(conversationId, stateBoundaries);
+    const transcriptMessages = messagesFromEntries(read.entries, conversationId);
     const activeMessages = activeMessagesAfterBoundary(transcriptMessages, compactBoundary);
     return {
       conversationId,
       entries: read.entries,
-      activeMessages: activeMessages.length ? activeMessages : activeMessagesAfterBoundary(stateMessages, compactBoundary),
+      activeMessages: activeMessages.length
+        ? activeMessages
+        : activeMessagesAfterBoundary(stateMessages, compactBoundary),
       compactBoundary,
       source: "transcript",
-      diagnostics: read.diagnostics
+      diagnostics: read.diagnostics,
     };
   }
 
-  private async readEntries(conversationId: string): Promise<{ entries: TranscriptRecord[]; diagnostics: TranscriptDiagnostic[] }> {
+  private async readEntries(
+    conversationId: string,
+  ): Promise<{ entries: TranscriptRecord[]; diagnostics: TranscriptDiagnostic[] }> {
     try {
       const raw = await readFile(this.pathFor(conversationId), "utf8");
       const entries: TranscriptRecord[] = [];
@@ -70,9 +107,19 @@ export class TranscriptStore {
             entries.push(parsed);
             return;
           }
-          diagnostics.push({ level: "warning", message: `Ignored unknown transcript entry type at line ${index + 1}.`, line: index + 1, createdAt: new Date().toISOString() });
+          diagnostics.push({
+            level: "warning",
+            message: `Ignored unknown transcript entry type at line ${index + 1}.`,
+            line: index + 1,
+            createdAt: new Date().toISOString(),
+          });
         } catch (error) {
-          diagnostics.push({ level: "error", message: `Could not parse transcript line ${index + 1}: ${(error as Error).message}`, line: index + 1, createdAt: new Date().toISOString() });
+          diagnostics.push({
+            level: "error",
+            message: `Could not parse transcript line ${index + 1}: ${(error as Error).message}`,
+            line: index + 1,
+            createdAt: new Date().toISOString(),
+          });
         }
       });
       return { entries, diagnostics };
@@ -93,6 +140,21 @@ export class TranscriptStore {
   }
 }
 
+export function messagesFromEntries(entries: TranscriptRecord[], conversationId: string): ChatMessage[] {
+  const order: string[] = [];
+  const messages = new Map<string, ChatMessage>();
+  for (const entry of entries) {
+    if (entry.type !== "message" || entry.message.conversationId !== conversationId) {
+      continue;
+    }
+    if (!messages.has(entry.message.id)) {
+      order.push(entry.message.id);
+    }
+    messages.set(entry.message.id, entry.message);
+  }
+  return order.map((id) => messages.get(id)!).sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+}
+
 function latestEntryBoundary(entries: TranscriptRecord[], conversationId: string): CompactBoundary | undefined {
   return entries
     .filter((entry): entry is TranscriptRecord & { type: "compact" } => entry.type === "compact")
@@ -108,7 +170,9 @@ function latestBoundary(conversationId: string, boundaries: CompactBoundary[]): 
 }
 
 function activeMessagesAfterBoundary(messages: ChatMessage[], boundary: CompactBoundary | undefined): ChatMessage[] {
-  const activeMessages = messages.filter((message) => !message.blocks?.some((block) => block.type === "compact_summary"));
+  const activeMessages = messages.filter(
+    (message) => !message.blocks?.some((block) => block.type === "compact_summary"),
+  );
   if (!boundary?.messageId) {
     return activeMessages;
   }

@@ -32,7 +32,6 @@ import type {
   ServstationMessageDetail,
   ServstationMessageEvent,
   ServstationMessageFolder,
-  ServstationMessageListItem,
   ServstationMessageListResponse,
   ServstationMessageUnreadSummary,
   ServstationProject,
@@ -44,7 +43,7 @@ import type {
   ServstationSendDirectMessageInput,
   ServstationSendPromptInput,
   ServstationSendPromptResult,
-  ServstationSessionJob
+  ServstationSessionJob,
 } from "@supbot/shared";
 
 interface ServstationAgentClientHost {
@@ -214,7 +213,7 @@ export class ServstationAgentClient {
       autopilotRun: null,
       autopilotEvents: [],
       autopilotSteps: [],
-      fetchedAt: this.host.nowIso()
+      fetchedAt: this.host.nowIso(),
     } satisfies ServstationClientSnapshot;
     if (!connected) {
       return baseSnapshot;
@@ -225,20 +224,29 @@ export class ServstationAgentClient {
       this.listConversations(agentInstanceId, signal),
       this.listScheduledJobs(agentInstanceId, signal),
       this.fetchCurrentAutopilotRun(agentInstanceId, signal),
-      this.fetchCapabilitySnapshot(agentInstanceId, signal)
+      this.fetchCapabilitySnapshot(agentInstanceId, signal),
     ]);
-    const activeConversationId = query.conversationId && conversations.some((item) => item.id === query.conversationId)
-      ? query.conversationId
-      : conversations[0]?.id;
+    const activeConversationId =
+      query.conversationId && conversations.some((item) => item.id === query.conversationId)
+        ? query.conversationId
+        : conversations[0]?.id;
     const selectedConversation = conversations.find((conversation) => conversation.id === activeConversationId);
     const [jobs, hydratedConversation, autopilotEvents, autopilotSteps] = await Promise.all([
       activeConversationId ? this.listJobs(agentInstanceId, activeConversationId, signal) : Promise.resolve([]),
-      selectedConversation ? this.fetchConversation(agentInstanceId, selectedConversation, signal) : Promise.resolve(undefined),
-      currentAutopilot?.id ? this.fetchAutopilotEvents(agentInstanceId, currentAutopilot.id, signal) : Promise.resolve([]),
-      currentAutopilot?.id ? this.fetchAutopilotStepsForAgent(agentInstanceId, currentAutopilot.id, signal) : Promise.resolve([])
+      selectedConversation
+        ? this.fetchConversation(agentInstanceId, selectedConversation, signal)
+        : Promise.resolve(undefined),
+      currentAutopilot?.id
+        ? this.fetchAutopilotEvents(agentInstanceId, currentAutopilot.id, signal)
+        : Promise.resolve([]),
+      currentAutopilot?.id
+        ? this.fetchAutopilotStepsForAgent(agentInstanceId, currentAutopilot.id, signal)
+        : Promise.resolve([]),
     ]);
     const hydratedConversations = hydratedConversation
-      ? conversations.map((conversation) => conversation.id === hydratedConversation.id ? hydratedConversation : conversation)
+      ? conversations.map((conversation) =>
+          conversation.id === hydratedConversation.id ? hydratedConversation : conversation,
+        )
       : conversations;
     return {
       ...baseSnapshot,
@@ -255,7 +263,7 @@ export class ServstationAgentClient {
       autopilotRun: currentAutopilot,
       autopilotEvents,
       autopilotSteps,
-      fetchedAt: this.host.nowIso()
+      fetchedAt: this.host.nowIso(),
     };
   }
 
@@ -264,7 +272,7 @@ export class ServstationAgentClient {
     return this.request<ServstationProject>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/projects`, {
       method: "POST",
       signal,
-      body: JSON.stringify({ name })
+      body: JSON.stringify({ name }),
     });
   }
 
@@ -275,8 +283,8 @@ export class ServstationAgentClient {
       {
         method: "PATCH",
         signal,
-        body: JSON.stringify({ name })
-      }
+        body: JSON.stringify({ name }),
+      },
     );
   }
 
@@ -284,7 +292,7 @@ export class ServstationAgentClient {
     const agentInstanceId = await this.ensureConnectedAgent(signal);
     return this.request<ServstationDeleteProjectResponse>(
       `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/projects/${encodeURIComponent(projectId)}`,
-      { method: "DELETE", signal }
+      { method: "DELETE", signal },
     );
   }
 
@@ -292,16 +300,20 @@ export class ServstationAgentClient {
     const agentInstanceId = await this.ensureConnectedAgent(signal);
     const response = await this.request<ProjectResourcesResponse>(
       `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/projects/${encodeURIComponent(projectId)}/resources`,
-      { method: "GET", signal }
+      { method: "GET", signal },
     );
     return Array.isArray(response.resources) ? response.resources : [];
   }
 
-  async deleteProjectResource(projectId: string, resourceId: string, signal?: AbortSignal): Promise<ServstationDeleteProjectResourceResponse> {
+  async deleteProjectResource(
+    projectId: string,
+    resourceId: string,
+    signal?: AbortSignal,
+  ): Promise<ServstationDeleteProjectResourceResponse> {
     const agentInstanceId = await this.ensureConnectedAgent(signal);
     return this.request<ServstationDeleteProjectResourceResponse>(
       `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/projects/${encodeURIComponent(projectId)}/resources/${encodeURIComponent(resourceId)}`,
-      { method: "DELETE", signal }
+      { method: "DELETE", signal },
     );
   }
 
@@ -310,16 +322,19 @@ export class ServstationAgentClient {
     return this.request<ServstationConversation>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/conversations`, {
       method: "POST",
       signal,
-      body: JSON.stringify({ title, projectId })
+      body: JSON.stringify({ title, projectId }),
     });
   }
 
   async deleteConversation(conversationId: string, signal?: AbortSignal): Promise<void> {
     const agentInstanceId = await this.ensureConnectedAgent(signal);
-    await this.request(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/conversations/${encodeURIComponent(conversationId)}`, {
-      method: "DELETE",
-      signal
-    });
+    await this.request(
+      `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/conversations/${encodeURIComponent(conversationId)}`,
+      {
+        method: "DELETE",
+        signal,
+      },
+    );
   }
 
   async sendPrompt(input: ServstationSendPromptInput, signal?: AbortSignal): Promise<ServstationSendPromptResult> {
@@ -333,9 +348,8 @@ export class ServstationAgentClient {
     }
     const requestId = input.requestId?.trim() || this.host.randomId("serv_req");
     const attachments = await toPromptAttachments(input.attachments || []);
-    const runtimeOptions = typeof input.allowWebSearch === "boolean"
-      ? { allowWebSearch: input.allowWebSearch }
-      : undefined;
+    const runtimeOptions =
+      typeof input.allowWebSearch === "boolean" ? { allowWebSearch: input.allowWebSearch } : undefined;
     const job = await this.request<ServstationSessionJob>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/jobs`, {
       method: "POST",
       signal,
@@ -349,37 +363,53 @@ export class ServstationAgentClient {
           requestId,
           source: "supbot-server-agent-client",
           ...(attachments.length ? { attachments } : {}),
-          ...(runtimeOptions ? { runtimeOptions } : {})
-        }
-      })
+          ...(runtimeOptions ? { runtimeOptions } : {}),
+        },
+      }),
     });
-    const resolvedConversation = conversation || await this.findConversation(agentInstanceId, conversationId, signal) || fallbackConversation(agentInstanceId, conversationId, job);
+    const resolvedConversation =
+      conversation ||
+      (await this.findConversation(agentInstanceId, conversationId, signal)) ||
+      fallbackConversation(agentInstanceId, conversationId, job);
     return {
       conversation: resolvedConversation,
       job,
-      snapshot: await this.snapshot({ conversationId }, signal)
+      snapshot: await this.snapshot({ conversationId }, signal),
     };
   }
 
   async cancelJob(jobId: string, signal?: AbortSignal): Promise<ServstationSessionJob> {
     const agentInstanceId = await this.ensureConnectedAgent(signal);
-    return this.request<ServstationSessionJob>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/jobs?jobId=${encodeURIComponent(jobId)}`, {
-      method: "PATCH",
-      signal
-    });
+    return this.request<ServstationSessionJob>(
+      `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/jobs?jobId=${encodeURIComponent(jobId)}`,
+      {
+        method: "PATCH",
+        signal,
+      },
+    );
   }
 
-  async createScheduledJob(input: ServstationScheduledJobInput, signal?: AbortSignal): Promise<ServstationScheduledJob> {
+  async createScheduledJob(
+    input: ServstationScheduledJobInput,
+    signal?: AbortSignal,
+  ): Promise<ServstationScheduledJob> {
     const agentInstanceId = await this.ensureConnectedAgent(signal);
-    const task = await this.request<ServstationScheduledJob | ServstationScheduledTask>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/scheduled-tasks`, {
-      method: "POST",
-      signal,
-      body: JSON.stringify(toScheduledTaskInput(input))
-    });
+    const task = await this.request<ServstationScheduledJob | ServstationScheduledTask>(
+      `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/scheduled-tasks`,
+      {
+        method: "POST",
+        signal,
+        body: JSON.stringify(toScheduledTaskInput(input)),
+      },
+    );
     return normalizeScheduledJob(task);
   }
 
-  async updateScheduledJob(id: string, input: Partial<ServstationScheduledJobInput>, signal?: AbortSignal): Promise<ServstationScheduledJob> {
+  async updateScheduledJob(
+    id: string,
+    input: Partial<ServstationScheduledJobInput>,
+    signal?: AbortSignal,
+  ): Promise<ServstationScheduledJob> {
     const agentInstanceId = await this.ensureConnectedAgent(signal);
     if (typeof input.enabled === "boolean" && Object.keys(input).every((key) => key === "enabled")) {
       const task = await this.request<ServstationScheduledJob | ServstationScheduledTask>(
@@ -387,43 +417,55 @@ export class ServstationAgentClient {
         {
           method: "POST",
           signal,
-          body: JSON.stringify({})
-        }
+          body: JSON.stringify({}),
+        },
       );
       return normalizeScheduledJob(task);
     }
-    const task = await this.request<ServstationScheduledJob | ServstationScheduledTask>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/scheduled-tasks/${encodeURIComponent(id)}`, {
-      method: "PATCH",
-      signal,
-      body: JSON.stringify(toScheduledTaskInput(input))
-    });
+    const task = await this.request<ServstationScheduledJob | ServstationScheduledTask>(
+      `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/scheduled-tasks/${encodeURIComponent(id)}`,
+      {
+        method: "PATCH",
+        signal,
+        body: JSON.stringify(toScheduledTaskInput(input)),
+      },
+    );
     return normalizeScheduledJob(task);
   }
 
   async deleteScheduledJob(id: string, signal?: AbortSignal): Promise<void> {
     const agentInstanceId = await this.ensureConnectedAgent(signal);
-    await this.request(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/scheduled-tasks/${encodeURIComponent(id)}`, {
-      method: "DELETE",
-      signal
-    });
+    await this.request(
+      `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/scheduled-tasks/${encodeURIComponent(id)}`,
+      {
+        method: "DELETE",
+        signal,
+      },
+    );
   }
 
-  async startAutopilotRun(input: ServstationAutopilotStartInput, signal?: AbortSignal): Promise<ServstationAutopilotRun> {
+  async startAutopilotRun(
+    input: ServstationAutopilotStartInput,
+    signal?: AbortSignal,
+  ): Promise<ServstationAutopilotRun> {
     const agentInstanceId = await this.ensureConnectedAgent(signal);
     const conversationId = input.conversationId?.trim();
     const goal = input.goal?.trim();
     const prompt = input.prompt?.trim() || goal;
     const requestId = input.requestId?.trim() || this.host.randomId("serv_autopilot");
-    const response = await this.request<AutopilotRunResponse>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/autopilot-runs`, {
-      method: "POST",
-      signal,
-      body: JSON.stringify({
-        ...(conversationId ? { conversationId } : {}),
-        ...(goal ? { goal } : {}),
-        ...(prompt ? { prompt } : {}),
-        requestId
-      })
-    });
+    const response = await this.request<AutopilotRunResponse>(
+      `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/autopilot-runs`,
+      {
+        method: "POST",
+        signal,
+        body: JSON.stringify({
+          ...(conversationId ? { conversationId } : {}),
+          ...(goal ? { goal } : {}),
+          ...(prompt ? { prompt } : {}),
+          requestId,
+        }),
+      },
+    );
     if (!response.run) {
       throw new Error("Servstation did not return an autopilot run.");
     }
@@ -443,16 +485,22 @@ export class ServstationAgentClient {
   async streamAutopilotEvents(
     runId: string,
     onEvent: (event: ServstationAutopilotEvent) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<void> {
     const agentInstanceId = await this.ensureConnectedAgent(signal);
     let lastEventId = "";
     while (!signal?.aborted) {
       try {
-        await this.openAutopilotEventStream(agentInstanceId, runId, lastEventId, (event) => {
-          lastEventId = event.id;
-          onEvent(event);
-        }, signal);
+        await this.openAutopilotEventStream(
+          agentInstanceId,
+          runId,
+          lastEventId,
+          (event) => {
+            lastEventId = event.id;
+            onEvent(event);
+          },
+          signal,
+        );
       } catch (error) {
         if (signal?.aborted) {
           return;
@@ -480,13 +528,19 @@ export class ServstationAgentClient {
     }
   }
 
-  async updateAutopilotRun(input: ServstationAutopilotStatusUpdate, signal?: AbortSignal): Promise<ServstationAutopilotRun> {
+  async updateAutopilotRun(
+    input: ServstationAutopilotStatusUpdate,
+    signal?: AbortSignal,
+  ): Promise<ServstationAutopilotRun> {
     const agentInstanceId = await this.ensureConnectedAgent(signal);
-    const response = await this.request<AutopilotRunResponse>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/autopilot-runs/${encodeURIComponent(input.runId)}`, {
-      method: "PATCH",
-      signal,
-      body: JSON.stringify({ status: input.status })
-    });
+    const response = await this.request<AutopilotRunResponse>(
+      `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/autopilot-runs/${encodeURIComponent(input.runId)}`,
+      {
+        method: "PATCH",
+        signal,
+        body: JSON.stringify({ status: input.status }),
+      },
+    );
     if (!response.run) {
       throw new Error("Servstation did not return an autopilot run.");
     }
@@ -498,66 +552,88 @@ export class ServstationAgentClient {
     const [launchableWorkflows, pendingTasks, executions] = await Promise.all([
       this.listFlowEngineLaunchableWorkflows(signal),
       this.listFlowEnginePendingTasks(signal),
-      this.listFlowEngineExecutions(signal)
+      this.listFlowEngineExecutions(signal),
     ]);
     return {
       launchableWorkflows,
       pendingTasks,
       executions,
-      fetchedAt: this.host.nowIso()
+      fetchedAt: this.host.nowIso(),
     };
   }
 
-  async launchFlowEngineWorkflow(input: ServstationFlowEngineLaunchInput, signal?: AbortSignal): Promise<ServstationFlowEngineInitiatedExecution> {
+  async launchFlowEngineWorkflow(
+    input: ServstationFlowEngineLaunchInput,
+    signal?: AbortSignal,
+  ): Promise<ServstationFlowEngineInitiatedExecution> {
     await this.ensureConnectedAgent(signal);
     return this.request<ServstationFlowEngineInitiatedExecution>("/api/v1/flow-engine/executions", {
       method: "POST",
       signal,
       body: JSON.stringify({
         workflowId: input.workflowId,
-        input: input.input || {}
-      })
+        input: input.input || {},
+      }),
     });
   }
 
-  async getFlowEngineExecution(executionId: string, signal?: AbortSignal): Promise<ServstationFlowEngineInitiatedExecution> {
+  async getFlowEngineExecution(
+    executionId: string,
+    signal?: AbortSignal,
+  ): Promise<ServstationFlowEngineInitiatedExecution> {
     await this.ensureConnectedAgent(signal);
-    return this.request<ServstationFlowEngineInitiatedExecution>(`/api/v1/flow-engine/executions/mine/${encodeURIComponent(executionId)}`, {
-      method: "GET",
-      signal
-    });
+    return this.request<ServstationFlowEngineInitiatedExecution>(
+      `/api/v1/flow-engine/executions/mine/${encodeURIComponent(executionId)}`,
+      {
+        method: "GET",
+        signal,
+      },
+    );
   }
 
-  async getFlowEngineExecutionEvents(executionId: string, signal?: AbortSignal): Promise<ServstationFlowEngineExecutionEvent[]> {
+  async getFlowEngineExecutionEvents(
+    executionId: string,
+    signal?: AbortSignal,
+  ): Promise<ServstationFlowEngineExecutionEvent[]> {
     await this.ensureConnectedAgent(signal);
     const response = await this.request<ServstationFlowEngineExecutionEvent[] | FlowEngineExecutionEventsResponse>(
       `/api/v1/flow-engine/executions/mine/${encodeURIComponent(executionId)}/events`,
-      { method: "GET", signal }
+      { method: "GET", signal },
     );
     return Array.isArray(response) ? response : Array.isArray(response.events) ? response.events : [];
   }
 
-  async decideFlowEngineApproval(input: ServstationFlowEngineApprovalDecisionInput, signal?: AbortSignal): Promise<ServstationFlowEnginePendingTask> {
+  async decideFlowEngineApproval(
+    input: ServstationFlowEngineApprovalDecisionInput,
+    signal?: AbortSignal,
+  ): Promise<ServstationFlowEnginePendingTask> {
     await this.ensureConnectedAgent(signal);
-    return this.request<ServstationFlowEnginePendingTask>(`/api/v1/flow-engine/approvals/${encodeURIComponent(input.approvalId)}/decision`, {
-      method: "POST",
-      signal,
-      body: JSON.stringify({
-        decision: input.decision,
-        comment: input.comment?.trim() || undefined
-      })
-    });
+    return this.request<ServstationFlowEnginePendingTask>(
+      `/api/v1/flow-engine/approvals/${encodeURIComponent(input.approvalId)}/decision`,
+      {
+        method: "POST",
+        signal,
+        body: JSON.stringify({
+          decision: input.decision,
+          comment: input.comment?.trim() || undefined,
+        }),
+      },
+    );
   }
 
-  async listMessages(folder: ServstationMessageFolder, unreadOnly = false, signal?: AbortSignal): Promise<ServstationMessageListResponse> {
+  async listMessages(
+    folder: ServstationMessageFolder,
+    unreadOnly = false,
+    signal?: AbortSignal,
+  ): Promise<ServstationMessageListResponse> {
     await this.ensureConnectedAgent(signal);
     const query = new URLSearchParams({ folder, unreadOnly: String(unreadOnly) });
     const response = await this.request<ServstationMessageListResponse>(`/api/v1/messages?${query.toString()}`, {
       method: "GET",
-      signal
+      signal,
     });
     return {
-      messages: Array.isArray(response.messages) ? response.messages : []
+      messages: Array.isArray(response.messages) ? response.messages : [],
     };
   }
 
@@ -565,11 +641,11 @@ export class ServstationAgentClient {
     await this.ensureConnectedAgent(signal);
     const response = await this.request<ServstationMessageUnreadSummary>("/api/v1/messages/unread", {
       method: "GET",
-      signal
+      signal,
     });
     return {
       unreadCount: typeof response.unreadCount === "number" ? response.unreadCount : 0,
-      messages: Array.isArray(response.messages) ? response.messages : []
+      messages: Array.isArray(response.messages) ? response.messages : [],
     };
   }
 
@@ -577,7 +653,7 @@ export class ServstationAgentClient {
     await this.ensureConnectedAgent(signal);
     const response = await this.request<MessageDetailResponse>(`/api/v1/messages/${encodeURIComponent(messageId)}`, {
       method: "GET",
-      signal
+      signal,
     });
     if (!response.message) {
       throw new Error("Servstation did not return a message.");
@@ -587,24 +663,34 @@ export class ServstationAgentClient {
 
   async markMessageRead(messageId: string, signal?: AbortSignal): Promise<ServstationMessageDetail> {
     await this.ensureConnectedAgent(signal);
-    const response = await this.request<MessageStateResponse>(`/api/v1/messages/${encodeURIComponent(messageId)}/read`, {
-      method: "POST",
-      signal,
-      body: JSON.stringify({})
-    });
+    const response = await this.request<MessageStateResponse>(
+      `/api/v1/messages/${encodeURIComponent(messageId)}/read`,
+      {
+        method: "POST",
+        signal,
+        body: JSON.stringify({}),
+      },
+    );
     if (!response.message) {
       throw new Error("Servstation did not return a message.");
     }
     return response.message;
   }
 
-  async setMessageFavorite(messageId: string, favorited: boolean, signal?: AbortSignal): Promise<ServstationMessageDetail> {
+  async setMessageFavorite(
+    messageId: string,
+    favorited: boolean,
+    signal?: AbortSignal,
+  ): Promise<ServstationMessageDetail> {
     await this.ensureConnectedAgent(signal);
-    const response = await this.request<MessageStateResponse>(`/api/v1/messages/${encodeURIComponent(messageId)}/favorite`, {
-      method: "POST",
-      signal,
-      body: JSON.stringify({ favorited })
-    });
+    const response = await this.request<MessageStateResponse>(
+      `/api/v1/messages/${encodeURIComponent(messageId)}/favorite`,
+      {
+        method: "POST",
+        signal,
+        body: JSON.stringify({ favorited }),
+      },
+    );
     if (!response.message) {
       throw new Error("Servstation did not return a message.");
     }
@@ -613,11 +699,14 @@ export class ServstationAgentClient {
 
   async trashMessage(messageId: string, signal?: AbortSignal): Promise<ServstationMessageDetail> {
     await this.ensureConnectedAgent(signal);
-    const response = await this.request<MessageStateResponse>(`/api/v1/messages/${encodeURIComponent(messageId)}/trash`, {
-      method: "POST",
-      signal,
-      body: JSON.stringify({})
-    });
+    const response = await this.request<MessageStateResponse>(
+      `/api/v1/messages/${encodeURIComponent(messageId)}/trash`,
+      {
+        method: "POST",
+        signal,
+        body: JSON.stringify({}),
+      },
+    );
     if (!response.message) {
       throw new Error("Servstation did not return a message.");
     }
@@ -626,11 +715,14 @@ export class ServstationAgentClient {
 
   async restoreMessage(messageId: string, signal?: AbortSignal): Promise<ServstationMessageDetail> {
     await this.ensureConnectedAgent(signal);
-    const response = await this.request<MessageStateResponse>(`/api/v1/messages/${encodeURIComponent(messageId)}/restore`, {
-      method: "POST",
-      signal,
-      body: JSON.stringify({})
-    });
+    const response = await this.request<MessageStateResponse>(
+      `/api/v1/messages/${encodeURIComponent(messageId)}/restore`,
+      {
+        method: "POST",
+        signal,
+        body: JSON.stringify({}),
+      },
+    );
     if (!response.message) {
       throw new Error("Servstation did not return a message.");
     }
@@ -641,15 +733,19 @@ export class ServstationAgentClient {
     await this.ensureConnectedAgent(signal);
     await this.request(`/api/v1/messages/${encodeURIComponent(messageId)}`, {
       method: "DELETE",
-      signal
+      signal,
     });
   }
 
-  async fetchMessageAttachment(messageId: string, attachmentId: string, signal?: AbortSignal): Promise<ServstationMessageAttachmentContent> {
+  async fetchMessageAttachment(
+    messageId: string,
+    attachmentId: string,
+    signal?: AbortSignal,
+  ): Promise<ServstationMessageAttachmentContent> {
     await this.ensureConnectedAgent(signal);
     const response = await this.request<MessageAttachmentResponse>(
       `/api/v1/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`,
-      { method: "GET", signal }
+      { method: "GET", signal },
     );
     if (!response.attachment) {
       throw new Error("Servstation did not return a message attachment.");
@@ -657,7 +753,10 @@ export class ServstationAgentClient {
     return response.attachment;
   }
 
-  async sendAgentMessage(input: ServstationSendAgentMessageInput, signal?: AbortSignal): Promise<ServstationSessionJob> {
+  async sendAgentMessage(
+    input: ServstationSendAgentMessageInput,
+    signal?: AbortSignal,
+  ): Promise<ServstationSessionJob> {
     const agentInstanceId = await this.ensureConnectedAgent(signal);
     return this.request<ServstationSessionJob>("/api/v1/messages/send", {
       method: "POST",
@@ -667,12 +766,15 @@ export class ServstationAgentClient {
         recipients: input.recipients,
         subject: input.subject,
         body: input.body,
-        attachments: input.attachments || []
-      })
+        attachments: input.attachments || [],
+      }),
     });
   }
 
-  async sendDirectMessage(input: ServstationSendDirectMessageInput, signal?: AbortSignal): Promise<ServstationMessageDetail> {
+  async sendDirectMessage(
+    input: ServstationSendDirectMessageInput,
+    signal?: AbortSignal,
+  ): Promise<ServstationMessageDetail> {
     const agentInstanceId = await this.ensureConnectedAgent(signal);
     const response = await this.request<MessageDetailResponse>("/api/v1/messages/deliver", {
       method: "POST",
@@ -684,8 +786,8 @@ export class ServstationAgentClient {
         senderMailAccountId: input.senderMailAccountId || "",
         subject: input.subject,
         body: input.body,
-        attachments: input.attachments || []
-      })
+        attachments: input.attachments || [],
+      }),
     });
     if (!response.message) {
       throw new Error("Servstation did not return a message.");
@@ -697,7 +799,7 @@ export class ServstationAgentClient {
     await this.ensureConnectedAgent(signal);
     const response = await this.request<MailAccountsResponse>("/api/v1/mail/accounts", {
       method: "GET",
-      signal
+      signal,
     });
     return Array.isArray(response.accounts) ? response.accounts.map(sanitizeMailAccount) : [];
   }
@@ -707,7 +809,7 @@ export class ServstationAgentClient {
     const response = await this.request<MailAccountResponse>("/api/v1/mail/accounts", {
       method: "POST",
       signal,
-      body: JSON.stringify(input)
+      body: JSON.stringify(input),
     });
     if (!response.account) {
       throw new Error("Servstation did not return a mail account.");
@@ -715,12 +817,16 @@ export class ServstationAgentClient {
     return sanitizeMailAccount(response.account);
   }
 
-  async updateMailAccount(id: string, input: ServstationMailAccountDraft, signal?: AbortSignal): Promise<ServstationMailAccount> {
+  async updateMailAccount(
+    id: string,
+    input: ServstationMailAccountDraft,
+    signal?: AbortSignal,
+  ): Promise<ServstationMailAccount> {
     await this.ensureConnectedAgent(signal);
     const response = await this.request<MailAccountResponse>(`/api/v1/mail/accounts/${encodeURIComponent(id)}`, {
       method: "PUT",
       signal,
-      body: JSON.stringify(input)
+      body: JSON.stringify(input),
     });
     if (!response.account) {
       throw new Error("Servstation did not return a mail account.");
@@ -732,17 +838,20 @@ export class ServstationAgentClient {
     await this.ensureConnectedAgent(signal);
     await this.request(`/api/v1/mail/accounts/${encodeURIComponent(id)}`, {
       method: "DELETE",
-      signal
+      signal,
     });
   }
 
   async setDefaultMailAccount(id: string, signal?: AbortSignal): Promise<ServstationMailAccount> {
     await this.ensureConnectedAgent(signal);
-    const response = await this.request<MailAccountResponse>(`/api/v1/mail/accounts/${encodeURIComponent(id)}/default`, {
-      method: "POST",
-      signal,
-      body: JSON.stringify({})
-    });
+    const response = await this.request<MailAccountResponse>(
+      `/api/v1/mail/accounts/${encodeURIComponent(id)}/default`,
+      {
+        method: "POST",
+        signal,
+        body: JSON.stringify({}),
+      },
+    );
     if (!response.account) {
       throw new Error("Servstation did not return a mail account.");
     }
@@ -754,7 +863,7 @@ export class ServstationAgentClient {
     return this.request<ServstationMailConnectionTestResult>(`/api/v1/mail/accounts/${encodeURIComponent(id)}/test`, {
       method: "POST",
       signal,
-      body: JSON.stringify({})
+      body: JSON.stringify({}),
     });
   }
 
@@ -763,7 +872,7 @@ export class ServstationAgentClient {
     return this.request<{ status: string }>(`/api/v1/mail/accounts/${encodeURIComponent(id)}/sync`, {
       method: "POST",
       signal,
-      body: JSON.stringify({})
+      body: JSON.stringify({}),
     });
   }
 
@@ -778,10 +887,10 @@ export class ServstationAgentClient {
     const response = await fetch(joinUrl(baseUrl, "/api/v1/messages/events"), {
       method: "GET",
       headers: {
-        ...await this.headers(signal),
-        Accept: "text/event-stream"
+        ...(await this.headers(signal)),
+        Accept: "text/event-stream",
       },
-      signal
+      signal,
     });
     if (!response.ok || !response.body) {
       const text = await response.text().catch(() => "");
@@ -814,26 +923,29 @@ export class ServstationAgentClient {
   }
 
   private async listConversations(agentInstanceId: string, signal?: AbortSignal): Promise<ServstationConversation[]> {
-    const response = await this.request<ConversationsResponse>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/conversations`, {
-      method: "GET",
-      signal
-    });
+    const response = await this.request<ConversationsResponse>(
+      `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/conversations`,
+      {
+        method: "GET",
+        signal,
+      },
+    );
     return Array.isArray(response.conversations) ? response.conversations : [];
   }
 
   private async fetchConversation(
     agentInstanceId: string,
     fallback: ServstationConversation,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<ServstationConversation | undefined> {
     try {
       const response = await this.request<unknown>(
         `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/conversations/${encodeURIComponent(fallback.id)}`,
-        { method: "GET", signal }
+        { method: "GET", signal },
       );
       return {
         ...fallback,
-        messages: normalizeConversationMessages(response, fallback.id)
+        messages: normalizeConversationMessages(response, fallback.id),
       };
     } catch (error) {
       if (signal?.aborted) {
@@ -844,10 +956,13 @@ export class ServstationAgentClient {
   }
 
   private async listProjects(agentInstanceId: string, signal?: AbortSignal): Promise<ServstationProject[]> {
-    const response = await this.request<ProjectsResponse>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/projects`, {
-      method: "GET",
-      signal
-    });
+    const response = await this.request<ProjectsResponse>(
+      `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/projects`,
+      {
+        method: "GET",
+        signal,
+      },
+    );
     return Array.isArray(response.projects) ? response.projects : [];
   }
 
@@ -855,14 +970,16 @@ export class ServstationAgentClient {
     const [servicesResult, installedResult, localResult] = await Promise.allSettled([
       this.listServices(signal),
       this.listInstalledServices(agentInstanceId, signal),
-      this.listLocalCapabilities(signal)
+      this.listLocalCapabilities(signal),
     ]);
     const errors: string[] = [];
     if (servicesResult.status === "rejected") {
       errors.push(capabilityRequestError("/api/v1/services", servicesResult.reason));
     }
     if (installedResult.status === "rejected") {
-      errors.push(capabilityRequestError(`/api/v1/agent/${agentInstanceId}/installed-services`, installedResult.reason));
+      errors.push(
+        capabilityRequestError(`/api/v1/agent/${agentInstanceId}/installed-services`, installedResult.reason),
+      );
     }
     if (localResult.status === "rejected") {
       errors.push(capabilityRequestError("/api/v1/capabilities/local", localResult.reason));
@@ -871,32 +988,38 @@ export class ServstationAgentClient {
       services: servicesResult.status === "fulfilled" ? servicesResult.value : [],
       installedServices: installedResult.status === "fulfilled" ? installedResult.value : [],
       localCapabilities: localResult.status === "fulfilled" ? localResult.value : [],
-      ...(errors.length ? { capabilityLoadError: errors.join("; ") } : {})
+      ...(errors.length ? { capabilityLoadError: errors.join("; ") } : {}),
     };
   }
 
   private async listServices(signal?: AbortSignal): Promise<ServstationServiceDefinition[]> {
     const response = await this.request<ServicesResponse | ServstationServiceDefinition[]>("/api/v1/services", {
       method: "GET",
-      signal
+      signal,
     });
     return Array.isArray(response) ? response : Array.isArray(response.services) ? response.services : [];
   }
 
-  private async listInstalledServices(agentInstanceId: string, signal?: AbortSignal): Promise<ServstationInstalledService[]> {
+  private async listInstalledServices(
+    agentInstanceId: string,
+    signal?: AbortSignal,
+  ): Promise<ServstationInstalledService[]> {
     const response = await this.request<InstalledServicesResponse | ServstationInstalledService[]>(
       `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/installed-services`,
-      { method: "GET", signal }
+      { method: "GET", signal },
     );
     return Array.isArray(response) ? response : Array.isArray(response.services) ? response.services : [];
   }
 
   private async listLocalCapabilities(signal?: AbortSignal): Promise<ServstationLocalCapabilityAsset[]> {
     try {
-      const response = await this.request<LocalCapabilitiesResponse | ServstationLocalCapabilityAsset[]>("/api/v1/capabilities/local", {
-        method: "GET",
-        signal
-      });
+      const response = await this.request<LocalCapabilitiesResponse | ServstationLocalCapabilityAsset[]>(
+        "/api/v1/capabilities/local",
+        {
+          method: "GET",
+          signal,
+        },
+      );
       return Array.isArray(response) ? response : Array.isArray(response.assets) ? response.assets : [];
     } catch (error) {
       if ((error as Error & { status?: number }).status === 404) {
@@ -906,11 +1029,18 @@ export class ServstationAgentClient {
     }
   }
 
-  private async listJobs(agentInstanceId: string, conversationId: string, signal?: AbortSignal): Promise<ServstationSessionJob[]> {
-    const response = await this.request<JobsResponse>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/jobs?conversationId=${encodeURIComponent(conversationId)}`, {
-      method: "GET",
-      signal
-    });
+  private async listJobs(
+    agentInstanceId: string,
+    conversationId: string,
+    signal?: AbortSignal,
+  ): Promise<ServstationSessionJob[]> {
+    const response = await this.request<JobsResponse>(
+      `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/jobs?conversationId=${encodeURIComponent(conversationId)}`,
+      {
+        method: "GET",
+        signal,
+      },
+    );
     return Array.isArray(response.jobs)
       ? response.jobs.flatMap((job) => {
           const returnedConversationId = job.conversationId?.trim();
@@ -923,42 +1053,28 @@ export class ServstationAgentClient {
   }
 
   private async listScheduledJobs(agentInstanceId: string, signal?: AbortSignal): Promise<ServstationScheduledJob[]> {
-    const response = await this.request<ScheduledJobsResponse>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/scheduled-tasks`, {
-      method: "GET",
-      signal
-    });
+    const response = await this.request<ScheduledJobsResponse>(
+      `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/scheduled-tasks`,
+      {
+        method: "GET",
+        signal,
+      },
+    );
     const jobs = Array.isArray(response.scheduledJobs) ? response.scheduledJobs : response.tasks;
     return Array.isArray(jobs) ? jobs.map(normalizeScheduledJob) : [];
   }
 
-  private async fetchCurrentAutopilotRun(agentInstanceId: string, signal?: AbortSignal): Promise<ServstationAutopilotRun | null> {
-    try {
-      const response = await this.request<AutopilotRunResponse>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/autopilot-runs/current`, {
-        method: "GET",
-        signal
-      });
-      return response.run || null;
-    } catch (error) {
-      if (isOptionalAgentFeatureMissing(error)) {
-        return null;
-      }
-      throw error;
-    }
-  }
-
-  private async fetchAutopilotEvents(agentInstanceId: string, runId: string, signal?: AbortSignal): Promise<ServstationAutopilotEvent[]> {
-    const response = await this.request<AutopilotEventResponse>(
-      `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/autopilot-runs/${encodeURIComponent(runId)}/events?limit=50`,
-      { method: "GET", signal }
-    );
-    return Array.isArray(response.events) ? response.events : [];
-  }
-
-  private async fetchAutopilotRunForAgent(agentInstanceId: string, runId: string, signal?: AbortSignal): Promise<ServstationAutopilotRun | null> {
+  private async fetchCurrentAutopilotRun(
+    agentInstanceId: string,
+    signal?: AbortSignal,
+  ): Promise<ServstationAutopilotRun | null> {
     try {
       const response = await this.request<AutopilotRunResponse>(
-        `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/autopilot-runs/${encodeURIComponent(runId)}`,
-        { method: "GET", signal }
+        `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/autopilot-runs/current`,
+        {
+          method: "GET",
+          signal,
+        },
       );
       return response.run || null;
     } catch (error) {
@@ -969,11 +1085,46 @@ export class ServstationAgentClient {
     }
   }
 
-  private async fetchAutopilotStepsForAgent(agentInstanceId: string, runId: string, signal?: AbortSignal): Promise<ServstationAutopilotStep[]> {
+  private async fetchAutopilotEvents(
+    agentInstanceId: string,
+    runId: string,
+    signal?: AbortSignal,
+  ): Promise<ServstationAutopilotEvent[]> {
+    const response = await this.request<AutopilotEventResponse>(
+      `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/autopilot-runs/${encodeURIComponent(runId)}/events?limit=50`,
+      { method: "GET", signal },
+    );
+    return Array.isArray(response.events) ? response.events : [];
+  }
+
+  private async fetchAutopilotRunForAgent(
+    agentInstanceId: string,
+    runId: string,
+    signal?: AbortSignal,
+  ): Promise<ServstationAutopilotRun | null> {
+    try {
+      const response = await this.request<AutopilotRunResponse>(
+        `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/autopilot-runs/${encodeURIComponent(runId)}`,
+        { method: "GET", signal },
+      );
+      return response.run || null;
+    } catch (error) {
+      if (isOptionalAgentFeatureMissing(error)) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  private async fetchAutopilotStepsForAgent(
+    agentInstanceId: string,
+    runId: string,
+    signal?: AbortSignal,
+  ): Promise<ServstationAutopilotStep[]> {
     try {
       const response = await this.request<AutopilotStepResponse>(
         `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/autopilot-runs/${encodeURIComponent(runId)}/steps?limit=50`,
-        { method: "GET", signal }
+        { method: "GET", signal },
       );
       return Array.isArray(response.steps) ? response.steps : [];
     } catch (error) {
@@ -989,7 +1140,7 @@ export class ServstationAgentClient {
     runId: string,
     lastEventId: string,
     onEvent: (event: ServstationAutopilotEvent) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<void> {
     const config = this.host.getConfig();
     const identity = this.host.getIdentityContext();
@@ -997,19 +1148,30 @@ export class ServstationAgentClient {
     if (!baseUrl) {
       throw new Error("Servstation base URL is not configured.");
     }
-    const response = await fetch(joinUrl(baseUrl, `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/autopilot-runs/${encodeURIComponent(runId)}/stream`), {
-      method: "GET",
-      headers: {
-        ...await this.headers(signal),
-        Accept: "text/event-stream",
-        ...(lastEventId ? { "Last-Event-ID": lastEventId } : {})
+    const response = await fetch(
+      joinUrl(
+        baseUrl,
+        `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/autopilot-runs/${encodeURIComponent(runId)}/stream`,
+      ),
+      {
+        method: "GET",
+        headers: {
+          ...(await this.headers(signal)),
+          Accept: "text/event-stream",
+          ...(lastEventId ? { "Last-Event-ID": lastEventId } : {}),
+        },
+        signal,
       },
-      signal
-    });
+    );
     if (!response.ok || !response.body) {
       const text = await response.text().catch(() => "");
       const payload = text.trim() ? safeJson(text) : {};
-      const error = new Error(errorMessage(payload) || text || response.statusText || `Servstation autopilot stream failed with HTTP ${response.status}.`) as Error & { status?: number; payload?: unknown };
+      const error = new Error(
+        errorMessage(payload) ||
+          text ||
+          response.statusText ||
+          `Servstation autopilot stream failed with HTTP ${response.status}.`,
+      ) as Error & { status?: number; payload?: unknown };
       error.status = response.status;
       error.payload = payload;
       throw error;
@@ -1040,11 +1202,16 @@ export class ServstationAgentClient {
     }
   }
 
-  private async listFlowEngineLaunchableWorkflows(signal?: AbortSignal): Promise<ServstationFlowEngineLaunchableWorkflow[]> {
-    const response = await this.request<ServstationFlowEngineLaunchableWorkflow[] | FlowEngineLaunchableResponse>("/api/v1/flow-engine/workflows/launchable", {
-      method: "GET",
-      signal
-    });
+  private async listFlowEngineLaunchableWorkflows(
+    signal?: AbortSignal,
+  ): Promise<ServstationFlowEngineLaunchableWorkflow[]> {
+    const response = await this.request<ServstationFlowEngineLaunchableWorkflow[] | FlowEngineLaunchableResponse>(
+      "/api/v1/flow-engine/workflows/launchable",
+      {
+        method: "GET",
+        signal,
+      },
+    );
     return Array.isArray(response)
       ? response
       : Array.isArray(response.launchableWorkflows)
@@ -1055,10 +1222,13 @@ export class ServstationAgentClient {
   }
 
   private async listFlowEnginePendingTasks(signal?: AbortSignal): Promise<ServstationFlowEnginePendingTask[]> {
-    const response = await this.request<ServstationFlowEnginePendingTask[] | FlowEnginePendingTasksResponse>("/api/v1/flow-engine/tasks/pending", {
-      method: "GET",
-      signal
-    });
+    const response = await this.request<ServstationFlowEnginePendingTask[] | FlowEnginePendingTasksResponse>(
+      "/api/v1/flow-engine/tasks/pending",
+      {
+        method: "GET",
+        signal,
+      },
+    );
     return Array.isArray(response)
       ? response
       : Array.isArray(response.pendingTasks)
@@ -1069,14 +1239,21 @@ export class ServstationAgentClient {
   }
 
   private async listFlowEngineExecutions(signal?: AbortSignal): Promise<ServstationFlowEngineInitiatedExecution[]> {
-    const response = await this.request<ServstationFlowEngineInitiatedExecution[] | FlowEngineExecutionsResponse>("/api/v1/flow-engine/executions/mine", {
-      method: "GET",
-      signal
-    });
+    const response = await this.request<ServstationFlowEngineInitiatedExecution[] | FlowEngineExecutionsResponse>(
+      "/api/v1/flow-engine/executions/mine",
+      {
+        method: "GET",
+        signal,
+      },
+    );
     return Array.isArray(response) ? response : Array.isArray(response.executions) ? response.executions : [];
   }
 
-  private async findConversation(agentInstanceId: string, conversationId: string, signal?: AbortSignal): Promise<ServstationConversation | undefined> {
+  private async findConversation(
+    agentInstanceId: string,
+    conversationId: string,
+    signal?: AbortSignal,
+  ): Promise<ServstationConversation | undefined> {
     const conversations = await this.listConversations(agentInstanceId, signal);
     return conversations.find((item) => item.id === conversationId);
   }
@@ -1098,7 +1275,7 @@ export class ServstationAgentClient {
     const connected = await this.request<AgentConnectResponse>("/api/v1/agent/connect", {
       method: "POST",
       signal,
-      body: JSON.stringify({ clientId: CLIENT_ID })
+      body: JSON.stringify({ clientId: CLIENT_ID }),
     });
     if (!connected.agentInstanceId) {
       throw new Error("Servstation connect did not return an agent instance id.");
@@ -1129,7 +1306,10 @@ export class ServstationAgentClient {
     const text = await response.text();
     const payload = text.trim() ? safeJson(text) : {};
     if (!response.ok) {
-      const error = new Error(errorMessage(payload) || text || `HTTP ${response.status}`) as Error & { status?: number; payload?: unknown };
+      const error = new Error(errorMessage(payload) || text || `HTTP ${response.status}`) as Error & {
+        status?: number;
+        payload?: unknown;
+      };
       error.status = response.status;
       error.payload = payload;
       throw error;
@@ -1137,14 +1317,23 @@ export class ServstationAgentClient {
     return payload as T;
   }
 
-  private async requestOnce(url: string, init: RequestInit, signal: AbortSignal | undefined, retries?: number): Promise<Response> {
-    return fetchWithRetry(url, {
-      ...init,
-      headers: {
-        ...await this.headers(signal),
-        ...(init.headers || {})
-      }
-    }, { signal, retries });
+  private async requestOnce(
+    url: string,
+    init: RequestInit,
+    signal: AbortSignal | undefined,
+    retries?: number,
+  ): Promise<Response> {
+    return fetchWithRetry(
+      url,
+      {
+        ...init,
+        headers: {
+          ...(await this.headers(signal)),
+          ...(init.headers || {}),
+        },
+      },
+      { signal, retries },
+    );
   }
 
   private async headers(signal?: AbortSignal): Promise<Record<string, string>> {
@@ -1159,7 +1348,7 @@ export class ServstationAgentClient {
       "x-organization-id": identity.organizationId,
       "x-department-id": identity.departmentId,
       "x-user-id": identity.userId,
-      "x-role-ids": identity.roleIds.join(",")
+      "x-role-ids": identity.roleIds.join(","),
     };
     if (token) {
       headers.Authorization = `Bearer ${token}`;
@@ -1183,13 +1372,17 @@ async function toPromptAttachments(attachments: Attachment[]): Promise<PromptAtt
       name: attachment.name,
       mimeType: attachment.mimeType || "application/octet-stream",
       size: attachment.size,
-      contentBase64: content.toString("base64")
+      contentBase64: content.toString("base64"),
     });
   }
   return result;
 }
 
-function fallbackConversation(agentInstanceId: string, conversationId: string, job: ServstationSessionJob): ServstationConversation {
+function fallbackConversation(
+  agentInstanceId: string,
+  conversationId: string,
+  job: ServstationSessionJob,
+): ServstationConversation {
   const now = new Date().toISOString();
   return {
     id: conversationId,
@@ -1200,7 +1393,7 @@ function fallbackConversation(agentInstanceId: string, conversationId: string, j
     jobCount: 1,
     lastMessageAt: job.createdAt || now,
     createdAt: job.createdAt || now,
-    updatedAt: job.createdAt || now
+    updatedAt: job.createdAt || now,
   };
 }
 
@@ -1225,22 +1418,22 @@ function normalizeConversationMessages(response: unknown, conversationId: string
     if (!message || !text || !role) {
       return [];
     }
-    return [{
-      id: stringValue(message.id) || `${conversationId}-message-${index + 1}`,
-      role,
-      text,
-      ...(message.payload !== undefined ? { payload: message.payload } : {}),
-      ...(stringValue(message.status) ? { status: stringValue(message.status) } : {}),
-      ...(stringValue(message.jobId) ? { jobId: stringValue(message.jobId) } : {}),
-      createdAt: normalizeMessageTimestamp(message.createdAt ?? message.timestamp)
-    } satisfies ServstationConversationMessage];
+    return [
+      {
+        id: stringValue(message.id) || `${conversationId}-message-${index + 1}`,
+        role,
+        text,
+        ...(message.payload !== undefined ? { payload: message.payload } : {}),
+        ...(stringValue(message.status) ? { status: stringValue(message.status) } : {}),
+        ...(stringValue(message.jobId) ? { jobId: stringValue(message.jobId) } : {}),
+        createdAt: normalizeMessageTimestamp(message.createdAt ?? message.timestamp),
+      } satisfies ServstationConversationMessage,
+    ];
   });
 }
 
 function objectRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
 function stringValue(value: unknown): string {
@@ -1273,7 +1466,7 @@ function toScheduledTaskInput(input: Partial<ServstationScheduledJobInput>): Rec
     cronExpression: input.cronExpr,
     runAt: input.runAt,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-    clientId: CLIENT_ID
+    clientId: CLIENT_ID,
   });
 }
 
@@ -1291,12 +1484,15 @@ function normalizeScheduledJob(input: ServstationScheduledJob | ServstationSched
     scheduleKind: scheduleKindFromType(scheduleType, cronExpr),
     runAt: task.runAt ?? null,
     cronExpr,
-    enabled: typeof task.enabled === "boolean" ? task.enabled : task.status !== "paused" && task.status !== "deleted" && task.status !== "completed",
+    enabled:
+      typeof task.enabled === "boolean"
+        ? task.enabled
+        : task.status !== "paused" && task.status !== "deleted" && task.status !== "completed",
     lastRunAt: task.lastRunAt ?? null,
     nextRunAt: task.nextRunAt ?? null,
     lastError: task.lastError,
     createdAt: task.createdAt || now,
-    updatedAt: task.updatedAt || now
+    updatedAt: task.updatedAt || now,
   };
 }
 
@@ -1349,7 +1545,11 @@ function errorMessage(value: unknown): string | undefined {
     return undefined;
   }
   const record = value as Record<string, unknown>;
-  return typeof record.error === "string" ? record.error : typeof record.message === "string" ? record.message : undefined;
+  return typeof record.error === "string"
+    ? record.error
+    : typeof record.message === "string"
+      ? record.message
+      : undefined;
 }
 
 function capabilityRequestError(path: string, error: unknown): string {
@@ -1372,15 +1572,12 @@ async function waitForAutopilotReconnect(signal?: AbortSignal): Promise<void> {
     return;
   }
   await new Promise<void>((resolve) => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
     const finish = () => {
-      if (timer) {
-        clearTimeout(timer);
-      }
+      clearTimeout(timer);
       signal?.removeEventListener("abort", finish);
       resolve();
     };
-    timer = setTimeout(finish, AUTOPILOT_STREAM_RETRY_MS);
+    const timer = setTimeout(finish, AUTOPILOT_STREAM_RETRY_MS);
     signal?.addEventListener("abort", finish, { once: true });
     if (signal?.aborted) {
       finish();

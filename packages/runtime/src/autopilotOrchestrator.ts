@@ -17,44 +17,51 @@ const dataRunStages: StageDefinition[] = [
     stage: "clarify",
     staffAgent: "collector",
     title: "Clarify data objective",
-    instruction: "Restate the data objective, expected deliverables, and acceptance checks. If the goal is ambiguous, make the safest useful assumption and continue."
+    instruction:
+      "Restate the data objective, expected deliverables, and acceptance checks. If the goal is ambiguous, make the safest useful assumption and continue.",
   },
   {
     stage: "inventory",
     staffAgent: "collector",
     title: "Inventory data sources",
-    instruction: "Inspect the configured data sources and project folder. Create a concise source inventory with paths, URLs, commands, or MCP tools that will be used."
+    instruction:
+      "Inspect the configured data sources and project folder. Create a concise source inventory with paths, URLs, commands, or MCP tools that will be used.",
   },
   {
     stage: "collect",
     staffAgent: "collector",
     title: "Collect raw data",
-    instruction: "Collect raw source data into datasets/raw. Preserve source names and write a short collection note that links every raw artifact to its source."
+    instruction:
+      "Collect raw source data into datasets/raw. Preserve source names and write a short collection note that links every raw artifact to its source.",
   },
   {
     stage: "process",
     staffAgent: "processor",
     title: "Clean and process data",
-    instruction: "Clean, deduplicate, normalize, or transform raw data. Write processed data into datasets/processed and document every transformation."
+    instruction:
+      "Clean, deduplicate, normalize, or transform raw data. Write processed data into datasets/processed and document every transformation.",
   },
   {
     stage: "analyze",
     staffAgent: "analyst",
     title: "Analyze processed data",
-    instruction: "Analyze processed data and write evidence-backed findings into outputs. Every finding must cite the files or tool results used."
+    instruction:
+      "Analyze processed data and write evidence-backed findings into outputs. Every finding must cite the files or tool results used.",
   },
   {
     stage: "report",
     staffAgent: "analyst",
     title: "Write final report",
-    instruction: "Write a final report into reports. Include goal, data sources, methods, findings, limitations, and artifact paths."
+    instruction:
+      "Write a final report into reports. Include goal, data sources, methods, findings, limitations, and artifact paths.",
   },
   {
     stage: "review",
     staffAgent: "reviewer",
     title: "Review evidence ledger",
-    instruction: "Review the report against the objective and evidence. Flag unsupported claims, missing artifacts, or incomplete acceptance criteria."
-  }
+    instruction:
+      "Review the report against the objective and evidence. Flag unsupported claims, missing artifacts, or incomplete acceptance criteria.",
+  },
 ];
 
 export class AutopilotOrchestrator {
@@ -79,7 +86,7 @@ export class AutopilotOrchestrator {
         artifactIds: [],
         evidence: [],
         createdAt: now,
-        updatedAt: now
+        updatedAt: now,
       };
     });
   }
@@ -105,7 +112,7 @@ export class AutopilotOrchestrator {
       "Rules:",
       "- Write generated data or reports only inside approved project write folders.",
       "- Mention every file you read or write in your final answer.",
-      "- Keep the final answer concise and include evidence paths."
+      "- Keep the final answer concise and include evidence paths.",
     ].join("\n");
   }
 }
@@ -114,14 +121,12 @@ function renderDataSources(dataSources: DataSourceSpec[]): string {
   if (!dataSources.length) {
     return "- No explicit sources. Inspect the project folder and ask tools for relevant local context.";
   }
-  return dataSources.map((source) => {
-    const details = [
-      source.path,
-      source.paths?.join(", "),
-      source.url,
-      source.mcpToolName,
-      source.shellCommand
-    ].filter(Boolean).join(" | ");
-    return `- ${source.label || source.id} (${source.kind})${details ? `: ${details}` : ""}`;
-  }).join("\n");
+  return dataSources
+    .map((source) => {
+      const details = [source.path, source.paths?.join(", "), source.url, source.mcpToolName, source.shellCommand]
+        .filter(Boolean)
+        .join(" | ");
+      return `- ${source.label || source.id} (${source.kind})${details ? `: ${details}` : ""}`;
+    })
+    .join("\n");
 }

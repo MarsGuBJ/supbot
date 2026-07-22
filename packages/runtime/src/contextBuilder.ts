@@ -42,7 +42,7 @@ export function buildContext(input: ContextBuilderInput): BuiltContext {
 
   return {
     systemPrompt,
-    messages: [{ role: "system", content: systemPrompt }, ...conversationMessages]
+    messages: [{ role: "system", content: systemPrompt }, ...conversationMessages],
   };
 }
 
@@ -61,8 +61,10 @@ function buildSystemPrompt(input: ContextBuilderInput): string {
     input.personality.instructions,
     toolUseGuidance(),
     "You may call tools when they help. Explain tool outcomes concisely after they complete. If a tool is denied, adjust your answer without repeating the same request.",
-    systemContext ? `<system_context>\n${systemContext}\n</system_context>` : ""
-  ].filter(Boolean).join("\n");
+    systemContext ? `<system_context>\n${systemContext}\n</system_context>` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function toolUseGuidance(): string {
@@ -72,7 +74,7 @@ function toolUseGuidance(): string {
     "- WriteFile paths must be relative workspace paths unless the user explicitly provided an allowed project path. Never use placeholder paths such as /path/to/file.",
     "- WriteFile cannot save directly outside the workspace. To place a final artifact on the Desktop or another external location, create scripts/assets in the workspace, then use Shell to generate or copy the final file to the requested location.",
     "- For large artifacts, prefer a short script plus Shell execution over embedding a large generated file in WriteFile content.",
-    "- On Windows, Shell runs PowerShell."
+    "- On Windows, Shell runs PowerShell.",
   ].join("\n");
 }
 
@@ -84,12 +86,12 @@ function toOpenAiMessage(message: ChatMessage): OpenAiMessage {
     return {
       role: "tool",
       tool_call_id: message.toolCallId || message.id,
-      content: message.text
+      content: message.text,
     };
   }
   return {
     role: "user",
-    content: formatUserMessage(message)
+    content: formatUserMessage(message),
   };
 }
 

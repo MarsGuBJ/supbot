@@ -18,7 +18,7 @@ export function Topbar({
   setLeftCollapsed,
   setRightCollapsed,
   updateState,
-  startUpdate
+  startUpdate,
 }: {
   snapshot: RuntimeSnapshot;
   view: WorkspaceView;
@@ -36,11 +36,15 @@ export function Topbar({
   return (
     <header className="topbar">
       <div className="identity">
-        <div className="brand-mark small"><RobotOutlined /></div>
+        <div className="brand-mark small">
+          <RobotOutlined />
+        </div>
         <div>
           <div className="eyebrow">{translate(language, "LOCAL AGENT CONSOLE")}</div>
           <div className="agent-title">{snapshot.agentName}</div>
-          <div className="muted mono">{snapshot.modelConfig.providerName} / {snapshot.modelConfig.model}</div>
+          <div className="muted mono">
+            {snapshot.modelConfig.providerName} / {snapshot.modelConfig.model}
+          </div>
         </div>
       </div>
       <Segmented
@@ -49,23 +53,24 @@ export function Topbar({
         options={[
           { label: translate(language, "Chat"), value: "chat" },
           { label: translate(language, "Server Agent"), value: "server" },
-          { label: translate(language, "Config"), value: "config" }
+          { label: translate(language, "Config"), value: "config" },
         ]}
       />
       <div className="topbar-actions">
-        <HBClientUpdateButton
-          state={updateState}
-          language={language}
-          startUpdate={startUpdate}
+        <HBClientUpdateButton state={updateState} language={language} startUpdate={startUpdate} />
+        <ServerAgentConnectionButton
+          snapshot={snapshot}
+          refresh={refresh}
+          t={(key, vars) => translate(language, key, vars)}
+          compact
         />
-        <ServerAgentConnectionButton snapshot={snapshot} refresh={refresh} t={(key, vars) => translate(language, key, vars)} compact />
         <Segmented
           size="small"
           value={language}
           onChange={(value) => setLanguage(value as Language)}
           options={[
             { label: "中文", value: "zh" },
-            { label: "EN", value: "en" }
+            { label: "EN", value: "en" },
           ]}
         />
         <div className={`runtime-pill is-${snapshot.status}`}>
@@ -75,10 +80,16 @@ export function Topbar({
         {view === "chat" ? (
           <>
             <Tooltip title={translate(language, "Toggle left panel")}>
-              <Button icon={leftCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />} onClick={() => setLeftCollapsed((value) => !value)} />
+              <Button
+                icon={leftCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+                onClick={() => setLeftCollapsed((value) => !value)}
+              />
             </Tooltip>
             <Tooltip title={translate(language, "Toggle right panel")}>
-              <Button icon={rightCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />} onClick={() => setRightCollapsed((value) => !value)} />
+              <Button
+                icon={rightCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+                onClick={() => setRightCollapsed((value) => !value)}
+              />
             </Tooltip>
           </>
         ) : null}
@@ -90,7 +101,7 @@ export function Topbar({
 export function HBClientUpdateButton({
   state,
   language,
-  startUpdate
+  startUpdate,
 }: {
   state: HBClientUpdateState;
   language: Language;
@@ -111,21 +122,39 @@ export function HBClientUpdateButton({
 
   if (state.status === "available" || state.status === "downloaded") {
     const version = state.availableVersion ? " v" + state.availableVersion : "";
-    const label = state.status === "downloaded"
-      ? (chinese ? "安装更新" + version : "Install update" + version)
-      : (chinese ? "升级" + version : "Upgrade" + version);
+    const label =
+      state.status === "downloaded"
+        ? chinese
+          ? "安装更新" + version
+          : "Install update" + version
+        : chinese
+          ? "升级" + version
+          : "Upgrade" + version;
     return withUpdateBadge(
-      <Button className="hbclient-update-button" type="primary" size="small" icon={<DownloadOutlined />} onClick={() => void startUpdate()}>
+      <Button
+        className="hbclient-update-button"
+        type="primary"
+        size="small"
+        icon={<DownloadOutlined />}
+        onClick={() => void startUpdate()}
+      >
         {label}
-      </Button>
+      </Button>,
     );
   }
 
   if (state.status === "downloading") {
     const percent = Math.round(state.progress?.percent || 0);
     const progressTitle = state.progress
-      ? formatUpdateBytes(state.progress.transferred) + " / " + formatUpdateBytes(state.progress.total) + " · " + formatUpdateBytes(state.progress.bytesPerSecond) + "/s"
-      : (chinese ? "正在下载更新" : "Downloading update");
+      ? formatUpdateBytes(state.progress.transferred) +
+        " / " +
+        formatUpdateBytes(state.progress.total) +
+        " · " +
+        formatUpdateBytes(state.progress.bytesPerSecond) +
+        "/s"
+      : chinese
+        ? "正在下载更新"
+        : "Downloading update";
     return (
       <Tooltip title={progressTitle}>
         <Badge className="hbclient-update-badge" dot color="#ef4444" offset={[-2, 2]}>
@@ -140,7 +169,7 @@ export function HBClientUpdateButton({
   return withUpdateBadge(
     <Button className="hbclient-update-button" size="small" icon={<SyncOutlined spin />} disabled>
       {chinese ? "安装中" : "Installing"}
-    </Button>
+    </Button>,
   );
 }
 export function formatUpdateBytes(value: number): string {

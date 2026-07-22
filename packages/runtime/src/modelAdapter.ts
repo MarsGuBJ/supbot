@@ -61,17 +61,23 @@ export class OpenAIChatCompletionsAdapter implements ModelAdapter {
     const url = normalizeChatCompletionsUrl(input.modelConfig.baseUrl);
     const body = chatCompletionsBody(input);
 
-    const response = await fetchWithRetry(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${apiKey}`
+    const response = await fetchWithRetry(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
       },
-      body: JSON.stringify(body)
-    }, { signal: input.signal });
+      { signal: input.signal },
+    );
     if (!response.ok) {
       const responseBody = await response.text().catch(() => "");
-      throw new Error(`Model request failed (${response.status}): ${responseBody.slice(0, 500) || response.statusText}`);
+      throw new Error(
+        `Model request failed (${response.status}): ${responseBody.slice(0, 500) || response.statusText}`,
+      );
     }
 
     return parseChatCompletionJson(await response.json());
@@ -84,14 +90,18 @@ export class OpenAIChatCompletionsAdapter implements ModelAdapter {
     }
 
     const url = normalizeChatCompletionsUrl(input.modelConfig.baseUrl);
-    const response = await fetchWithRetry(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${apiKey}`
+    const response = await fetchWithRetry(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({ ...chatCompletionsBody(input), stream: true }),
       },
-      body: JSON.stringify({ ...chatCompletionsBody(input), stream: true })
-    }, { signal: input.signal });
+      { signal: input.signal },
+    );
     if (!response.ok) {
       const responseBody = await response.text().catch(() => "");
       throw new Error(`Model stream failed (${response.status}): ${responseBody.slice(0, 500) || response.statusText}`);
@@ -182,7 +192,7 @@ function chatCompletionsBody(input: ModelTurnRequest): Record<string, unknown> {
     model: input.modelConfig.model,
     temperature: input.modelConfig.temperature,
     max_tokens: effectiveMaxTokens(input),
-    messages: input.messages
+    messages: input.messages,
   };
   if (input.tools?.length) {
     body.tools = input.tools;
@@ -198,7 +208,10 @@ function effectiveMaxTokens(input: ModelTurnRequest): number {
   return Math.max(input.modelConfig.maxTokens, TOOL_REQUEST_MIN_MAX_TOKENS);
 }
 
-async function* completeAsStream(adapter: OpenAIChatCompletionsAdapter, input: ModelTurnRequest): AsyncGenerator<ModelStreamEvent, ModelTurnResult, unknown> {
+async function* completeAsStream(
+  adapter: OpenAIChatCompletionsAdapter,
+  input: ModelTurnRequest,
+): AsyncGenerator<ModelStreamEvent, ModelTurnResult, unknown> {
   const result = await adapter.complete(input);
   if (result.text) {
     yield { type: "message_delta", delta: result.text };
@@ -210,9 +223,13 @@ async function* completeAsStream(adapter: OpenAIChatCompletionsAdapter, input: M
   return result;
 }
 
-function parseStreamPayload(payload: string): { choices?: Array<{ delta?: { content?: string; tool_calls?: StreamToolCallDelta[] } }> } | undefined {
+function parseStreamPayload(
+  payload: string,
+): { choices?: Array<{ delta?: { content?: string; tool_calls?: StreamToolCallDelta[] } }> } | undefined {
   try {
-    return JSON.parse(payload) as { choices?: Array<{ delta?: { content?: string; tool_calls?: StreamToolCallDelta[] } }> };
+    return JSON.parse(payload) as {
+      choices?: Array<{ delta?: { content?: string; tool_calls?: StreamToolCallDelta[] } }>;
+    };
   } catch {
     return undefined;
   }
@@ -228,10 +245,7 @@ interface StreamToolCallDelta {
   };
 }
 
-function mergeToolCallDeltas(
-  parts: Map<number, ToolCallAccumulator>,
-  deltas: StreamToolCallDelta[]
-): void {
+function mergeToolCallDeltas(parts: Map<number, ToolCallAccumulator>, deltas: StreamToolCallDelta[]): void {
   for (const delta of deltas) {
     const index = delta.index ?? parts.size;
     const current = parts.get(index) || { type: "function" as const, function: { arguments: "" } };
@@ -259,21 +273,23 @@ function materializeToolCalls(parts: Map<number, ToolCallAccumulator>): AdapterT
       type: "function" as const,
       function: {
         name: part.function.name || "",
-        arguments: part.function.arguments
-      }
+        arguments: part.function.arguments,
+      },
     }))
     .filter((toolCall) => toolCall.function.name);
 }
 
 function localFallbackFromMessages(messages: AdapterMessage[]): string {
-  const last = messages.filter((message): message is { role: "user"; content: string } => message.role === "user").at(-1)?.content || "";
+  const last =
+    messages.filter((message): message is { role: "user"; content: string } => message.role === "user").at(-1)
+      ?.content || "";
   return [
     "本地回退模式：尚未配置 API 密钥。",
     "",
     "你的消息已经保存，本地运行时工作正常。请在“配置 > 模型”中添加 OpenAI-compatible Base URL、API 密钥和模型名，以启用真实模型调用。",
     "",
     "Local fallback: no API key is configured yet. Add an OpenAI-compatible base URL, API key, and model in Config > Model to enable real model calls.",
-    last ? `\n最近提示词 / Last prompt: ${last}` : ""
+    last ? `\n最近提示词 / Last prompt: ${last}` : "",
   ].join("\n");
 }
 
@@ -315,7 +331,7 @@ export async function generateReply(input: GenerateReplyInput): Promise<Generate
       apiKey: input.apiKey,
       messages: context.messages,
       tools: input.tools,
-      signal: input.signal
+      signal: input.signal,
     });
     return { text: result.text, toolCalls: result.toolCalls };
   } catch (error) {
@@ -345,7 +361,9 @@ export function normalizeModelApiKey(value?: string): string {
   const embeddedKey = trimmed.match(/sk-[A-Za-z0-9._-]+/)?.[0];
   const apiKey = embeddedKey || trimmed;
   if (!/^[\x21-\x7e]+$/.test(apiKey)) {
-    throw new Error("Model API key contains invalid characters. Paste only the provider API key, such as sk-..., without labels or Chinese text.");
+    throw new Error(
+      "Model API key contains invalid characters. Paste only the provider API key, such as sk-..., without labels or Chinese text.",
+    );
   }
   return apiKey;
 }
@@ -360,6 +378,6 @@ function localFallbackReply(input: GenerateReplyInput): string {
     "你的消息已经保存，本地运行时工作正常。请在“配置 > 模型”中添加 OpenAI-compatible Base URL、API 密钥和模型名，以启用真实模型调用。",
     "",
     `Local fallback${enSubagent}: no API key is configured yet. Add an OpenAI-compatible base URL, API key, and model in Config > Model to enable real model calls.`,
-    last ? `\n最近提示词 / Last prompt: ${last}` : ""
+    last ? `\n最近提示词 / Last prompt: ${last}` : "",
   ].join("\n");
 }

@@ -7,7 +7,7 @@ export function ComposerPermissionPrompt({
   permissions,
   approveToolPermission,
   denyToolPermission,
-  t
+  t,
 }: {
   permissions: PendingToolPermission[];
   approveToolPermission: (id: string) => Promise<void>;

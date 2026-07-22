@@ -25,15 +25,16 @@ export interface LocalToolHost {
 export async function readLocalFile(filePath: string): Promise<LocalToolResult> {
   const content = await readFile(filePath, "utf8");
   return {
-    text: `Read ${filePath}\n\n${truncate(content, 24_000)}`
+    text: `Read ${filePath}\n\n${truncate(content, 24_000)}`,
   };
 }
 
 export async function writeLocalFile(target: string, content: string, host: LocalToolHost): Promise<LocalToolResult> {
   const outputRoot = host.projectRoot || host.workspacePath || join(host.dataDir, "generated-files");
-  const outputPath = host.projectRoot && host.allowedWriteRoots?.length
-    ? resolveProjectWriteTarget(host.projectRoot, target, host.allowedWriteRoots)
-    : resolveLocalWritePath(outputRoot, target);
+  const outputPath =
+    host.projectRoot && host.allowedWriteRoots?.length
+      ? resolveProjectWriteTarget(host.projectRoot, target, host.allowedWriteRoots)
+      : resolveLocalWritePath(outputRoot, target);
   await mkdir(dirname(outputPath), { recursive: true });
   await writeFile(outputPath, content, "utf8");
   const info = await stat(outputPath);
@@ -42,11 +43,11 @@ export async function writeLocalFile(target: string, content: string, host: Loca
     name: basename(outputPath),
     path: outputPath,
     size: info.size,
-    createdAt: host.nowIso()
+    createdAt: host.nowIso(),
   };
   return {
     text: `Wrote ${generatedFile.name} (${generatedFile.size} bytes)\n${outputPath}`,
-    generatedFiles: [generatedFile]
+    generatedFiles: [generatedFile],
   };
 }
 
@@ -60,13 +61,18 @@ function resolveLocalWritePath(outputRoot: string, target: string): string {
   return outputPath;
 }
 
-export async function runShellCommand(command: string, signal: AbortSignal, timeoutMs = 60_000, cwd?: string): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+export async function runShellCommand(
+  command: string,
+  signal: AbortSignal,
+  timeoutMs = 60_000,
+  cwd?: string,
+): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const isWindows = process.platform === "win32";
     const child = spawn(
       isWindows ? "powershell.exe" : "/bin/sh",
       isWindows ? ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command] : ["-lc", command],
-      { windowsHide: true, cwd }
+      { windowsHide: true, cwd },
     );
     let stdout = "";
     let stderr = "";
@@ -98,7 +104,12 @@ export async function runShellCommand(command: string, signal: AbortSignal, time
   });
 }
 
-export async function shellLocalCommand(command: string, signal: AbortSignal, timeoutMs = 60_000, cwd?: string): Promise<LocalToolResult> {
+export async function shellLocalCommand(
+  command: string,
+  signal: AbortSignal,
+  timeoutMs = 60_000,
+  cwd?: string,
+): Promise<LocalToolResult> {
   const result = await runShellCommand(command, signal, timeoutMs, cwd);
   const stdout = truncateWithMarker(result.stdout, 16_000);
   const stderr = truncateWithMarker(result.stderr, 8_000);
@@ -109,8 +120,10 @@ export async function shellLocalCommand(command: string, signal: AbortSignal, ti
       `Timeout: ${Math.round(timeoutMs / 1000)}s`,
       `Exit code: ${result.exitCode}`,
       stdout ? `\nstdout:\n${stdout}` : "",
-      stderr ? `\nstderr:\n${stderr}` : ""
-    ].filter(Boolean).join("\n")
+      stderr ? `\nstderr:\n${stderr}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
   };
 }
 

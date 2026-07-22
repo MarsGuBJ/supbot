@@ -1,4 +1,3 @@
-import { message } from "antd";
 import type { AgentJob, RuntimeEventRecord, RuntimeSnapshot, ToolCallRecord } from "@supbot/shared";
 
 export const hiddenChatGeneratedFileExtensions = new Set([
@@ -20,7 +19,7 @@ export const hiddenChatGeneratedFileExtensions = new Set([
   ".tsx",
   ".vbs",
   ".wsf",
-  ".zsh"
+  ".zsh",
 ]);
 
 export function generatedFileExtension(file: { name: string; path: string }): string {
@@ -43,14 +42,16 @@ export function formatToolPayload(value: unknown): string {
 }
 
 export function formatToolOutput(toolCall: ToolCallRecord): string {
-  const parts = toolCall.outputParts?.map((part) => [
-    `${part.type}${part.mimeType ? ` (${part.mimeType})` : ""}`,
-    part.text
-  ].join("\n")).join("\n\n");
+  const parts = toolCall.outputParts
+    ?.map((part) => [`${part.type}${part.mimeType ? ` (${part.mimeType})` : ""}`, part.text].join("\n"))
+    .join("\n\n");
   return truncateText(parts || toolCall.output || "", 1200);
 }
 
-export function jobRuntimeEventLabel(event: RuntimeEventRecord, t: (key: string, vars?: Record<string, string | number>) => string): string {
+export function jobRuntimeEventLabel(
+  event: RuntimeEventRecord,
+  t: (key: string, vars?: Record<string, string | number>) => string,
+): string {
   if (event.kind === "tool_use_start") {
     return t("Tool call started");
   }
@@ -91,7 +92,9 @@ export function toolStatusColor(status: ToolCallRecord["status"]): string {
 
 export function assistantPreviewForJob(snapshot: RuntimeSnapshot, job: AgentJob): string {
   const conversation = snapshot.conversations.find((item) => item.id === job.conversationId);
-  const messages = (conversation?.messages || []).filter((message) => message.jobId === job.id && message.role === "assistant");
+  const messages = (conversation?.messages || []).filter(
+    (message) => message.jobId === job.id && message.role === "assistant",
+  );
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const text = messages[index]?.text.trim() || "";
     if (text && !isAssistantWaitingText(text)) {

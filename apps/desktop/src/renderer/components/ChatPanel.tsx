@@ -1,13 +1,32 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircleOutlined, ClockCircleOutlined, CompressOutlined, CopyOutlined, FileTextOutlined, PaperClipOutlined, RobotOutlined, SendOutlined, StarOutlined, StopOutlined } from "@ant-design/icons";
+import {
+  CheckCircleOutlined,
+  ClockCircleOutlined,
+  CompressOutlined,
+  CopyOutlined,
+  FileTextOutlined,
+  PaperClipOutlined,
+  RobotOutlined,
+  SendOutlined,
+  StarOutlined,
+  StopOutlined,
+} from "@ant-design/icons";
 import { Button, Input, Space, Tag, Tooltip, Typography, message } from "antd";
 import type { TextAreaRef } from "antd/es/input/TextArea";
 import type { AgentJob, Attachment, Conversation, PendingToolPermission } from "@supbot/shared";
 import { buildSlashCommands, conversationTitle, statusLabel } from "@supbot/shared";
+import { Virtuoso } from "react-virtuoso";
 import { ComposerPermissionPrompt } from "./ComposerPermissionPrompt";
 import { MessageBubble } from "./MessageBubble";
 import { readClipboardText, selectedTextWithin } from "../lib/clipboard";
 import type { PromptContextMenu, SelectionContextMenu } from "../lib/types";
+
+const VirtualMessageList = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
+  ({ className, ...props }, ref) => (
+    <div {...props} ref={ref} className={["message-stack", className].filter(Boolean).join(" ")} />
+  ),
+);
+VirtualMessageList.displayName = "VirtualMessageList";
 
 export function ChatPanel({
   conversation,
@@ -26,11 +45,13 @@ export function ChatPanel({
   addSelectedTextToMemory,
   compactConversation,
   loadTranscript,
+  loadOlderMessages,
+  hasOlderMessages,
+  historyLoading,
   scrollRef,
-  messageStackRef,
   onMessageScroll,
   t,
-  slashCommands
+  slashCommands,
 }: {
   conversation?: Conversation;
   attachments: Attachment[];
@@ -48,8 +69,10 @@ export function ChatPanel({
   addSelectedTextToMemory: (text: string) => Promise<void>;
   compactConversation: () => void;
   loadTranscript: () => void;
+  loadOlderMessages: () => Promise<void>;
+  hasOlderMessages: boolean;
+  historyLoading: boolean;
   scrollRef: React.RefObject<HTMLDivElement | null>;
-  messageStackRef: React.RefObject<HTMLDivElement | null>;
   onMessageScroll: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
   slashCommands: ReturnType<typeof buildSlashCommands>;
@@ -124,81 +147,90 @@ export function ChatPanel({
     setSelectionMenu({
       x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
       y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
-      text
+      text,
     });
   }, []);
 
-  const openPromptMenu = useCallback((event: React.MouseEvent<HTMLTextAreaElement>) => {
-    event.preventDefault();
-    closeSelectionMenu();
-    const target = event.currentTarget;
-    const selectionStart = target.selectionStart ?? prompt.length;
-    const selectionEnd = target.selectionEnd ?? selectionStart;
-    const start = Math.min(selectionStart, selectionEnd);
-    const end = Math.max(selectionStart, selectionEnd);
-    const menuWidth = 176;
-    const menuHeight = 92;
-    setPromptMenu({
-      x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
-      y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
-      selectionStart: start,
-      selectionEnd: end,
-      selectedText: prompt.slice(start, end)
-    });
-  }, [closeSelectionMenu, prompt]);
+  const openPromptMenu = useCallback(
+    (event: React.MouseEvent<HTMLTextAreaElement>) => {
+      event.preventDefault();
+      closeSelectionMenu();
+      const target = event.currentTarget;
+      const selectionStart = target.selectionStart ?? prompt.length;
+      const selectionEnd = target.selectionEnd ?? selectionStart;
+      const start = Math.min(selectionStart, selectionEnd);
+      const end = Math.max(selectionStart, selectionEnd);
+      const menuWidth = 176;
+      const menuHeight = 92;
+      setPromptMenu({
+        x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+        y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
+        selectionStart: start,
+        selectionEnd: end,
+        selectedText: prompt.slice(start, end),
+      });
+    },
+    [closeSelectionMenu, prompt],
+  );
 
   const handleMessageScroll = useCallback(() => {
     closeSelectionMenu();
     onMessageScroll();
   }, [closeSelectionMenu, onMessageScroll]);
 
-  const runSelectionAction = useCallback(async (action: "copy" | "memory") => {
-    if (!selectionMenu) {
-      return;
-    }
-    setSelectionAction(action);
-    try {
-      if (action === "copy") {
-        await copySelectedText(selectionMenu.text);
-      } else {
-        await addSelectedTextToMemory(selectionMenu.text);
-      }
-      closeSelectionMenu();
-    } finally {
-      setSelectionAction(null);
-    }
-  }, [addSelectedTextToMemory, closeSelectionMenu, copySelectedText, selectionMenu]);
-
-  const runPromptAction = useCallback(async (action: "copy" | "paste") => {
-    if (!promptMenu) {
-      return;
-    }
-    setPromptAction(action);
-    try {
-      if (action === "copy") {
-        if (promptMenu.selectedText) {
-          await copySelectedText(promptMenu.selectedText);
-        }
-        closePromptMenu();
+  const runSelectionAction = useCallback(
+    async (action: "copy" | "memory") => {
+      if (!selectionMenu) {
         return;
       }
-      const clipboardText = await readClipboardText();
-      const nextPrompt = `${prompt.slice(0, promptMenu.selectionStart)}${clipboardText}${prompt.slice(promptMenu.selectionEnd)}`;
-      const caret = promptMenu.selectionStart + clipboardText.length;
-      setPrompt(nextPrompt);
-      closePromptMenu();
-      window.requestAnimationFrame(() => {
-        const textarea = promptInputRef.current?.resizableTextArea?.textArea;
-        textarea?.focus();
-        textarea?.setSelectionRange(caret, caret);
-      });
-      message.success(t("已粘贴剪贴板内容。"));
-    } catch (error) {
-      message.error((error as Error).message);
-    } finally {
-      setPromptAction(null);
-    }
-  }, [closePromptMenu, copySelectedText, prompt, promptMenu, setPrompt, t]);
+      setSelectionAction(action);
+      try {
+        if (action === "copy") {
+          await copySelectedText(selectionMenu.text);
+        } else {
+          await addSelectedTextToMemory(selectionMenu.text);
+        }
+        closeSelectionMenu();
+      } finally {
+        setSelectionAction(null);
+      }
+    },
+    [addSelectedTextToMemory, closeSelectionMenu, copySelectedText, selectionMenu],
+  );
+
+  const runPromptAction = useCallback(
+    async (action: "copy" | "paste") => {
+      if (!promptMenu) {
+        return;
+      }
+      setPromptAction(action);
+      try {
+        if (action === "copy") {
+          if (promptMenu.selectedText) {
+            await copySelectedText(promptMenu.selectedText);
+          }
+          closePromptMenu();
+          return;
+        }
+        const clipboardText = await readClipboardText();
+        const nextPrompt = `${prompt.slice(0, promptMenu.selectionStart)}${clipboardText}${prompt.slice(promptMenu.selectionEnd)}`;
+        const caret = promptMenu.selectionStart + clipboardText.length;
+        setPrompt(nextPrompt);
+        closePromptMenu();
+        window.requestAnimationFrame(() => {
+          const textarea = promptInputRef.current?.resizableTextArea?.textArea;
+          textarea?.focus();
+          textarea?.setSelectionRange(caret, caret);
+        });
+        message.success(t("已粘贴剪贴板内容。"));
+      } catch (error) {
+        message.error((error as Error).message);
+      } finally {
+        setPromptAction(null);
+      }
+    },
+    [closePromptMenu, copySelectedText, prompt, promptMenu, setPrompt, t],
+  );
 
   useEffect(() => {
     if (!selectionMenu) {
@@ -270,16 +302,36 @@ export function ChatPanel({
     };
   }, [conversation?.id, scrollRef]);
 
+  const messages = conversation?.messages || [];
+  const firstItemIndex = Math.max(0, (conversation?.messageCount || messages.length) - messages.length);
+  const virtuosoComponents = useMemo(
+    () => ({
+      List: VirtualMessageList,
+      Header: () => (
+        <div className="history-page-status" aria-live="polite">
+          {historyLoading ? <span className="history-page-spinner" /> : null}
+        </div>
+      ),
+    }),
+    [historyLoading],
+  );
+
   return (
     <section className="chat-panel">
       <div className="chat-banner">
         <div>
           <div className="chat-banner-label">{t("Conversation")}</div>
-          <div className="chat-banner-text">{conversation ? conversationTitle(conversation, t("New conversation")) : t("No conversation yet")}</div>
+          <div className="chat-banner-text">
+            {conversation ? conversationTitle(conversation, t("New conversation")) : t("No conversation yet")}
+          </div>
         </div>
         <Space>
           <Tooltip title={t("Compact conversation")}>
-            <Button icon={<CompressOutlined />} onClick={compactConversation} disabled={!conversation?.messages.length} />
+            <Button
+              icon={<CompressOutlined />}
+              onClick={compactConversation}
+              disabled={!conversation?.messages.length}
+            />
           </Tooltip>
           <Tooltip title={t("Load transcript")}>
             <Button icon={<FileTextOutlined />} onClick={loadTranscript} disabled={!conversation} />
@@ -287,20 +339,52 @@ export function ChatPanel({
           <Tooltip title={t("Copy latest response")}>
             <Button icon={<CopyOutlined />} onClick={copyLatest} />
           </Tooltip>
-          {runningJob ? <Tag color="cyan"><ClockCircleOutlined /> {statusLabel(runningJob.status, t)}</Tag> : <Tag color="green"><CheckCircleOutlined /> {t("Ready")}</Tag>}
+          {runningJob ? (
+            <Tag color="cyan">
+              <ClockCircleOutlined /> {statusLabel(runningJob.status, t)}
+            </Tag>
+          ) : (
+            <Tag color="green">
+              <CheckCircleOutlined /> {t("Ready")}
+            </Tag>
+          )}
         </Space>
       </div>
-      <div className="message-stream" ref={scrollRef} onScroll={handleMessageScroll} onContextMenu={openSelectionMenu}>
-        <div className="message-stack" ref={messageStackRef}>
-          {!conversation || conversation.messages.length === 0 ? (
+      {!conversation || messages.length === 0 ? (
+        <div className="message-stream" ref={scrollRef} onContextMenu={openSelectionMenu}>
+          <div className="message-stack">
             <div className="chat-empty">
-              <div className="brand-mark"><RobotOutlined /></div>
+              <div className="brand-mark">
+                <RobotOutlined />
+              </div>
               <Typography.Title level={3}>{t("HBClient is ready")}</Typography.Title>
-              <p className="muted">{t("Ask a question, attach local files, use /commands, or mention @research and @builder.")}</p>
+              <p className="muted">
+                {t("Ask a question, attach local files, use /commands, or mention @research and @builder.")}
+              </p>
             </div>
-          ) : conversation.messages.map((item) => <MessageBubble key={item.id} message={item} t={t} />)}
+          </div>
         </div>
-      </div>
+      ) : (
+        <Virtuoso
+          className="message-stream"
+          data={messages}
+          firstItemIndex={firstItemIndex}
+          followOutput={(atBottom) => (atBottom ? "smooth" : false)}
+          components={virtuosoComponents}
+          computeItemKey={(_index, item) => item.id}
+          itemContent={(_index, item) => <MessageBubble message={item} t={t} />}
+          startReached={() => {
+            if (hasOlderMessages && !historyLoading) {
+              void loadOlderMessages();
+            }
+          }}
+          scrollerRef={(element) => {
+            scrollRef.current = element instanceof HTMLDivElement ? element : null;
+          }}
+          onScroll={handleMessageScroll}
+          onContextMenu={openSelectionMenu}
+        />
+      )}
       {selectionMenu ? (
         <div
           ref={selectionMenuRef}
@@ -407,9 +491,17 @@ export function ChatPanel({
             {filteredCommands.length ? (
               <div className="slash-menu">
                 {filteredCommands.map((command) => (
-                  <button key={command.command} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => setPrompt(command.command)}>
+                  <button
+                    key={command.command}
+                    type="button"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => setPrompt(command.command)}
+                  >
                     <span className="mono">{command.command}</span>
-                    <span><strong>{command.title}</strong><small>{command.description}</small></span>
+                    <span>
+                      <strong>{command.title}</strong>
+                      <small>{command.description}</small>
+                    </span>
                   </button>
                 ))}
               </div>

@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { AppstoreAddOutlined, CheckCircleOutlined, ReloadOutlined, SettingOutlined, ToolOutlined } from "@ant-design/icons";
+import {
+  AppstoreAddOutlined,
+  CheckCircleOutlined,
+  ReloadOutlined,
+  SettingOutlined,
+  ToolOutlined,
+} from "@ant-design/icons";
 import { Alert, Button, Empty, Input, Select, Space, Tag, Typography, message } from "antd";
 import type { RuntimeSnapshot, ToolMarketCatalogItem, ToolMarketProductType } from "@supbot/shared";
 import { formatDateTime } from "@supbot/shared";
@@ -9,7 +15,7 @@ export function MarketWorkspace({
   snapshot,
   openMarketConfig,
   openMcpConfig,
-  t
+  t,
 }: {
   refresh: () => Promise<void>;
   snapshot: RuntimeSnapshot;
@@ -75,8 +81,14 @@ export function MarketWorkspace({
           <div className="muted">{t("Install local and remote capabilities into this single-user agent.")}</div>
           <div className="market-source-row">
             <Tag color="cyan">{t(`market.source.${snapshot.toolMarketConfig.source}`)}</Tag>
-            {snapshot.toolMarketConfig.apiUrl ? <Tag>{snapshot.toolMarketConfig.apiUrl}</Tag> : <Tag>{t("Built-in catalog")}</Tag>}
-            {snapshot.toolMarketConfig.lastSyncedAt ? <Tag>{t("Last sync: {time}", { time: formatDateTime(snapshot.toolMarketConfig.lastSyncedAt) })}</Tag> : null}
+            {snapshot.toolMarketConfig.apiUrl ? (
+              <Tag>{snapshot.toolMarketConfig.apiUrl}</Tag>
+            ) : (
+              <Tag>{t("Built-in catalog")}</Tag>
+            )}
+            {snapshot.toolMarketConfig.lastSyncedAt ? (
+              <Tag>{t("Last sync: {time}", { time: formatDateTime(snapshot.toolMarketConfig.lastSyncedAt) })}</Tag>
+            ) : null}
           </div>
         </div>
         <Space wrap>
@@ -96,13 +108,15 @@ export function MarketWorkspace({
               { label: t("tool"), value: "tool" },
               { label: t("skill"), value: "skill" },
               { label: t("Plugin"), value: "plugin" },
-              { label: "MCP", value: "mcp" }
+              { label: "MCP", value: "mcp" },
             ]}
           />
           <Button icon={<ReloadOutlined />} onClick={() => void load()} loading={loading}>
             {t("Refresh")}
           </Button>
-          <Button icon={<SettingOutlined />} onClick={openMarketConfig}>{t("Market settings")}</Button>
+          <Button icon={<SettingOutlined />} onClick={openMarketConfig}>
+            {t("Market settings")}
+          </Button>
         </Space>
       </div>
       {error ? <Alert type="error" showIcon message={error} /> : null}
@@ -121,9 +135,15 @@ export function MarketWorkspace({
             </div>
             <div className="market-product-description">{t(product.description)}</div>
             <div className="market-product-meta">
-              <Tag color={product.origin === "remote" ? "blue" : "default"}>{product.origin === "remote" ? t("Remote") : t("Local")}</Tag>
-              <Tag color={product.free ? "green" : "gold"}>{product.priceLabel ? t(product.priceLabel) : product.free ? t("Free") : t("Paid")}</Tag>
-              {product.tags.map((tag) => <Tag key={`${product.id}-${tag}`}>{t(tag)}</Tag>)}
+              <Tag color={product.origin === "remote" ? "blue" : "default"}>
+                {product.origin === "remote" ? t("Remote") : t("Local")}
+              </Tag>
+              <Tag color={product.free ? "green" : "gold"}>
+                {product.priceLabel ? t(product.priceLabel) : product.free ? t("Free") : t("Paid")}
+              </Tag>
+              {product.tags.map((tag) => (
+                <Tag key={`${product.id}-${tag}`}>{t(tag)}</Tag>
+              ))}
               {product.purchased ? <Tag color="blue">{t("Purchased")}</Tag> : null}
               {product.sourceHealth ? <Tag>{product.sourceHealth}</Tag> : null}
               {product.installed ? <Tag color="green">{t("Installed")}</Tag> : null}
@@ -141,7 +161,9 @@ export function MarketWorkspace({
           </article>
         ))}
       </div>
-      {!loading && products.length === 0 ? <Empty className="market-empty" description={t("No matching tool products")} /> : null}
+      {!loading && products.length === 0 ? (
+        <Empty className="market-empty" description={t("No matching tool products")} />
+      ) : null}
     </section>
   );
 }

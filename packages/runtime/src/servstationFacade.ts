@@ -33,12 +33,12 @@ import {
   type ServstationSendDirectMessageInput,
   type ServstationSendPromptInput,
   type ServstationSendPromptResult,
-  type ServstationSessionJob
+  type ServstationSessionJob,
 } from "@supbot/shared";
 import type { ServstationAgentClient } from "./servstationAgentClient";
 
 export abstract class ServstationRuntimeFacade extends EventEmitter {
-  protected declare servstationAgentClient: ServstationAgentClient;
+  declare protected servstationAgentClient: ServstationAgentClient;
 
   protected abstract assertLoaded(): void;
 
@@ -67,7 +67,10 @@ export abstract class ServstationRuntimeFacade extends EventEmitter {
     return this.servstationAgentClient.listProjectResources(projectId);
   }
 
-  async deleteServstationProjectResource(projectId: string, resourceId: string): Promise<ServstationDeleteProjectResourceResponse> {
+  async deleteServstationProjectResource(
+    projectId: string,
+    resourceId: string,
+  ): Promise<ServstationDeleteProjectResourceResponse> {
     this.assertLoaded();
     return this.servstationAgentClient.deleteProjectResource(projectId, resourceId);
   }
@@ -97,7 +100,10 @@ export abstract class ServstationRuntimeFacade extends EventEmitter {
     return this.servstationAgentClient.createScheduledJob(input);
   }
 
-  async updateServstationScheduledJob(id: string, input: Partial<ServstationScheduledJobInput>): Promise<ServstationScheduledJob> {
+  async updateServstationScheduledJob(
+    id: string,
+    input: Partial<ServstationScheduledJobInput>,
+  ): Promise<ServstationScheduledJob> {
     this.assertLoaded();
     return this.servstationAgentClient.updateScheduledJob(id, input);
   }
@@ -130,7 +136,7 @@ export abstract class ServstationRuntimeFacade extends EventEmitter {
   async streamServstationAutopilotEvents(
     runId: string,
     onEvent: (event: ServstationAutopilotEvent) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<void> {
     this.assertLoaded();
     await this.servstationAgentClient.streamAutopilotEvents(runId, onEvent, signal);
@@ -141,7 +147,9 @@ export abstract class ServstationRuntimeFacade extends EventEmitter {
     return this.servstationAgentClient.flowEngineSnapshot();
   }
 
-  async launchServstationFlowEngineWorkflow(input: ServstationFlowEngineLaunchInput): Promise<ServstationFlowEngineInitiatedExecution> {
+  async launchServstationFlowEngineWorkflow(
+    input: ServstationFlowEngineLaunchInput,
+  ): Promise<ServstationFlowEngineInitiatedExecution> {
     this.assertLoaded();
     return this.servstationAgentClient.launchFlowEngineWorkflow(input);
   }
@@ -156,12 +164,17 @@ export abstract class ServstationRuntimeFacade extends EventEmitter {
     return this.servstationAgentClient.getFlowEngineExecutionEvents(executionId);
   }
 
-  async decideServstationFlowEngineApproval(input: ServstationFlowEngineApprovalDecisionInput): Promise<ServstationFlowEnginePendingTask> {
+  async decideServstationFlowEngineApproval(
+    input: ServstationFlowEngineApprovalDecisionInput,
+  ): Promise<ServstationFlowEnginePendingTask> {
     this.assertLoaded();
     return this.servstationAgentClient.decideFlowEngineApproval(input);
   }
 
-  async listServstationMessages(folder: ServstationMessageFolder, unreadOnly = false): Promise<ServstationMessageListResponse> {
+  async listServstationMessages(
+    folder: ServstationMessageFolder,
+    unreadOnly = false,
+  ): Promise<ServstationMessageListResponse> {
     this.assertLoaded();
     return this.servstationAgentClient.listMessages(folder, unreadOnly);
   }
@@ -201,7 +214,10 @@ export abstract class ServstationRuntimeFacade extends EventEmitter {
     await this.servstationAgentClient.deleteMessage(messageId);
   }
 
-  async fetchServstationMessageAttachment(messageId: string, attachmentId: string): Promise<ServstationMessageAttachmentContent> {
+  async fetchServstationMessageAttachment(
+    messageId: string,
+    attachmentId: string,
+  ): Promise<ServstationMessageAttachmentContent> {
     this.assertLoaded();
     return this.servstationAgentClient.fetchMessageAttachment(messageId, attachmentId);
   }
@@ -251,7 +267,10 @@ export abstract class ServstationRuntimeFacade extends EventEmitter {
     return this.servstationAgentClient.syncMailAccountNow(id);
   }
 
-  async streamServstationMessageEvents(onEvent: (event: ServstationMessageEvent) => void, signal?: AbortSignal): Promise<void> {
+  async streamServstationMessageEvents(
+    onEvent: (event: ServstationMessageEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<void> {
     this.assertLoaded();
     await this.servstationAgentClient.streamMessageEvents(onEvent, signal);
   }

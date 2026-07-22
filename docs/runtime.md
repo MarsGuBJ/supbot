@@ -66,7 +66,11 @@ Dangerous tool calls create `PendingToolPermission` records unless mode/rules al
 
 Each conversation has a JSONL transcript under the runtime data directory. Transcript records include messages, runtime events, compact boundaries, permission decisions, and final outputs.
 
-`conversation:loadTranscript` returns a recoverable view, not just raw JSONL. It reads the latest compact boundary, returns active messages after that boundary, and falls back to state messages if the transcript is missing or incomplete. Damaged lines are reported as diagnostics while valid lines remain usable.
+Transcripts are the single source of truth for chat messages. `state.json` stores conversation metadata only: ids, titles, project links, timestamps, message counts, and the last-message preview. On the first startup after upgrading, legacy messages found in `state.json` are reconciled into the transcript by message id and turn signature before the metadata-only state is saved. Existing transcript records win when both stores contain the same turn; state-only records are appended so local-tool and interrupted legacy turns are not lost.
+
+The migration is intentionally one-way. Rolling back requires restoring the application data directory from a pre-upgrade backup or using the preserved JSONL transcripts with a compatible build; a downgraded build must not be allowed to overwrite the migrated data. `state.json.bak` remains the automatic recovery path for a corrupt state file. Transcript parsing is line-oriented, so damaged lines produce diagnostics while every valid record remains available; a fully unreadable transcript opens as an empty recoverable conversation instead of preventing runtime startup.
+
+`conversation:loadTranscript` returns a recoverable view, not just raw JSONL. It reads the latest compact boundary and returns active messages after that boundary. `conversation:loadHistory` pages older messages by message id. Runtime snapshots carry metadata for every conversation and only the active conversation's 50 most recent messages, while the renderer prepends transcript pages as the virtualized list reaches the top.
 
 `CompactManager` performs automatic compact inside QueryEngine when token estimates cross the threshold. Manual compact writes the same boundary shape and summary block.
 

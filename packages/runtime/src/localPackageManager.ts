@@ -13,7 +13,7 @@ import type {
   LocalPackageKind,
   LocalPackageMcpComponent,
   LocalPackageSkillComponent,
-  McpServerConfig
+  McpServerConfig,
 } from "@supbot/shared";
 import unzipper from "unzipper";
 import { truncate } from "./localTools";
@@ -64,7 +64,7 @@ export class LocalPackageManager {
       const parsed = await this.parsePackage(extracted.rootPath, {
         archivePath: resolvedArchive,
         sha256,
-        rootPrefix: extracted.rootPrefix
+        rootPrefix: extracted.rootPrefix,
       });
       return publicInspection(parsed);
     } finally {
@@ -72,7 +72,11 @@ export class LocalPackageManager {
     }
   }
 
-  async installArchive(archivePath: string, expectedSha256: string, signal: AbortSignal): Promise<LocalPackageInstallResult> {
+  async installArchive(
+    archivePath: string,
+    expectedSha256: string,
+    signal: AbortSignal,
+  ): Promise<LocalPackageInstallResult> {
     const resolvedArchive = resolve(archivePath);
     const sha256 = await hashFile(resolvedArchive);
     if (sha256 !== expectedSha256.trim().toLowerCase()) {
@@ -89,14 +93,17 @@ export class LocalPackageManager {
       const parsed = await this.parsePackage(extracted.rootPath, {
         archivePath: resolvedArchive,
         sha256,
-        rootPrefix: extracted.rootPrefix
+        rootPrefix: extracted.rootPrefix,
       });
       finalPath = parsed.installPath;
       if (!pathIsInside(this.host.dataDir, finalPath)) {
         throw new Error(`Package install path resolved outside app data directory: ${finalPath}`);
       }
       await mkdir(dirname(finalPath), { recursive: true });
-      stagingPackagePath = join(dirname(finalPath), `.installing-${basename(finalPath)}-${this.host.randomId("pkg").replace(/[^a-z0-9_-]/gi, "")}`);
+      stagingPackagePath = join(
+        dirname(finalPath),
+        `.installing-${basename(finalPath)}-${this.host.randomId("pkg").replace(/[^a-z0-9_-]/gi, "")}`,
+      );
       await rm(stagingPackagePath, { recursive: true, force: true });
       await rename(extracted.rootPath, stagingPackagePath);
 
@@ -111,13 +118,13 @@ export class LocalPackageManager {
       const installedBeforeDependencies = await this.parsePackage(finalPath, {
         archivePath: resolvedArchive,
         sha256,
-        rootPrefix: extracted.rootPrefix
+        rootPrefix: extracted.rootPrefix,
       });
       const dependencyResults = await runDependencyPlan(installedBeforeDependencies.dependencyPlan, signal);
       const installed = await this.parsePackage(finalPath, {
         archivePath: resolvedArchive,
         sha256,
-        rootPrefix: extracted.rootPrefix
+        rootPrefix: extracted.rootPrefix,
       });
       const installedAt = this.host.nowIso();
       const result: LocalPackageInstallResult = {
@@ -127,7 +134,7 @@ export class LocalPackageManager {
         dependencyResults,
         capabilityIds: installed.capabilityIds,
         activatedMcpServerIds: installed.mcpServerConfigs.map((server) => server.id),
-        skillContext: await buildSkillContext(installed.skills)
+        skillContext: await buildSkillContext(installed.skills),
       };
       await writeFile(join(finalPath, receiptFileName), `${JSON.stringify(result, null, 2)}\n`, "utf8");
       if (backupPath) {
@@ -138,7 +145,7 @@ export class LocalPackageManager {
       if (movedIntoPlace && finalPath) {
         await rm(finalPath, { recursive: true, force: true });
       }
-      if (backupPath && finalPath && await pathExists(backupPath)) {
+      if (backupPath && finalPath && (await pathExists(backupPath))) {
         await rename(backupPath, finalPath);
       }
       if (stagingPackagePath) {
@@ -161,7 +168,7 @@ export class LocalPackageManager {
   async rollbackInstall(result: Pick<LocalPackageInstallResult, "installPath" | "replaced">): Promise<void> {
     const backupPath = this.pendingBackups.get(result.installPath);
     await rm(result.installPath, { recursive: true, force: true });
-    if (backupPath && await pathExists(backupPath)) {
+    if (backupPath && (await pathExists(backupPath))) {
       await rename(backupPath, result.installPath);
     }
     this.pendingBackups.delete(result.installPath);
@@ -187,7 +194,7 @@ export class LocalPackageManager {
           const parsed = await this.parsePackage(packageRoot, {
             archivePath: receipt.archivePath || packageRoot,
             sha256: receipt.sha256 || "",
-            rootPrefix: receipt.rootPrefix
+            rootPrefix: receipt.rootPrefix,
           });
           packages.push(publicInspection(parsed));
           capabilities.push(...capabilitiesForPackage(parsed));
@@ -200,7 +207,7 @@ export class LocalPackageManager {
     return {
       packages,
       capabilities: uniqueCapabilities(capabilities),
-      mcpServers
+      mcpServers,
     };
   }
 
@@ -257,20 +264,28 @@ export class LocalPackageManager {
     return findPackageRoot(stagePath);
   }
 
-  private async parsePackage(rootPath: string, input: { archivePath: string; sha256: string; rootPrefix?: string }): Promise<ParsedLocalPackage> {
+  private async parsePackage(
+    rootPath: string,
+    input: { archivePath: string; sha256: string; rootPrefix?: string },
+  ): Promise<ParsedLocalPackage> {
     if (await pathExists(join(rootPath, ".codex-plugin", "plugin.json"))) {
       return this.parsePlugin(rootPath, input);
     }
     if (await pathExists(join(rootPath, "SKILL.md"))) {
       return this.parseSkill(rootPath, input);
     }
-    if (await pathExists(join(rootPath, ".mcp.json")) || await pathExists(join(rootPath, "supbot-mcp.json"))) {
+    if ((await pathExists(join(rootPath, ".mcp.json"))) || (await pathExists(join(rootPath, "supbot-mcp.json")))) {
       return this.parseMcp(rootPath, input);
     }
-    throw new Error("Package archive is missing a supported manifest (SKILL.md, .codex-plugin/plugin.json, .mcp.json, or supbot-mcp.json).");
+    throw new Error(
+      "Package archive is missing a supported manifest (SKILL.md, .codex-plugin/plugin.json, .mcp.json, or supbot-mcp.json).",
+    );
   }
 
-  private async parseSkill(rootPath: string, input: { archivePath: string; sha256: string; rootPrefix?: string }): Promise<ParsedLocalPackage> {
+  private async parseSkill(
+    rootPath: string,
+    input: { archivePath: string; sha256: string; rootPrefix?: string },
+  ): Promise<ParsedLocalPackage> {
     const content = await readFile(join(rootPath, "SKILL.md"), "utf8");
     const metadata = parseSkillMetadataStrict(content, "SKILL.md");
     const id = slug(metadata.name);
@@ -280,7 +295,7 @@ export class LocalPackageManager {
       name: metadata.name,
       description: metadata.description,
       path: rootPath,
-      capabilityId: `local.skill.${id}`
+      capabilityId: `local.skill.${id}`,
     };
     return {
       kind: "skill",
@@ -298,32 +313,40 @@ export class LocalPackageManager {
       mcpServerConfigs: [],
       dependencyPlan: await dependencyPlan(rootPath),
       warnings: [],
-      capabilityIds: [skill.capabilityId]
+      capabilityIds: [skill.capabilityId],
     };
   }
 
-  private async parsePlugin(rootPath: string, input: { archivePath: string; sha256: string; rootPrefix?: string }): Promise<ParsedLocalPackage> {
+  private async parsePlugin(
+    rootPath: string,
+    input: { archivePath: string; sha256: string; rootPrefix?: string },
+  ): Promise<ParsedLocalPackage> {
     const manifest = await readJsonObject(join(rootPath, ".codex-plugin", "plugin.json"));
     const name = requiredJsonString(manifest.name, "plugin.json name");
     const id = slug(typeof manifest.id === "string" && manifest.id.trim() ? manifest.id : name);
     const description = requiredJsonString(manifest.description, "plugin.json description");
-    const version = typeof manifest.version === "string" && manifest.version.trim() ? manifest.version.trim() : undefined;
+    const version =
+      typeof manifest.version === "string" && manifest.version.trim() ? manifest.version.trim() : undefined;
     const installPath = this.packageInstallPath("plugin", id);
     const warnings: string[] = [];
     const skills = await readPluginSkills(rootPath, id, manifest, warnings);
-    const { components: mcpServers, configs: mcpServerConfigs, warnings: mcpWarnings } = await readPackageMcpServers({
+    const {
+      components: mcpServers,
+      configs: mcpServerConfigs,
+      warnings: mcpWarnings,
+    } = await readPackageMcpServers({
       rootPath,
       packageId: id,
       packageKind: "plugin",
       packageName: name,
       packagePath: installPath,
-      manifest
+      manifest,
     });
     warnings.push(...mcpWarnings);
-    if (await pathExists(join(rootPath, ".app.json")) || typeof manifest.apps !== "undefined") {
+    if ((await pathExists(join(rootPath, ".app.json"))) || typeof manifest.apps !== "undefined") {
       warnings.push("Plugin apps are retained on disk but are not activated by this installer.");
     }
-    if (await pathExists(join(rootPath, "hooks")) || typeof manifest.hooks !== "undefined") {
+    if ((await pathExists(join(rootPath, "hooks"))) || typeof manifest.hooks !== "undefined") {
       warnings.push("Plugin hooks are retained on disk but are not activated by this installer.");
     }
     if (await pathExists(join(rootPath, "scripts"))) {
@@ -346,19 +369,26 @@ export class LocalPackageManager {
       mcpServerConfigs,
       dependencyPlan: await dependencyPlan(rootPath),
       warnings,
-      capabilityIds
+      capabilityIds,
     };
   }
 
-  private async parseMcp(rootPath: string, input: { archivePath: string; sha256: string; rootPrefix?: string }): Promise<ParsedLocalPackage> {
+  private async parseMcp(
+    rootPath: string,
+    input: { archivePath: string; sha256: string; rootPrefix?: string },
+  ): Promise<ParsedLocalPackage> {
     const id = slug(basename(input.archivePath, extname(input.archivePath)) || basename(rootPath) || "mcp");
     const installPath = this.packageInstallPath("mcp", id);
-    const { components: mcpServers, configs: mcpServerConfigs, warnings } = await readPackageMcpServers({
+    const {
+      components: mcpServers,
+      configs: mcpServerConfigs,
+      warnings,
+    } = await readPackageMcpServers({
       rootPath,
       packageId: id,
       packageKind: "mcp",
       packageName: basename(rootPath) || id,
-      packagePath: installPath
+      packagePath: installPath,
     });
     if (!mcpServers.length) {
       throw new Error("MCP package does not contain any supported local stdio MCP server configuration.");
@@ -379,7 +409,7 @@ export class LocalPackageManager {
       mcpServerConfigs,
       dependencyPlan: await dependencyPlan(rootPath),
       warnings,
-      capabilityIds: [`local.mcp.${id}`]
+      capabilityIds: [`local.mcp.${id}`],
     };
   }
 
@@ -392,7 +422,11 @@ export class LocalPackageManager {
   }
 
   private stagePath(label: string): string {
-    return join(this.host.dataDir, "local-package-staging", `${label}-${Date.now().toString(36)}-${this.host.randomId("pkg").replace(/[^a-z0-9_-]/gi, "")}`);
+    return join(
+      this.host.dataDir,
+      "local-package-staging",
+      `${label}-${Date.now().toString(36)}-${this.host.randomId("pkg").replace(/[^a-z0-9_-]/gi, "")}`,
+    );
   }
 }
 
@@ -413,10 +447,14 @@ function publicInspection(parsed: ParsedLocalPackage): LocalPackageInspection {
       path: toInstallPath(parsed, server.path),
       command: server.command ? toInstallPath(parsed, server.command) : undefined,
       args: server.args?.map((arg) => toInstallPath(parsed, arg)),
-      cwd: server.cwd ? toInstallPath(parsed, server.cwd) : undefined
+      cwd: server.cwd ? toInstallPath(parsed, server.cwd) : undefined,
     })),
-    dependencyPlan: parsed.dependencyPlan.map((step) => ({ ...step, cwd: toInstallPath(parsed, step.cwd), command: toInstallPath(parsed, step.command) })),
-    warnings: parsed.warnings
+    dependencyPlan: parsed.dependencyPlan.map((step) => ({
+      ...step,
+      cwd: toInstallPath(parsed, step.cwd),
+      command: toInstallPath(parsed, step.command),
+    })),
+    warnings: parsed.warnings,
   };
 }
 
@@ -433,7 +471,7 @@ function capabilitiesForPackage(parsed: ParsedLocalPackage): CapabilityDefinitio
     name: skill.name,
     kind: "skill",
     description: skill.description,
-    enabled: true
+    enabled: true,
   }));
   if (parsed.kind === "plugin") {
     capabilities.push({
@@ -441,7 +479,7 @@ function capabilitiesForPackage(parsed: ParsedLocalPackage): CapabilityDefinitio
       name: parsed.name,
       kind: "plugin",
       description: parsed.description,
-      enabled: true
+      enabled: true,
     });
   }
   if (parsed.kind === "mcp") {
@@ -450,7 +488,7 @@ function capabilitiesForPackage(parsed: ParsedLocalPackage): CapabilityDefinitio
       name: parsed.name,
       kind: "mcp",
       description: parsed.description,
-      enabled: true
+      enabled: true,
     });
   }
   return capabilities;
@@ -464,7 +502,12 @@ function uniqueCapabilities(capabilities: CapabilityDefinition[]): CapabilityDef
   return [...byId.values()];
 }
 
-async function readPluginSkills(rootPath: string, packageId: string, manifest: JsonObject, warnings: string[]): Promise<LocalPackageSkillComponent[]> {
+async function readPluginSkills(
+  rootPath: string,
+  packageId: string,
+  manifest: JsonObject,
+  warnings: string[],
+): Promise<LocalPackageSkillComponent[]> {
   const roots = new Set<string>();
   roots.add(join(rootPath, "skills"));
   if (typeof manifest.skills === "string" && manifest.skills.trim()) {
@@ -473,7 +516,7 @@ async function readPluginSkills(rootPath: string, packageId: string, manifest: J
   const skills: LocalPackageSkillComponent[] = [];
   for (const skillsRoot of roots) {
     const entries = await readdir(skillsRoot, { withFileTypes: true }).catch(() => []);
-    if (!entries.length && await pathExists(join(skillsRoot, "SKILL.md"))) {
+    if (!entries.length && (await pathExists(join(skillsRoot, "SKILL.md")))) {
       const skill = await readSkillComponent(skillsRoot, packageId, basename(skillsRoot));
       if (skill) {
         skills.push(skill);
@@ -497,7 +540,11 @@ async function readPluginSkills(rootPath: string, packageId: string, manifest: J
   return uniqueSkills(skills);
 }
 
-async function readSkillComponent(rootPath: string, packageId: string, fallbackId: string): Promise<LocalPackageSkillComponent | undefined> {
+async function readSkillComponent(
+  rootPath: string,
+  packageId: string,
+  fallbackId: string,
+): Promise<LocalPackageSkillComponent | undefined> {
   try {
     const content = await readFile(join(rootPath, "SKILL.md"), "utf8");
     const metadata = parseSkillMetadataStrict(content, relative(dirname(rootPath), join(rootPath, "SKILL.md")));
@@ -507,7 +554,7 @@ async function readSkillComponent(rootPath: string, packageId: string, fallbackI
       name: metadata.name,
       description: metadata.description,
       path: rootPath,
-      capabilityId: `local.skill.${id}`
+      capabilityId: `local.skill.${id}`,
     };
   } catch {
     return undefined;
@@ -543,12 +590,20 @@ async function readPackageMcpServers(input: {
   if (input.manifest && typeof input.manifest.mcpServers === "string" && input.manifest.mcpServers.trim()) {
     const manifestMcpPath = resolveManifestPath(input.rootPath, input.manifest.mcpServers);
     if (await pathExists(manifestMcpPath)) {
-      sources.push({ label: "plugin.json mcpServers", payload: await readJsonObject(manifestMcpPath), path: manifestMcpPath });
+      sources.push({
+        label: "plugin.json mcpServers",
+        payload: await readJsonObject(manifestMcpPath),
+        path: manifestMcpPath,
+      });
     } else {
       warnings.push(`Plugin MCP manifest was not found: ${input.manifest.mcpServers}`);
     }
   } else if (input.manifest && isJsonObject(input.manifest.mcpServers)) {
-    sources.push({ label: "plugin.json mcpServers", payload: { mcpServers: input.manifest.mcpServers }, path: join(input.rootPath, ".codex-plugin", "plugin.json") });
+    sources.push({
+      label: "plugin.json mcpServers",
+      payload: { mcpServers: input.manifest.mcpServers },
+      path: join(input.rootPath, ".codex-plugin", "plugin.json"),
+    });
   }
 
   const components: LocalPackageMcpComponent[] = [];
@@ -574,7 +629,7 @@ async function readPackageMcpServers(input: {
         packageName: input.packageName,
         serverKey: key,
         componentId,
-        sourcePath: source.path
+        sourcePath: source.path,
       });
       components.push(materialized.component);
       if (materialized.warning) {
@@ -590,8 +645,7 @@ async function readPackageMcpServers(input: {
 
 function mcpServerEntries(payload: JsonObject): Array<[string, JsonObject]> {
   if (isJsonObject(payload.mcpServers)) {
-    return Object.entries(payload.mcpServers)
-      .filter((entry): entry is [string, JsonObject] => isJsonObject(entry[1]));
+    return Object.entries(payload.mcpServers).filter((entry): entry is [string, JsonObject] => isJsonObject(entry[1]));
   }
   if (isJsonObject(payload.mcpServer)) {
     const server = payload.mcpServer;
@@ -605,23 +659,26 @@ function mcpServerEntries(payload: JsonObject): Array<[string, JsonObject]> {
   return [];
 }
 
-async function materializeMcpServer(server: JsonObject, input: {
-  rootPath: string;
-  packagePath: string;
-  packageId: string;
-  packageKind: LocalPackageKind;
-  packageName: string;
-  serverKey: string;
-  componentId: string;
-  sourcePath: string;
-}): Promise<{ component: LocalPackageMcpComponent; config?: McpServerConfig; warning?: string }> {
+async function materializeMcpServer(
+  server: JsonObject,
+  input: {
+    rootPath: string;
+    packagePath: string;
+    packageId: string;
+    packageKind: LocalPackageKind;
+    packageName: string;
+    serverKey: string;
+    componentId: string;
+    sourcePath: string;
+  },
+): Promise<{ component: LocalPackageMcpComponent; config?: McpServerConfig; warning?: string }> {
   const name = typeof server.name === "string" && server.name.trim() ? server.name.trim() : input.serverKey;
   const remoteType = String(server.type || server.transport || "").toLowerCase();
   const remoteUrl = typeof server.url === "string" || typeof server.endpoint === "string";
   const componentBase: LocalPackageMcpComponent = {
     id: input.componentId,
     name,
-    path: input.sourcePath
+    path: input.sourcePath,
   };
   if (remoteType === "http" || remoteType === "sse" || remoteUrl) {
     const reason = "Only local stdio MCP servers are supported; HTTP/SSE server skipped.";
@@ -632,10 +689,17 @@ async function materializeMcpServer(server: JsonObject, input: {
     return { component: { ...componentBase, skipped: true, reason }, warning: `${name}: ${reason}` };
   }
   const rootPath = resolve(input.rootPath);
-  const cwd = resolveInsideRoot(rootPath, typeof server.cwd === "string" && server.cwd.trim() ? replaceRootPlaceholders(server.cwd, rootPath) : ".");
+  const cwd = resolveInsideRoot(
+    rootPath,
+    typeof server.cwd === "string" && server.cwd.trim() ? replaceRootPlaceholders(server.cwd, rootPath) : ".",
+  );
   const command = await materializeMcpCommand(server.command, rootPath);
   const args = Array.isArray(server.args)
-    ? await Promise.all(server.args.filter((arg): arg is string => typeof arg === "string").map((arg) => materializeMcpArg(arg, rootPath)))
+    ? await Promise.all(
+        server.args
+          .filter((arg): arg is string => typeof arg === "string")
+          .map((arg) => materializeMcpArg(arg, rootPath)),
+      )
     : [];
   const now = new Date().toISOString();
   const serverId = slug(`localpkg-${input.packageId}-${name}`);
@@ -656,8 +720,8 @@ async function materializeMcpServer(server: JsonObject, input: {
       packageId: input.packageId,
       packageKind: input.packageKind,
       packagePath: input.packagePath,
-      componentId: input.componentId
-    }
+      componentId: input.componentId,
+    },
   };
   return {
     component: {
@@ -665,18 +729,19 @@ async function materializeMcpServer(server: JsonObject, input: {
       serverId,
       command,
       args,
-      cwd
+      cwd,
     },
-    config
+    config,
   };
 }
 
 async function materializeMcpCommand(command: string, rootPath: string): Promise<string> {
   const trimmed = replaceRootPlaceholders(command.trim(), rootPath);
   if (/^(python|python3|py)$/i.test(trimmed)) {
-    const venvPython = process.platform === "win32"
-      ? join(rootPath, ".venv", "Scripts", "python.exe")
-      : join(rootPath, ".venv", "bin", "python");
+    const venvPython =
+      process.platform === "win32"
+        ? join(rootPath, ".venv", "Scripts", "python.exe")
+        : join(rootPath, ".venv", "bin", "python");
     if (await pathExists(venvPython)) {
       return venvPython;
     }
@@ -724,54 +789,120 @@ function isRelativePath(value: string): boolean {
 async function dependencyPlan(rootPath: string): Promise<LocalPackageDependencyPlan[]> {
   const plan: LocalPackageDependencyPlan[] = [];
   if (await pathExists(join(rootPath, "pnpm-lock.yaml"))) {
-    plan.push({ kind: "node", manager: "pnpm", command: "pnpm", args: ["install", "--frozen-lockfile"], cwd: rootPath, reason: "pnpm-lock.yaml" });
+    plan.push({
+      kind: "node",
+      manager: "pnpm",
+      command: "pnpm",
+      args: ["install", "--frozen-lockfile"],
+      cwd: rootPath,
+      reason: "pnpm-lock.yaml",
+    });
   } else if (await pathExists(join(rootPath, "yarn.lock"))) {
-    plan.push({ kind: "node", manager: "yarn", command: "yarn", args: ["install", "--frozen-lockfile"], cwd: rootPath, reason: "yarn.lock" });
+    plan.push({
+      kind: "node",
+      manager: "yarn",
+      command: "yarn",
+      args: ["install", "--frozen-lockfile"],
+      cwd: rootPath,
+      reason: "yarn.lock",
+    });
   } else if (await pathExists(join(rootPath, "package-lock.json"))) {
-    plan.push({ kind: "node", manager: "npm", command: "npm", args: ["ci"], cwd: rootPath, reason: "package-lock.json" });
+    plan.push({
+      kind: "node",
+      manager: "npm",
+      command: "npm",
+      args: ["ci"],
+      cwd: rootPath,
+      reason: "package-lock.json",
+    });
   } else if (await pathExists(join(rootPath, "package.json"))) {
-    plan.push({ kind: "node", manager: "npm", command: "npm", args: ["install"], cwd: rootPath, reason: "package.json" });
+    plan.push({
+      kind: "node",
+      manager: "npm",
+      command: "npm",
+      args: ["install"],
+      cwd: rootPath,
+      reason: "package.json",
+    });
   }
-  if (await pathExists(join(rootPath, "requirements.txt")) || await pathExists(join(rootPath, "pyproject.toml")) || await pathExists(join(rootPath, "setup.py"))) {
+  if (
+    (await pathExists(join(rootPath, "requirements.txt"))) ||
+    (await pathExists(join(rootPath, "pyproject.toml"))) ||
+    (await pathExists(join(rootPath, "setup.py")))
+  ) {
     const python = process.env.PYTHON?.trim() || (process.platform === "win32" ? "python" : "python3");
-    const venvPython = process.platform === "win32"
-      ? join(rootPath, ".venv", "Scripts", "python.exe")
-      : join(rootPath, ".venv", "bin", "python");
-    plan.push({ kind: "python", manager: "pip", command: python, args: ["-m", "venv", ".venv"], cwd: rootPath, reason: "python virtual environment" });
+    const venvPython =
+      process.platform === "win32"
+        ? join(rootPath, ".venv", "Scripts", "python.exe")
+        : join(rootPath, ".venv", "bin", "python");
+    plan.push({
+      kind: "python",
+      manager: "pip",
+      command: python,
+      args: ["-m", "venv", ".venv"],
+      cwd: rootPath,
+      reason: "python virtual environment",
+    });
     if (await pathExists(join(rootPath, "requirements.txt"))) {
-      plan.push({ kind: "python", manager: "pip", command: venvPython, args: ["-m", "pip", "install", "-r", "requirements.txt"], cwd: rootPath, reason: "requirements.txt" });
+      plan.push({
+        kind: "python",
+        manager: "pip",
+        command: venvPython,
+        args: ["-m", "pip", "install", "-r", "requirements.txt"],
+        cwd: rootPath,
+        reason: "requirements.txt",
+      });
     } else {
-      plan.push({ kind: "python", manager: "pip", command: venvPython, args: ["-m", "pip", "install", "."], cwd: rootPath, reason: await pathExists(join(rootPath, "pyproject.toml")) ? "pyproject.toml" : "setup.py" });
+      plan.push({
+        kind: "python",
+        manager: "pip",
+        command: venvPython,
+        args: ["-m", "pip", "install", "."],
+        cwd: rootPath,
+        reason: (await pathExists(join(rootPath, "pyproject.toml"))) ? "pyproject.toml" : "setup.py",
+      });
     }
   }
   return plan;
 }
 
-async function runDependencyPlan(plan: LocalPackageDependencyPlan[], signal: AbortSignal): Promise<LocalPackageDependencyResult[]> {
+async function runDependencyPlan(
+  plan: LocalPackageDependencyPlan[],
+  signal: AbortSignal,
+): Promise<LocalPackageDependencyResult[]> {
   const results: LocalPackageDependencyResult[] = [];
   for (const step of plan) {
     const result = await runDependencyCommand(step, signal);
     results.push(result);
     if (result.exitCode !== 0) {
-      throw new Error(`Dependency install failed for ${step.manager}: ${result.stderr || result.stdout || `exit code ${result.exitCode}`}`);
+      throw new Error(
+        `Dependency install failed for ${step.manager}: ${result.stderr || result.stdout || `exit code ${result.exitCode}`}`,
+      );
     }
   }
   return results;
 }
 
-function runDependencyCommand(step: LocalPackageDependencyPlan, signal: AbortSignal): Promise<LocalPackageDependencyResult> {
+function runDependencyCommand(
+  step: LocalPackageDependencyPlan,
+  signal: AbortSignal,
+): Promise<LocalPackageDependencyResult> {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(step.command, step.args, {
       cwd: step.cwd,
       env: process.env,
       windowsHide: true,
-      shell: false
+      shell: false,
     });
     let stdout = "";
     let stderr = "";
     const timeout = setTimeout(() => {
       child.kill();
-      reject(new Error(`Dependency command timed out after ${Math.round(dependencyTimeoutMs / 1000)} seconds: ${step.command} ${step.args.join(" ")}`));
+      reject(
+        new Error(
+          `Dependency command timed out after ${Math.round(dependencyTimeoutMs / 1000)} seconds: ${step.command} ${step.args.join(" ")}`,
+        ),
+      );
     }, dependencyTimeoutMs);
     const abort = () => {
       child.kill();
@@ -796,7 +927,7 @@ function runDependencyCommand(step: LocalPackageDependencyPlan, signal: AbortSig
         ...step,
         exitCode,
         stdout: stdout.trim() || undefined,
-        stderr: stderr.trim() || undefined
+        stderr: stderr.trim() || undefined,
       });
     });
   });
@@ -819,10 +950,12 @@ async function findPackageRoot(stagePath: string): Promise<ExtractedArchive> {
 }
 
 async function hasPackageMarkers(rootPath: string): Promise<boolean> {
-  return await pathExists(join(rootPath, "SKILL.md"))
-    || await pathExists(join(rootPath, ".codex-plugin", "plugin.json"))
-    || await pathExists(join(rootPath, ".mcp.json"))
-    || await pathExists(join(rootPath, "supbot-mcp.json"));
+  return (
+    (await pathExists(join(rootPath, "SKILL.md"))) ||
+    (await pathExists(join(rootPath, ".codex-plugin", "plugin.json"))) ||
+    (await pathExists(join(rootPath, ".mcp.json"))) ||
+    (await pathExists(join(rootPath, "supbot-mcp.json")))
+  );
 }
 
 function normalizeZipEntryPath(value: string): string {
@@ -848,7 +981,11 @@ function resolveSafe(rootPath: string, entryPath: string): string {
   return target;
 }
 
-async function writeZipEntry(entry: UnzipperEntry, targetPath: string, onBytes: (byteCount: number) => void): Promise<number> {
+async function writeZipEntry(
+  entry: UnzipperEntry,
+  targetPath: string,
+  onBytes: (byteCount: number) => void,
+): Promise<number> {
   let bytes = 0;
   let limitError: Error | undefined;
   const source = entry.stream();
@@ -869,7 +1006,8 @@ async function writeZipEntry(entry: UnzipperEntry, targetPath: string, onBytes: 
 }
 
 function isEncryptedEntry(entry: UnzipperEntry): boolean {
-  const flags = typeof entry.vars?.flags === "number" ? entry.vars.flags : typeof entry.flags === "number" ? entry.flags : 0;
+  const flags =
+    typeof entry.vars?.flags === "number" ? entry.vars.flags : typeof entry.flags === "number" ? entry.flags : 0;
   return Boolean(flags & 0x1);
 }
 
@@ -910,7 +1048,10 @@ async function readReceipt(rootPath: string): Promise<Partial<LocalPackageInstal
   }
 }
 
-function parseSkillMetadataStrict(content: string, label: string): { name: string; description: string; version?: string } {
+function parseSkillMetadataStrict(
+  content: string,
+  label: string,
+): { name: string; description: string; version?: string } {
   const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!frontmatter) {
     throw new Error(`${label} must contain YAML front matter.`);
@@ -943,12 +1084,16 @@ async function buildSkillContext(skills: LocalPackageSkillComponent[]): Promise<
   for (const skill of skills) {
     try {
       const content = await readFile(join(skill.path, "SKILL.md"), "utf8");
-      chunks.push([
-        `<skill name="${escapeAttribute(skill.name)}" id="${escapeAttribute(skill.capabilityId)}" path="${escapeAttribute(skill.path)}">`,
-        skill.description ? `Description: ${skill.description}` : "",
-        `Instructions:\n${truncate(content, 8_000)}`,
-        "</skill>"
-      ].filter(Boolean).join("\n"));
+      chunks.push(
+        [
+          `<skill name="${escapeAttribute(skill.name)}" id="${escapeAttribute(skill.capabilityId)}" path="${escapeAttribute(skill.path)}">`,
+          skill.description ? `Description: ${skill.description}` : "",
+          `Instructions:\n${truncate(content, 8_000)}`,
+          "</skill>",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      );
     } catch {
       continue;
     }
@@ -971,7 +1116,12 @@ function stringRecord(value: JsonObject): Record<string, string> | undefined {
 }
 
 function isMcpServerLike(value: JsonObject): boolean {
-  return typeof value.command === "string" || typeof value.url === "string" || typeof value.transport === "string" || typeof value.type === "string";
+  return (
+    typeof value.command === "string" ||
+    typeof value.url === "string" ||
+    typeof value.transport === "string" ||
+    typeof value.type === "string"
+  );
 }
 
 function isJsonObject(value: unknown): value is JsonObject {
@@ -990,7 +1140,13 @@ function stripYamlString(value: string): string {
 }
 
 function slug(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 96) || "package";
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 96) || "package"
+  );
 }
 
 function formatBytes(bytes: number): string {

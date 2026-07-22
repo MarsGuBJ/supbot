@@ -1,9 +1,5 @@
-import type {
-  IdentityContext,
-  ServstationA2AConfig,
-  ServstationA2AConfigUpdate
-} from "@supbot/shared";
-import type { ToolDefinition, ToolExecutionContext, ToolExecutionResult, ToolProvider } from "./toolRegistry";
+import type { IdentityContext, ServstationA2AConfig, ServstationA2AConfigUpdate } from "@supbot/shared";
+import type { ToolDefinition, ToolExecutionResult, ToolProvider } from "./toolRegistry";
 
 interface ServstationA2AHost {
   getConfig(): ServstationA2AConfig;
@@ -54,14 +50,15 @@ export class ServstationA2AProvider implements ToolProvider {
       {
         name: "ServstationConnect",
         modelName: "servstation_connect",
-        description: "Connect to the paired Servstation agent using HBClient's bound identity context and return the agent instance id.",
+        description:
+          "Connect to the paired Servstation agent using HBClient's bound identity context and return the agent instance id.",
         risk: "dangerous",
         concurrency: "exclusive",
         interruptBehavior: "cancel",
         parameters: {
           type: "object",
           properties: {},
-          additionalProperties: false
+          additionalProperties: false,
         },
         summarize() {
           return "Connect to Servstation";
@@ -69,17 +66,22 @@ export class ServstationA2AProvider implements ToolProvider {
         execute: async (_input, context) => {
           const connected = await this.connect(context.signal);
           return {
-            text: JSON.stringify({
-              agentInstanceId: connected.agentInstanceId,
-              connectionMode: connected.connectionMode || "unknown"
-            }, null, 2)
+            text: JSON.stringify(
+              {
+                agentInstanceId: connected.agentInstanceId,
+                connectionMode: connected.connectionMode || "unknown",
+              },
+              null,
+              2,
+            ),
           };
-        }
+        },
       },
       {
         name: "ServstationPrompt",
         modelName: "servstation_prompt",
-        description: "Send a prompt to the paired Servstation agent. Creates a Servstation conversation when conversationId is omitted.",
+        description:
+          "Send a prompt to the paired Servstation agent. Creates a Servstation conversation when conversationId is omitted.",
         risk: "dangerous",
         concurrency: "exclusive",
         interruptBehavior: "cancel",
@@ -89,36 +91,47 @@ export class ServstationA2AProvider implements ToolProvider {
             prompt: { type: "string", description: "Prompt to enqueue on Servstation." },
             conversationId: { type: "string", description: "Optional Servstation conversation id to continue." },
             requestId: { type: "string", description: "Optional idempotency/request id." },
-            waitForResult: { type: "boolean", description: "Wait for the remote Servstation job result before returning. Defaults to true." },
-            timeoutMs: { type: "number", description: "Maximum time to wait for the remote result. Defaults to 120000 ms." },
-            pollIntervalMs: { type: "number", description: "Polling interval while waiting for the remote result. Defaults to 1000 ms." }
+            waitForResult: {
+              type: "boolean",
+              description: "Wait for the remote Servstation job result before returning. Defaults to true.",
+            },
+            timeoutMs: {
+              type: "number",
+              description: "Maximum time to wait for the remote result. Defaults to 120000 ms.",
+            },
+            pollIntervalMs: {
+              type: "number",
+              description: "Polling interval while waiting for the remote result. Defaults to 1000 ms.",
+            },
           },
           required: ["prompt"],
-          additionalProperties: false
+          additionalProperties: false,
         },
         summarize(input) {
           const parsed = objectInput(input);
           return `Send Servstation prompt ${String(parsed.prompt || "").slice(0, 120)}`;
         },
-        execute: async (input, context) => this.sendPrompt(input, context.signal)
-      }
+        execute: async (input, context) => this.sendPrompt(input, context.signal),
+      },
     ];
   }
 
   private async sendPrompt(input: unknown, signal: AbortSignal): Promise<ToolExecutionResult> {
     const parsed = objectInput(input);
     const prompt = requiredString(parsed.prompt, "prompt");
-    const requestId = typeof parsed.requestId === "string" && parsed.requestId.trim()
-      ? parsed.requestId.trim()
-      : this.host.randomId("a2a_req");
+    const requestId =
+      typeof parsed.requestId === "string" && parsed.requestId.trim()
+        ? parsed.requestId.trim()
+        : this.host.randomId("a2a_req");
     const waitForResult = parsed.waitForResult !== false;
     const timeoutMs = numberInput(parsed.timeoutMs, 120_000, 1_000, 300_000);
     const pollIntervalMs = numberInput(parsed.pollIntervalMs, 1_000, 250, 10_000);
     const connected = await this.connect(signal);
     const agentInstanceId = requiredString(connected.agentInstanceId, "agentInstanceId");
-    const conversationId = typeof parsed.conversationId === "string" && parsed.conversationId.trim()
-      ? parsed.conversationId.trim()
-      : await this.createConversation(agentInstanceId, signal);
+    const conversationId =
+      typeof parsed.conversationId === "string" && parsed.conversationId.trim()
+        ? parsed.conversationId.trim()
+        : await this.createConversation(agentInstanceId, signal);
     const job = await this.request<AgentSessionJob>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/jobs`, {
       method: "POST",
       signal,
@@ -130,29 +143,34 @@ export class ServstationA2AProvider implements ToolProvider {
         payload: {
           prompt,
           requestId,
-          source: "supbot-a2a"
-        }
-      })
+          source: "supbot-a2a",
+        },
+      }),
     });
     const resultConversationId = job.conversationId || conversationId;
-    const waited = waitForResult && job.id
-      ? await this.waitForJob(agentInstanceId, job.id, resultConversationId, timeoutMs, pollIntervalMs, signal)
-      : { job, timedOut: false };
+    const waited =
+      waitForResult && job.id
+        ? await this.waitForJob(agentInstanceId, job.id, resultConversationId, timeoutMs, pollIntervalMs, signal)
+        : { job, timedOut: false };
     const finalJob = waited.job || job;
     const remoteResult = compactRemoteJobResult(finalJob.result);
     return {
-      text: JSON.stringify({
-        agentInstanceId,
-        conversationId: finalJob.conversationId || resultConversationId,
-        jobId: finalJob.id || job.id,
-        status: finalJob.status || job.status || "queued",
-        requestId,
-        timedOut: waited.timedOut || undefined,
-        assistantText: assistantTextFromResult(remoteResult),
-        result: remoteResult,
-        error: finalJob.error,
-        progress: finalJob.progress
-      }, null, 2)
+      text: JSON.stringify(
+        {
+          agentInstanceId,
+          conversationId: finalJob.conversationId || resultConversationId,
+          jobId: finalJob.id || job.id,
+          status: finalJob.status || job.status || "queued",
+          requestId,
+          timedOut: waited.timedOut || undefined,
+          assistantText: assistantTextFromResult(remoteResult),
+          result: remoteResult,
+          error: finalJob.error,
+          progress: finalJob.progress,
+        },
+        null,
+        2,
+      ),
     };
   }
 
@@ -162,14 +180,14 @@ export class ServstationA2AProvider implements ToolProvider {
     conversationId: string,
     timeoutMs: number,
     pollIntervalMs: number,
-    signal: AbortSignal
+    signal: AbortSignal,
   ): Promise<WaitForJobResult> {
     const startedAt = Date.now();
     let latest: AgentSessionJob | undefined;
     while (Date.now() - startedAt <= timeoutMs) {
       const response = await this.request<AgentJobsResponse>(
         `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/jobs?conversationId=${encodeURIComponent(conversationId)}`,
-        { method: "GET", signal }
+        { method: "GET", signal },
       );
       latest = Array.isArray(response.jobs) ? response.jobs.find((item) => item.id === jobId) : latest;
       if (latest?.status && isTerminalJobStatus(latest.status)) {
@@ -185,7 +203,7 @@ export class ServstationA2AProvider implements ToolProvider {
     const response = await this.request<AgentConnectResponse>("/api/v1/agent/connect", {
       method: "POST",
       signal,
-      body: JSON.stringify({ clientId: "supbot-a2a" })
+      body: JSON.stringify({ clientId: "supbot-a2a" }),
     });
     if (response.agentInstanceId && response.agentInstanceId !== current.agentInstanceId) {
       await this.host.updateConfig({ agentInstanceId: response.agentInstanceId });
@@ -194,11 +212,14 @@ export class ServstationA2AProvider implements ToolProvider {
   }
 
   private async createConversation(agentInstanceId: string, signal: AbortSignal): Promise<string> {
-    const conversation = await this.request<AgentConversation>(`/api/v1/agent/${encodeURIComponent(agentInstanceId)}/conversations`, {
-      method: "POST",
-      signal,
-      body: JSON.stringify({ clientId: "supbot-a2a" })
-    });
+    const conversation = await this.request<AgentConversation>(
+      `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/conversations`,
+      {
+        method: "POST",
+        signal,
+        body: JSON.stringify({ clientId: "supbot-a2a" }),
+      },
+    );
     const id = conversation.id || conversation.conversationId;
     if (!id) {
       throw new Error("Servstation did not return a conversation id.");
@@ -222,7 +243,7 @@ export class ServstationA2AProvider implements ToolProvider {
       "x-organization-id": identity.organizationId,
       "x-department-id": identity.departmentId,
       "x-user-id": identity.userId,
-      "x-role-ids": identity.roleIds.join(",")
+      "x-role-ids": identity.roleIds.join(","),
     };
     const token = await this.host.getAccessToken(init.signal instanceof AbortSignal ? init.signal : undefined);
     if (config.authMode === "bearer" || config.authMode === "oidc") {
@@ -237,8 +258,8 @@ export class ServstationA2AProvider implements ToolProvider {
       ...init,
       headers: {
         ...headers,
-        ...(init.headers || {})
-      }
+        ...(init.headers || {}),
+      },
     });
     const text = await response.text();
     const payload = text ? safeJson(text) : {};
@@ -280,11 +301,15 @@ function errorMessage(value: unknown): string | undefined {
     return undefined;
   }
   const record = value as Record<string, unknown>;
-  return typeof record.error === "string" ? record.error : typeof record.message === "string" ? record.message : undefined;
+  return typeof record.error === "string"
+    ? record.error
+    : typeof record.message === "string"
+      ? record.message
+      : undefined;
 }
 
 function objectInput(input: unknown): Record<string, unknown> {
-  return input && typeof input === "object" && !Array.isArray(input) ? input as Record<string, unknown> : {};
+  return input && typeof input === "object" && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
 }
 
 function requiredString(value: unknown, label: string): string {
@@ -311,10 +336,14 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   }
   return new Promise((resolve, reject) => {
     const timer = setTimeout(resolve, ms);
-    signal.addEventListener("abort", () => {
-      clearTimeout(timer);
-      reject(new Error("Servstation A2A wait aborted."));
-    }, { once: true });
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        reject(new Error("Servstation A2A wait aborted."));
+      },
+      { once: true },
+    );
   });
 }
 
@@ -335,7 +364,7 @@ function compactRemoteJobResult(result: unknown): unknown {
     generatedFiles: Array.isArray(record.generatedFiles) ? record.generatedFiles : undefined,
     output: typeof record.output === "string" ? record.output : undefined,
     text: typeof record.text === "string" ? record.text : undefined,
-    message: typeof record.message === "string" ? record.message : undefined
+    message: typeof record.message === "string" ? record.message : undefined,
   });
 }
 

@@ -7,7 +7,7 @@ import type {
   ToolMarketPackageFile,
   ToolMarketProduct,
   ToolMarketProductType,
-  ToolMarketQuery
+  ToolMarketQuery,
 } from "@supbot/shared";
 
 const toolMarketRequestTimeoutMs = 8000;
@@ -26,13 +26,13 @@ export const localToolMarketProducts: ToolMarketProduct[] = [
       name: "Local Files Plus",
       kind: "tool",
       description: "Adds local file workflow templates on top of /read and /write.",
-      enabled: true
+      enabled: true,
     },
     commandTemplates: ["/read ", "/write report.txt\n"],
     localDeployment: {
       kind: "tool",
-      commandTemplates: ["/read ", "/write report.txt\n"]
-    }
+      commandTemplates: ["/read ", "/write report.txt\n"],
+    },
   },
   {
     id: "shell-runner",
@@ -47,13 +47,13 @@ export const localToolMarketProducts: ToolMarketProduct[] = [
       name: "Shell Runner",
       kind: "tool",
       description: "Adds shell command automation templates backed by /shell.",
-      enabled: true
+      enabled: true,
     },
     commandTemplates: ["/shell npm test", "/shell git status --short"],
     localDeployment: {
       kind: "tool",
-      commandTemplates: ["/shell npm test", "/shell git status --short"]
-    }
+      commandTemplates: ["/shell npm test", "/shell git status --short"],
+    },
   },
   {
     id: "document-skills",
@@ -68,13 +68,13 @@ export const localToolMarketProducts: ToolMarketProduct[] = [
       name: "Document Skills",
       kind: "skill",
       description: "Adds document workflow prompts for docs, sheets, slides, and PDFs.",
-      enabled: true
+      enabled: true,
     },
     commandTemplates: ["Summarize this document: ", "Create a PDF report for: "],
     localDeployment: {
       kind: "skill",
-      commandTemplates: ["Summarize this document: ", "Create a PDF report for: "]
-    }
+      commandTemplates: ["Summarize this document: ", "Create a PDF report for: "],
+    },
   },
   {
     id: "planner-subagent-kit",
@@ -89,13 +89,13 @@ export const localToolMarketProducts: ToolMarketProduct[] = [
       name: "Planner Subagent Kit",
       kind: "plugin",
       description: "Adds planning and review prompt templates for subagent workflows.",
-      enabled: true
+      enabled: true,
     },
     commandTemplates: ["@research map the options for ", "@builder implement and verify "],
     localDeployment: {
       kind: "plugin",
-      commandTemplates: ["@research map the options for ", "@builder implement and verify "]
-    }
+      commandTemplates: ["@research map the options for ", "@builder implement and verify "],
+    },
   },
   {
     id: "local-mcp-bridge",
@@ -110,21 +110,28 @@ export const localToolMarketProducts: ToolMarketProduct[] = [
       name: "Local MCP Bridge",
       kind: "mcp",
       description: "Connect local stdio MCP servers through presets, diagnostics, import/export, and permission rules.",
-      enabled: true
+      enabled: true,
     },
     commandTemplates: ["Open Config > MCP"],
     localDeployment: {
       kind: "mcp",
-      commandTemplates: ["Open Config > MCP"]
-    }
-  }
+      commandTemplates: ["Open Config > MCP"],
+    },
+  },
 ];
 
-export function listLocalToolMarket(capabilities: CapabilityDefinition[], query: ToolMarketQuery = {}): ToolMarketCatalogItem[] {
+export function listLocalToolMarket(
+  capabilities: CapabilityDefinition[],
+  query: ToolMarketQuery = {},
+): ToolMarketCatalogItem[] {
   return listToolMarketCatalog(localToolMarketProducts, capabilities, query);
 }
 
-export function listToolMarketCatalog(products: ToolMarketProduct[], capabilities: CapabilityDefinition[], query: ToolMarketQuery = {}): ToolMarketCatalogItem[] {
+export function listToolMarketCatalog(
+  products: ToolMarketProduct[],
+  capabilities: CapabilityDefinition[],
+  query: ToolMarketQuery = {},
+): ToolMarketCatalogItem[] {
   const installed = new Map(capabilities.map((capability) => [capability.id, capability]));
   const needle = (query.query || "").trim().toLowerCase();
   const type = query.type && query.type !== "all" ? query.type : undefined;
@@ -134,13 +141,9 @@ export function listToolMarketCatalog(products: ToolMarketProduct[], capabilitie
       if (!needle) {
         return true;
       }
-      return [
-        product.name,
-        product.providerName,
-        product.description,
-        product.type,
-        ...product.tags
-      ].some((value) => value.toLowerCase().includes(needle));
+      return [product.name, product.providerName, product.description, product.type, ...product.tags].some((value) =>
+        value.toLowerCase().includes(needle),
+      );
     })
     .map((product) => {
       const capability = installed.get(product.capability.id);
@@ -149,7 +152,7 @@ export function listToolMarketCatalog(products: ToolMarketProduct[], capabilitie
         origin: product.origin || "local",
         installed: Boolean(capability),
         enabled: capability?.enabled ?? product.capability.enabled,
-        capabilityId: product.capability.id
+        capabilityId: product.capability.id,
       };
     });
 }
@@ -161,7 +164,7 @@ export function findLocalToolMarketProduct(productId: string): ToolMarketProduct
 export async function fetchRemoteToolMarketProducts(
   config: ToolMarketConfig,
   query: ToolMarketQuery = {},
-  auth: ToolMarketAuth = {}
+  auth: ToolMarketAuth = {},
 ): Promise<ToolMarketProduct[]> {
   if (!config.apiUrl.trim()) {
     return [];
@@ -183,8 +186,8 @@ export async function fetchRemoteToolMarketProducts(
       signal: controller.signal,
       headers: {
         Accept: "application/json",
-        ...authHeaders(auth.accessToken, cookie)
-      }
+        ...authHeaders(auth.accessToken, cookie),
+      },
     });
   } catch (error) {
     throw toolMarketConnectionError(error, url, "request");
@@ -196,7 +199,7 @@ export async function fetchRemoteToolMarketProducts(
   }
   let payload: RemoteToolMarketListPayload;
   try {
-    payload = await response.json() as RemoteToolMarketListPayload;
+    payload = (await response.json()) as RemoteToolMarketListPayload;
   } catch {
     throw new Error("Tool market request failed: catalog API returned invalid JSON.");
   }
@@ -225,9 +228,9 @@ async function authenticateToolMarket(config: ToolMarketConfig, auth: ToolMarket
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
-        ...authHeaders(auth.accessToken)
+        ...authHeaders(auth.accessToken),
       },
-      body: JSON.stringify({ email: auth.email.trim(), password: auth.password })
+      body: JSON.stringify({ email: auth.email.trim(), password: auth.password }),
     });
     if (!response.ok) {
       throw await toolMarketHttpError(response, "login");
@@ -246,7 +249,7 @@ async function authenticateToolMarket(config: ToolMarketConfig, auth: ToolMarket
 function authHeaders(accessToken?: string, cookie?: string): Record<string, string> {
   return {
     ...(accessToken?.trim() ? { Authorization: `Bearer ${accessToken.trim()}` } : {}),
-    ...(cookie ? { Cookie: cookie } : {})
+    ...(cookie ? { Cookie: cookie } : {}),
   };
 }
 
@@ -358,7 +361,7 @@ function normalizeRemoteMarketProduct(product: RemoteToolMarketProduct): ToolMar
     name,
     kind: type === "plugin" || type === "mcp" ? type : type === "skill" ? "skill" : "tool",
     description,
-    enabled: true
+    enabled: true,
   });
   const localDeployment = normalizeRemoteLocalDeployment(product, type, capability);
   return {
@@ -375,7 +378,7 @@ function normalizeRemoteMarketProduct(product: RemoteToolMarketProduct): ToolMar
     sourceHealth: product.source_health,
     capability: localDeployment.capability || capability,
     commandTemplates: localDeployment.commandTemplates,
-    localDeployment
+    localDeployment,
   };
 }
 
@@ -389,33 +392,47 @@ function normalizeRemoteCapability(value: unknown, fallback: CapabilityDefinitio
     name: safeText(input.name, fallback.name),
     kind: normalizeCapabilityKind(input.kind, fallback.kind),
     description: safeText(input.description, fallback.description),
-    enabled: input.enabled !== false
+    enabled: input.enabled !== false,
   };
 }
 
-function normalizeRemoteLocalDeployment(product: RemoteToolMarketProduct, type: ToolMarketProductType, capability: CapabilityDefinition): ToolMarketLocalDeployment {
-  const source = (objectValue(product.localDeployment)
-    || objectValue(product.local_deployment)
-    || objectValue(product.deployment)
-    || objectValue(product.install)
-    || objectValue(product.package)
-    || objectValue(product)) as Record<string, unknown>;
+function normalizeRemoteLocalDeployment(
+  product: RemoteToolMarketProduct,
+  type: ToolMarketProductType,
+  capability: CapabilityDefinition,
+): ToolMarketLocalDeployment {
+  const source = (objectValue(product.localDeployment) ||
+    objectValue(product.local_deployment) ||
+    objectValue(product.deployment) ||
+    objectValue(product.install) ||
+    objectValue(product.package) ||
+    objectValue(product)) as Record<string, unknown>;
   const deploymentKind = normalizeType(stringValue(source.kind) || stringValue(source.type) || type);
-  const commandTemplates = normalizeStringArray(source.commandTemplates || source.command_templates || product.commandTemplates || product.command_templates);
+  const commandTemplates = normalizeStringArray(
+    source.commandTemplates || source.command_templates || product.commandTemplates || product.command_templates,
+  );
   const files = normalizePackageFiles(source.files || product.files);
-  const mcpServer = normalizeMcpDeployment(source.mcpServer || source.mcp_server || product.mcpServer || product.mcp_server);
+  const mcpServer = normalizeMcpDeployment(
+    source.mcpServer || source.mcp_server || product.mcpServer || product.mcp_server,
+  );
   const deploymentCapability = normalizeRemoteCapability(source.capability || product.capability, capability);
   return {
     kind: deploymentKind,
     ...(files.length ? { files } : {}),
     capability: deploymentCapability,
     ...(mcpServer ? { mcpServer } : {}),
-    ...(commandTemplates.length ? { commandTemplates } : {})
+    ...(commandTemplates.length ? { commandTemplates } : {}),
   };
 }
 
 function normalizeCapabilityKind(value: unknown, fallback: CapabilityDefinition["kind"]): CapabilityDefinition["kind"] {
-  return value === "skill" || value === "tool" || value === "plugin" || value === "mcp" || value === "subagent" || value === "scheduler" || value === "storage"
+  return value === "skill" ||
+    value === "tool" ||
+    value === "plugin" ||
+    value === "mcp" ||
+    value === "subagent" ||
+    value === "scheduler" ||
+    value === "storage"
     ? value
     : fallback;
 }
@@ -438,7 +455,7 @@ function normalizePackageFiles(value: unknown): ToolMarketPackageFile[] {
     files.push({
       path,
       content,
-      encoding: file.encoding === "base64" ? "base64" : "utf8"
+      encoding: file.encoding === "base64" ? "base64" : "utf8",
     });
   }
   return files;
@@ -463,7 +480,7 @@ function normalizeMcpDeployment(value: unknown): ToolMarketMcpDeployment | undef
     env: normalizeEnv(input.env),
     requestTimeoutMs: typeof input.requestTimeoutMs === "number" ? input.requestTimeoutMs : undefined,
     enabled: input.enabled !== false,
-    autoConnect: Boolean(input.autoConnect)
+    autoConnect: Boolean(input.autoConnect),
   };
 }
 
@@ -479,18 +496,25 @@ function normalizeEnv(value: unknown): Record<string, string> | undefined {
 
 function normalizeType(type: string | undefined): ToolMarketProductType {
   const normalized = (type || "tool").toLowerCase();
-  return normalized === "mcp" || normalized === "plugin" || normalized === "skill" || normalized === "tool" ? normalized : "tool";
+  return normalized === "mcp" || normalized === "plugin" || normalized === "skill" || normalized === "tool"
+    ? normalized
+    : "tool";
 }
 
 function normalizeTags(tags: unknown, type: ToolMarketProductType): string[] {
   if (Array.isArray(tags)) {
-    return tags.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim()).slice(0, 5);
+    return tags
+      .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      .map((item) => item.trim())
+      .slice(0, 5);
   }
   return ["remote", type];
 }
 
 function isRemoteProductFree(product: RemoteToolMarketProduct): boolean {
-  return product.billing_mode === "free" || product.unit_price_cents === 0 || typeof product.unit_price_cents === "undefined";
+  return (
+    product.billing_mode === "free" || product.unit_price_cents === 0 || typeof product.unit_price_cents === "undefined"
+  );
 }
 
 function formatRemotePrice(product: RemoteToolMarketProduct): string {
@@ -513,16 +537,23 @@ function stringValue(value: unknown): string | undefined {
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
 function normalizeStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
   }
-  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim());
+  return value
+    .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    .map((item) => item.trim());
 }
 
 function slug(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "remote-tool";
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "remote-tool"
+  );
 }

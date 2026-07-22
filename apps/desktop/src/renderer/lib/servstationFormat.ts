@@ -1,4 +1,3 @@
-import { message } from "antd";
 import type { ServstationConversation, ServstationScheduledJob, ServstationSessionJob } from "@supbot/shared";
 import { formatDateTime } from "@supbot/shared";
 import { formatJsonSnippet } from "./chatFormat";
@@ -16,7 +15,7 @@ export function formatMessageTime(value: string | null | undefined): string {
     month: "short",
     day: "2-digit",
     hour: "2-digit",
-    minute: "2-digit"
+    minute: "2-digit",
   }).format(date);
 }
 
@@ -39,7 +38,7 @@ export function servstationMessagesFromJobs(jobs: ServstationSessionJob[]): Serv
         role: "user" as const,
         text: servstationJobPrompt(job) || job.requestId || job.id,
         attachments: extractServstationMessageAttachments(job),
-        createdAt
+        createdAt,
       },
       {
         id: `${job.id}-agent`,
@@ -47,8 +46,8 @@ export function servstationMessagesFromJobs(jobs: ServstationSessionJob[]): Serv
         text: servstationJobAssistantText(job) || servstationJobProgressText(job) || job.status,
         status: job.status,
         jobId: job.id,
-        createdAt: servstationJobResponseAtMs(job) || createdAt
-      }
+        createdAt: servstationJobResponseAtMs(job) || createdAt,
+      },
     ];
   });
 }
@@ -110,7 +109,9 @@ export function servstationResultText(value: unknown): string {
   }
   const assistantMessages = record.assistantMessages;
   if (Array.isArray(assistantMessages)) {
-    const text = assistantMessages.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).join("\n");
+    const text = assistantMessages
+      .filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
+      .join("\n");
     if (text) {
       return text;
     }
@@ -136,10 +137,17 @@ export function servstationResultText(value: unknown): string {
 
 export function servstationJobProgressText(job: ServstationSessionJob): string {
   const progress = toRecord(job.progress);
-  return stringField(progress, "message") || stringField(progress, "assistantPreview") || stringField(progress, "phase") || "";
+  return (
+    stringField(progress, "message") ||
+    stringField(progress, "assistantPreview") ||
+    stringField(progress, "phase") ||
+    ""
+  );
 }
 
-export function extractServstationMessageAttachments(job: ServstationSessionJob): ServstationChatMessage["attachments"] {
+export function extractServstationMessageAttachments(
+  job: ServstationSessionJob,
+): ServstationChatMessage["attachments"] {
   const payload = toRecord(job.payload);
   const raw = payload?.attachments;
   if (!Array.isArray(raw)) {
@@ -210,7 +218,7 @@ export function servstationJobResponseAtMs(job: ServstationSessionJob): number {
 }
 
 export function toRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
 export function stringField(record: Record<string, unknown> | undefined, key: string): string | undefined {
@@ -225,7 +233,7 @@ export function numberField(record: Record<string, unknown> | undefined, key: st
 
 export function servstationMessagesFromTranscript(
   transcript: NonNullable<ServstationConversation["messages"]>,
-  jobs: ServstationSessionJob[]
+  jobs: ServstationSessionJob[],
 ): ServstationChatMessage[] {
   if (!transcript.length) {
     return servstationMessagesFromJobs(jobs);
@@ -239,9 +247,9 @@ export function servstationMessagesFromTranscript(
       text: message.text,
       status: message.status,
       jobId: message.jobId,
-      createdAt: servstationMessageCreatedAtMs(message.createdAt)
+      createdAt: servstationMessageCreatedAtMs(message.createdAt),
     })),
-    ...servstationMessagesFromJobs(runningJobs)
+    ...servstationMessagesFromJobs(runningJobs),
   ].sort((left, right) => left.createdAt - right.createdAt);
 }
 

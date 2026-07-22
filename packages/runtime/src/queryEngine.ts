@@ -14,7 +14,7 @@ import type {
   QuerySession,
   RuntimeEventRecord,
   SubagentConfig,
-  ToolCallRecord
+  ToolCallRecord,
 } from "@supbot/shared";
 import { nowIso } from "@supbot/shared";
 import { CompactManager } from "./compactManager";
@@ -89,7 +89,7 @@ export class QueryEngine {
       turns: 0,
       startedAt,
       updatedAt: startedAt,
-      subagentName: this.input.subagent?.name
+      subagentName: this.input.subagent?.name,
     };
     await this.input.onSession(session);
     await this.recordRuntimeEvent({
@@ -98,7 +98,7 @@ export class QueryEngine {
       conversationId: this.input.conversationId,
       kind: "query_start",
       message: this.input.subagent ? `@${this.input.subagent.name} started` : "Query started",
-      createdAt: startedAt
+      createdAt: startedAt,
     });
 
     let compactBoundary: CompactBoundary | undefined;
@@ -108,7 +108,7 @@ export class QueryEngine {
         jobId: this.input.jobId,
         messages: this.input.messages,
         randomId: this.input.toolContext.host.randomId,
-        nowIso: this.input.toolContext.host.nowIso
+        nowIso: this.input.toolContext.host.nowIso,
       });
       if (compactBoundary) {
         await this.input.onCompact(compactBoundary);
@@ -120,13 +120,14 @@ export class QueryEngine {
           kind: "compact",
           message: "Conversation compacted",
           createdAt: compactBoundary.createdAt,
-          data: compactBoundary
+          data: compactBoundary,
         });
         memorySnapshot = await this.createMemoryCandidates(memorySnapshot, compactBoundary);
       }
     }
 
-    const activeCompactBoundary = compactBoundary || latestBoundaryFor(this.input.conversationId, this.input.compactBoundaries);
+    const activeCompactBoundary =
+      compactBoundary || latestBoundaryFor(this.input.conversationId, this.input.compactBoundaries);
     const recallQuery = latestUserPrompt(this.input.messages);
     const recall = this.memoryManager.recall(memorySnapshot, {
       query: recallQuery,
@@ -135,7 +136,7 @@ export class QueryEngine {
       subagentName: this.input.subagent?.name,
       excludeSources: activeCompactBoundary ? [`compact:${activeCompactBoundary.id}`] : [],
       limit: 6,
-      budgetChars: 6000
+      budgetChars: 6000,
     });
     memorySnapshot = this.memoryManager.recordRecall(recall.memory, {
       id: this.input.toolContext.host.randomId("mem_recall"),
@@ -154,7 +155,7 @@ export class QueryEngine {
         score: item.score,
         matchedKeywords: item.matchedKeywords,
         reason: item.reason,
-        sourceLabel: item.sourceLabel
+        sourceLabel: item.sourceLabel,
       })),
       excludedResults: recall.excludedResults.map((item) => ({
         id: item.id,
@@ -162,9 +163,9 @@ export class QueryEngine {
         score: item.score,
         matchedKeywords: item.matchedKeywords,
         reason: item.reason,
-        sourceLabel: item.sourceLabel
+        sourceLabel: item.sourceLabel,
       })),
-      blockPreview: recall.block
+      blockPreview: recall.block,
     });
     await this.input.onMemoryChanged(memorySnapshot);
     if (recall.results.length) {
@@ -187,7 +188,7 @@ export class QueryEngine {
             score: item.score,
             matchedKeywords: item.matchedKeywords,
             reason: item.reason,
-            sourceLabel: item.sourceLabel
+            sourceLabel: item.sourceLabel,
           })),
           excludedResults: recall.excludedResults.map((item) => ({
             id: item.id,
@@ -195,9 +196,9 @@ export class QueryEngine {
             score: item.score,
             matchedKeywords: item.matchedKeywords,
             reason: item.reason,
-            sourceLabel: item.sourceLabel
-          }))
-        }
+            sourceLabel: item.sourceLabel,
+          })),
+        },
       });
     }
 
@@ -208,12 +209,14 @@ export class QueryEngine {
       subagent: this.input.subagent,
       capabilities: this.input.capabilities,
       messages: this.input.messages,
-      compactBoundaries: compactBoundary ? [compactBoundary, ...this.input.compactBoundaries] : this.input.compactBoundaries,
+      compactBoundaries: compactBoundary
+        ? [compactBoundary, ...this.input.compactBoundaries]
+        : this.input.compactBoundaries,
       memoryBlock: recall.block,
       systemContext: {
         conversationId: this.input.conversationId,
-        jobId: this.input.jobId
-      }
+        jobId: this.input.jobId,
+      },
     });
 
     try {
@@ -226,7 +229,7 @@ export class QueryEngine {
           modelConfig: this.input.modelConfig,
           apiKey: this.input.apiKey,
           tools: this.input.registry.toOpenAiTools(),
-          signal: this.input.signal
+          signal: this.input.signal,
         },
         registry: this.input.registry,
         toolContext: this.input.toolContext,
@@ -243,10 +246,10 @@ export class QueryEngine {
             kind: "permission_timeout",
             message: `${permission.toolName} permission timed out`,
             createdAt: nowIso(),
-            data: permission
+            data: permission,
           });
         },
-        onEvent: (event) => this.handleLoopEvent(event)
+        onEvent: (event) => this.handleLoopEvent(event),
       });
       const finishedAt = nowIso();
       session = {
@@ -254,21 +257,9 @@ export class QueryEngine {
         status: "completed",
         turns: result.trace.turns,
         updatedAt: finishedAt,
-        finishedAt
+        finishedAt,
       };
       await this.input.onSession(session);
-      await this.transcriptStore.append(this.input.conversationId, {
-        type: "message",
-        message: {
-          id: this.input.toolContext.host.randomId("msg"),
-          conversationId: this.input.conversationId,
-          role: "assistant",
-          text: result.text,
-          createdAt: finishedAt,
-          jobId: this.input.jobId,
-          status: "completed"
-        }
-      });
       return { ...result, compactBoundary };
     } catch (error) {
       session = {
@@ -276,7 +267,7 @@ export class QueryEngine {
         status: this.input.signal.aborted ? "canceled" : "failed",
         updatedAt: nowIso(),
         finishedAt: nowIso(),
-        error: (error as Error).message
+        error: (error as Error).message,
       };
       await this.input.onSession(session);
       throw error;
@@ -317,7 +308,7 @@ export class QueryEngine {
         kind: "memory_candidate",
         message: "Memory candidate created from compact summary",
         createdAt: candidate.createdAt,
-        data: candidate
+        data: candidate,
       });
     }
     return result.memory;

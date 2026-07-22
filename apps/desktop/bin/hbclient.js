@@ -6,12 +6,20 @@ let electron;
 try {
   electron = require("electron");
 } catch {
-  electron = path.resolve(__dirname, "..", "..", "..", "node_modules", ".bin", process.platform === "win32" ? "electron.cmd" : "electron");
+  electron = path.resolve(
+    __dirname,
+    "..",
+    "..",
+    "..",
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "electron.cmd" : "electron",
+  );
 }
 const appRoot = path.resolve(__dirname, "..");
 const child = spawn(electron, [appRoot], {
   stdio: "inherit",
-  env: process.env
+  env: process.env,
 });
 
 child.on("exit", (code, signal) => {

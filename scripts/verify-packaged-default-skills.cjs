@@ -3,7 +3,8 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const appPath = process.env.HBCLIENT_PACKAGED_EXE || path.resolve("apps", "desktop", "release", "win-unpacked", "HBClient.exe");
+const appPath =
+  process.env.HBCLIENT_PACKAGED_EXE || path.resolve("apps", "desktop", "release", "win-unpacked", "HBClient.exe");
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "hbclient-packaged-"));
 const port = Number(process.env.HBCLIENT_VERIFY_PORT || 9347);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -42,11 +43,13 @@ async function evaluate(wsUrl, expression) {
         resolve(data);
       }
     });
-    ws.send(JSON.stringify({
-      id: messageId,
-      method: "Runtime.evaluate",
-      params: { expression, awaitPromise: true, returnByValue: true }
-    }));
+    ws.send(
+      JSON.stringify({
+        id: messageId,
+        method: "Runtime.evaluate",
+        params: { expression, awaitPromise: true, returnByValue: true },
+      }),
+    );
   });
   ws.close();
   if (result.exceptionDetails) {
@@ -62,10 +65,12 @@ async function main() {
   child = spawn(appPath, [`--remote-debugging-port=${port}`], {
     env: { ...process.env, HBCLIENT_USER_DATA_DIR: userDataDir },
     stdio: "ignore",
-    windowsHide: true
+    windowsHide: true,
   });
   const page = await waitForPage();
-  const result = await evaluate(page.webSocketDebuggerUrl, `(async () => {
+  const result = await evaluate(
+    page.webSocketDebuggerUrl,
+    `(async () => {
     const snapshot = await window.supbot.snapshot();
     const market = await window.supbot.listToolMarket({ query: "anthropic" });
     const anthropicCapabilities = snapshot.capabilities
@@ -80,7 +85,8 @@ async function main() {
       installedMarketCount: market.filter((item) => item.installed).length,
       capabilitySample: anthropicCapabilities.slice(0, 5)
     };
-  })()`);
+  })()`,
+  );
   const seededSkillsDir = path.join(userDataDir, "data", "skills");
   const seededSkillCount = fs.existsSync(seededSkillsDir)
     ? fs.readdirSync(seededSkillsDir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).length
@@ -88,23 +94,34 @@ async function main() {
   const markerExists = fs.existsSync(path.join(userDataDir, "data", "default-data-seed.json"));
   const updateConfigPath = path.join(path.dirname(appPath), "resources", "app-update.yml");
   const updateConfig = fs.existsSync(updateConfigPath) ? fs.readFileSync(updateConfigPath, "utf8") : "";
-  const hasUpdateConfig = updateConfig.includes("provider: generic")
-    && updateConfig.includes("101.227.67.76:8800")
-    && updateConfig.includes("useMultipleRangeRequest: false");
+  const hasUpdateConfig =
+    updateConfig.includes("provider: generic") &&
+    updateConfig.includes("101.227.67.76:8800") &&
+    updateConfig.includes("useMultipleRangeRequest: false");
   const verification = { ...result, seededSkillCount, markerExists, hasUpdateConfig, userDataDir };
   console.log(JSON.stringify(verification, null, 2));
-  if (result.capabilityCount < 17 || !result.hasDocx || !result.hasPdf || result.installedMarketCount < 17 || seededSkillCount < 17 || !markerExists || !hasUpdateConfig) {
+  if (
+    result.capabilityCount < 17 ||
+    !result.hasDocx ||
+    !result.hasPdf ||
+    result.installedMarketCount < 17 ||
+    seededSkillCount < 17 ||
+    !markerExists ||
+    !hasUpdateConfig
+  ) {
     throw new Error("Packaged app did not seed bundled default skills or update config correctly.");
   }
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-}).finally(async () => {
-  if (child && !child.killed) {
-    child.kill();
-  }
-  await sleep(800);
-  fs.rmSync(userDataDir, { recursive: true, force: true });
-});
+main()
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    if (child && !child.killed) {
+      child.kill();
+    }
+    await sleep(800);
+    fs.rmSync(userDataDir, { recursive: true, force: true });
+  });

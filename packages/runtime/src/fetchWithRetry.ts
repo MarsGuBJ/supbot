@@ -18,7 +18,11 @@ export interface FetchWithRetryOptions {
  * response; once headers arrive the body streams through untouched, so SSE
  * callers are never retried mid-stream.
  */
-export async function fetchWithRetry(url: string, init: RequestInit = {}, options: FetchWithRetryOptions = {}): Promise<Response> {
+export async function fetchWithRetry(
+  url: string,
+  init: RequestInit = {},
+  options: FetchWithRetryOptions = {},
+): Promise<Response> {
   const retries = Math.max(0, options.retries ?? DEFAULT_RETRIES);
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   let lastError: unknown;

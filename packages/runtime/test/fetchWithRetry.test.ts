@@ -5,7 +5,9 @@ import { fetchWithRetry } from "../src/fetchWithRetry";
 
 const servers: Server[] = [];
 
-async function startServer(handler: (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => void): Promise<string> {
+async function startServer(
+  handler: (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => void,
+): Promise<string> {
   const server = createServer(handler);
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

@@ -1,9 +1,6 @@
 import { Buffer } from "node:buffer";
 
-import type {
-  IdentityContext,
-  ServstationA2AOidcTokenSet
-} from "@supbot/shared";
+import type { IdentityContext, ServstationA2AOidcTokenSet } from "@supbot/shared";
 
 interface TokenEndpointResponse {
   access_token?: string;
@@ -38,7 +35,7 @@ export function parseServstationOidcSecret(secret: string | undefined): Servstat
       scope: typeof parsed.scope === "string" ? parsed.scope : undefined,
       expiresAt: typeof parsed.expiresAt === "string" ? parsed.expiresAt : undefined,
       issuerUrl: parsed.issuerUrl,
-      clientId: parsed.clientId
+      clientId: parsed.clientId,
     };
   } catch {
     return undefined;
@@ -72,10 +69,13 @@ export async function refreshServstationOidcTokenSet(
     body: new URLSearchParams({
       grant_type: "refresh_token",
       client_id: tokens.clientId,
-      refresh_token: tokens.refreshToken
-    })
+      refresh_token: tokens.refreshToken,
+    }),
   });
-  const payload = await response.json().catch(() => ({})) as TokenEndpointResponse & { error?: string; error_description?: string };
+  const payload = (await response.json().catch(() => ({}))) as TokenEndpointResponse & {
+    error?: string;
+    error_description?: string;
+  };
   if (!response.ok || !payload.access_token) {
     const message = payload.error_description || payload.error || `HTTP ${response.status}`;
     throw new Error(`Servstation OIDC refresh failed: ${message}`);
@@ -83,7 +83,7 @@ export async function refreshServstationOidcTokenSet(
   return oidcTokenSetFromTokenResponse(payload, {
     issuerUrl: tokens.issuerUrl,
     clientId: tokens.clientId,
-    fallbackRefreshToken: tokens.refreshToken
+    fallbackRefreshToken: tokens.refreshToken,
   });
 }
 
@@ -94,9 +94,10 @@ export function oidcTokenSetFromTokenResponse(
   if (!payload.access_token) {
     throw new Error("Servstation OIDC token response did not include an access token.");
   }
-  const expiresAt = typeof payload.expires_in === "number" && Number.isFinite(payload.expires_in)
-    ? new Date(Date.now() + Math.max(0, payload.expires_in - 30) * 1000).toISOString()
-    : undefined;
+  const expiresAt =
+    typeof payload.expires_in === "number" && Number.isFinite(payload.expires_in)
+      ? new Date(Date.now() + Math.max(0, payload.expires_in - 30) * 1000).toISOString()
+      : undefined;
   return {
     accessToken: payload.access_token,
     refreshToken: payload.refresh_token || context.fallbackRefreshToken,
@@ -105,11 +106,14 @@ export function oidcTokenSetFromTokenResponse(
     scope: payload.scope,
     expiresAt,
     issuerUrl: normalizeUrl(context.issuerUrl),
-    clientId: context.clientId
+    clientId: context.clientId,
   };
 }
 
-export function identityContextFromAccessToken(accessToken: string, base: Partial<IdentityContext> = {}): IdentityContext | undefined {
+export function identityContextFromAccessToken(
+  accessToken: string,
+  base: Partial<IdentityContext> = {},
+): IdentityContext | undefined {
   const claims = decodeJwtPayload(accessToken);
   if (!claims) {
     return undefined;
@@ -126,22 +130,23 @@ export function identityContextFromAccessToken(accessToken: string, base: Partia
     organizationId,
     departmentId,
     userId,
-    roleIds: claimStringArray(claims.roleIds)
-      || claimStringArray(claims.roles)
-      || claimStringArray((claims.realm_access as Record<string, unknown> | undefined)?.roles)
-      || base.roleIds
-      || [],
+    roleIds:
+      claimStringArray(claims.roleIds) ||
+      claimStringArray(claims.roles) ||
+      claimStringArray((claims.realm_access as Record<string, unknown> | undefined)?.roles) ||
+      base.roleIds ||
+      [],
     source: "servstation",
     agentInstanceId: base.agentInstanceId,
     servstationUrl: base.servstationUrl,
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
   };
 }
 
 async function discoverTokenEndpoint(issuerUrl: string, signal?: AbortSignal): Promise<string> {
   const issuer = normalizeUrl(issuerUrl);
   const response = await fetch(`${issuer}/.well-known/openid-configuration`, { signal });
-  const payload = await response.json().catch(() => ({})) as OidcDiscovery;
+  const payload = (await response.json().catch(() => ({}))) as OidcDiscovery;
   if (!response.ok || !payload.token_endpoint) {
     throw new Error(`Servstation OIDC discovery failed for ${issuer}`);
   }
@@ -171,10 +176,15 @@ function firstString(...values: unknown[]): string | undefined {
 
 function claimStringArray(value: unknown): string[] | undefined {
   if (Array.isArray(value)) {
-    return value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim());
+    return value
+      .filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
+      .map((item) => item.trim());
   }
   if (typeof value === "string") {
-    return value.split(",").map((item) => item.trim()).filter(Boolean);
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
   }
   return undefined;
 }

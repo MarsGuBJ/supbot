@@ -14,7 +14,7 @@ import type {
   QuerySession,
   RuntimeEventRecord,
   SubagentConfig,
-  ToolCallRecord
+  ToolCallRecord,
 } from "@supbot/shared";
 import { nowIso } from "@supbot/shared";
 import type { LocalToolResult } from "./localTools";
@@ -73,16 +73,18 @@ export class SubagentRunner {
       conversationId: subagentConversationId,
       kind: "subagent_start",
       message: `@${subagent.name} started`,
-      data: { subagentName: subagent.name, prompt: input.prompt }
+      data: { subagentName: subagent.name, prompt: input.prompt },
     });
 
-    const subMessages: ChatMessage[] = [{
-      id: this.host.randomId("msg"),
-      conversationId: subagentConversationId,
-      role: "user",
-      text: input.prompt,
-      createdAt: nowIso()
-    }];
+    const subMessages: ChatMessage[] = [
+      {
+        id: this.host.randomId("msg"),
+        conversationId: subagentConversationId,
+        role: "user",
+        text: input.prompt,
+        createdAt: nowIso(),
+      },
+    ];
 
     try {
       const engine = new QueryEngine({
@@ -114,7 +116,7 @@ export class SubagentRunner {
         onCompact: (boundary) => this.host.onCompact(boundary),
         onMemoryChanged: (memory) => this.host.onMemoryChanged(memory),
         onMemoryCandidate: (candidate) => this.host.onMemoryCandidate(candidate),
-        onPermissionTimeout: (permission) => this.host.onPermissionTimeout(permission)
+        onPermissionTimeout: (permission) => this.host.onPermissionTimeout(permission),
       });
       const result = await engine.submitTurn();
       await this.emitSubagentEvent({
@@ -122,11 +124,11 @@ export class SubagentRunner {
         conversationId: subagentConversationId,
         kind: "subagent_done",
         message: `@${subagent.name} completed`,
-        data: { subagentName: subagent.name, output: result.text }
+        data: { subagentName: subagent.name, output: result.text },
       });
       return {
         text: `@${subagent.name} result:\n\n${result.text}`,
-        generatedFiles: result.generatedFiles as GeneratedFile[]
+        generatedFiles: result.generatedFiles as GeneratedFile[],
       };
     } catch (error) {
       await this.emitSubagentEvent({
@@ -134,17 +136,19 @@ export class SubagentRunner {
         conversationId: subagentConversationId,
         kind: "subagent_done",
         message: `@${subagent.name} failed`,
-        data: { subagentName: subagent.name, error: (error as Error).message }
+        data: { subagentName: subagent.name, error: (error as Error).message },
       });
       return { text: `Error: @${subagent.name} failed: ${(error as Error).message}` };
     }
   }
 
-  private async emitSubagentEvent(input: Pick<RuntimeEventRecord, "jobId" | "conversationId" | "kind" | "message" | "data">): Promise<void> {
+  private async emitSubagentEvent(
+    input: Pick<RuntimeEventRecord, "jobId" | "conversationId" | "kind" | "message" | "data">,
+  ): Promise<void> {
     await this.host.onRuntimeEvent({
       id: this.host.randomId("event"),
       createdAt: nowIso(),
-      ...input
+      ...input,
     });
   }
 }

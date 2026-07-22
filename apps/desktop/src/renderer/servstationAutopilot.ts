@@ -1,8 +1,4 @@
-import type {
-  ServstationAutopilotEvent,
-  ServstationAutopilotRun,
-  ServstationAutopilotStep
-} from "@supbot/shared";
+import type { ServstationAutopilotEvent, ServstationAutopilotRun, ServstationAutopilotStep } from "@supbot/shared";
 
 const TERMINAL_STATUSES = new Set(["completed", "failed", "stopped"]);
 const RESUMABLE_STATUSES = new Set(["paused", "needs_user"]);
@@ -27,7 +23,7 @@ export function servstationAutopilotControls(run: ServstationAutopilotRun | null
     promptLocked: !terminal && run.status !== "needs_user",
     canPause: canControl && !canResume,
     canResume,
-    canStop: canControl
+    canStop: canControl,
   };
 }
 
@@ -35,7 +31,9 @@ export function servstationAutopilotIsActive(run: ServstationAutopilotRun | null
   return Boolean(run && !TERMINAL_STATUSES.has(run.status) && !TERMINAL_STATUSES.has(run.lifecycleStatus || ""));
 }
 
-export function servstationAutopilotLatestStep(steps: ServstationAutopilotStep[]): ServstationAutopilotStep | undefined {
+export function servstationAutopilotLatestStep(
+  steps: ServstationAutopilotStep[],
+): ServstationAutopilotStep | undefined {
   let latest: ServstationAutopilotStep | undefined;
   for (const step of steps) {
     if (!latest || step.sequence > latest.sequence) {
@@ -49,7 +47,7 @@ export function servstationAutopilotEvidenceCount(run: ServstationAutopilotRun |
   const evidence = run?.latestEvidence || [];
   return {
     met: evidence.reduce((count, item) => count + (item.status === "met" ? 1 : 0), 0),
-    total: evidence.length
+    total: evidence.length,
   };
 }
 
@@ -61,7 +59,7 @@ export function servstationAutopilotDecisionReason(step: ServstationAutopilotSte
 export function mergeServstationAutopilotEvent(
   events: ServstationAutopilotEvent[],
   event: ServstationAutopilotEvent,
-  limit = 50
+  limit = 50,
 ): ServstationAutopilotEvent[] {
   return [event, ...events.filter((item) => item.id !== event.id)].slice(0, limit);
 }

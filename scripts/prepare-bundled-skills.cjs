@@ -13,7 +13,8 @@ if (!isDirectory(sourceSkillsDir)) {
   fail(`Installed skills directory not found: ${sourceSkillsDir}`);
 }
 
-const skillNames = fs.readdirSync(sourceSkillsDir, { withFileTypes: true })
+const skillNames = fs
+  .readdirSync(sourceSkillsDir, { withFileTypes: true })
   .filter((entry) => entry.isDirectory() && fs.existsSync(path.join(sourceSkillsDir, entry.name, "SKILL.md")))
   .map((entry) => entry.name)
   .sort((a, b) => a.localeCompare(b));
@@ -37,7 +38,7 @@ const manifest = {
   sourceDataDir,
   skillCount: skillNames.length,
   receiptCount,
-  skills: skillNames
+  skills: skillNames,
 };
 fs.writeFileSync(path.join(targetRoot, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 
@@ -48,7 +49,7 @@ function resolveSourceDataDir() {
     process.env.HBCLIENT_BUNDLED_DATA_DIR,
     process.env.SUPBOT_BUNDLED_DATA_DIR,
     process.env.APPDATA ? path.join(process.env.APPDATA, "HBClient", "data") : undefined,
-    process.env.APPDATA ? path.join(process.env.APPDATA, "hbclient", "data") : undefined
+    process.env.APPDATA ? path.join(process.env.APPDATA, "hbclient", "data") : undefined,
   ].filter(Boolean);
   for (const candidate of candidates) {
     if (isDirectory(path.join(candidate, "skills"))) {
@@ -83,7 +84,10 @@ function copyMarketReceipts(skillNames) {
       const localPath = typeof manifest?.localPath === "string" ? manifest.localPath : undefined;
       const localDirName = localPath ? path.basename(localPath) : undefined;
       if (skillNameSet.has(productEntry.name) || skillNameSet.has(productId) || skillNameSet.has(localDirName)) {
-        fs.cpSync(productPath, path.join(targetMarketRoot, originEntry.name, productEntry.name), { recursive: true, force: true });
+        fs.cpSync(productPath, path.join(targetMarketRoot, originEntry.name, productEntry.name), {
+          recursive: true,
+          force: true,
+        });
         count += 1;
         copiedSkillNames.add(productEntry.name);
         if (productId) {
@@ -106,7 +110,7 @@ function copyMarketReceipts(skillNames) {
       fs.writeFileSync(
         path.join(targetMarketRoot, "bundled", skillName, "supbot-market-install.json"),
         `${JSON.stringify(localManifest, null, 2)}\n`,
-        "utf8"
+        "utf8",
       );
       count += 1;
     }

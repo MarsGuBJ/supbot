@@ -5,7 +5,7 @@ import type {
   PermissionMode,
   PermissionRule,
   RuntimeEventRecord,
-  ToolCallRecord
+  ToolCallRecord,
 } from "@supbot/shared";
 import { nowIso } from "@supbot/shared";
 import type { AdapterMessage, AdapterToolCall, ModelAdapter } from "./modelAdapter";
@@ -53,7 +53,7 @@ export async function queryLoop(input: QueryLoopInput): Promise<QueryLoopResult>
     turns: 0,
     toolCalls: [],
     startedAt: nowIso(),
-    updatedAt: nowIso()
+    updatedAt: nowIso(),
   };
   const generatedFiles: GeneratedFile[] = [];
   const events: RuntimeEventRecord[] = [];
@@ -65,11 +65,11 @@ export async function queryLoop(input: QueryLoopInput): Promise<QueryLoopResult>
       trace.updatedAt = nowIso();
       const modelRequest = {
         ...input.modelRequest,
-        tools: input.registry.toOpenAiTools()
+        tools: input.registry.toOpenAiTools(),
       };
       const streamed = input.model.stream({
         ...modelRequest,
-        messages
+        messages,
       });
       let result: Awaited<ReturnType<ModelAdapter["complete"]>> | undefined;
       for await (const event of streamed) {
@@ -97,7 +97,7 @@ export async function queryLoop(input: QueryLoopInput): Promise<QueryLoopResult>
       messages.push({
         role: "assistant",
         content: result.text || null,
-        tool_calls: result.toolCalls
+        tool_calls: result.toolCalls,
       });
 
       const envelopes = await executeToolBatch(result.toolCalls, input, toolExecutor, trace);
@@ -107,7 +107,7 @@ export async function queryLoop(input: QueryLoopInput): Promise<QueryLoopResult>
         messages.push({
           role: "tool",
           tool_call_id: envelope.record.id,
-          content: envelope.toolResultText
+          content: envelope.toolResultText,
         });
         await emit(input, events, { type: "tool_result", record: envelope.record });
       }
@@ -129,7 +129,7 @@ async function executeToolBatch(
   toolCalls: AdapterToolCall[],
   input: QueryLoopInput,
   executor: ToolExecutor,
-  trace: AgentLoopTrace
+  trace: AgentLoopTrace,
 ) {
   const envelopes = [];
   const safe: Array<{ index: number; toolCall: AdapterToolCall }> = [];
@@ -141,12 +141,12 @@ async function executeToolBatch(
       continue;
     }
     if (safe.length) {
-      envelopes.push(...await executeSafeGroup(safe.splice(0), input, executor, trace));
+      envelopes.push(...(await executeSafeGroup(safe.splice(0), input, executor, trace)));
     }
     envelopes.push(await executeOne(toolCall, input, executor, trace));
   }
   if (safe.length) {
-    envelopes.push(...await executeSafeGroup(safe, input, executor, trace));
+    envelopes.push(...(await executeSafeGroup(safe, input, executor, trace)));
   }
   return envelopes;
 }
@@ -155,13 +155,20 @@ async function executeSafeGroup(
   group: Array<{ index: number; toolCall: AdapterToolCall }>,
   input: QueryLoopInput,
   executor: ToolExecutor,
-  trace: AgentLoopTrace
+  trace: AgentLoopTrace,
 ) {
-  const results = await Promise.all(group.map((item) => executeOne(item.toolCall, input, executor, trace).then((result) => ({ ...item, result }))));
+  const results = await Promise.all(
+    group.map((item) => executeOne(item.toolCall, input, executor, trace).then((result) => ({ ...item, result }))),
+  );
   return results.sort((a, b) => a.index - b.index).map((item) => item.result);
 }
 
-async function executeOne(toolCall: AdapterToolCall, input: QueryLoopInput, executor: ToolExecutor, trace: AgentLoopTrace) {
+async function executeOne(
+  toolCall: AdapterToolCall,
+  input: QueryLoopInput,
+  executor: ToolExecutor,
+  trace: AgentLoopTrace,
+) {
   return executor.execute({
     jobId: input.jobId,
     conversationId: input.conversationId,
@@ -177,7 +184,7 @@ async function executeOne(toolCall: AdapterToolCall, input: QueryLoopInput, exec
       trace.toolCalls = upsertRecord(trace.toolCalls, record);
       trace.updatedAt = nowIso();
       await emit(input, [], { type: "tool_progress", record });
-    }
+    },
   });
 }
 
@@ -201,9 +208,15 @@ function artifactCompletionFromTrace(trace: AgentLoopTrace): string | undefined 
 
 function artifactSummaryLine(output: string): string | undefined {
   const artifactExtension = /\.(pptx|docx|xlsx|pdf|csv|tsv|txt|md|html|png|jpe?g|webp)\b/i;
-  const lines = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  return lines.find((line) => /(saved to|wrote|created|copied|fullpath|path|name)/i.test(line) && artifactExtension.test(line))
-    || lines.find((line) => artifactExtension.test(line) && /[\\/]/.test(line));
+  const lines = output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return (
+    lines.find(
+      (line) => /(saved to|wrote|created|copied|fullpath|path|name)/i.test(line) && artifactExtension.test(line),
+    ) || lines.find((line) => artifactExtension.test(line) && /[\\/]/.test(line))
+  );
 }
 
 async function emit(input: QueryLoopInput, events: RuntimeEventRecord[], event: QueryLoopEvent): Promise<void> {
@@ -220,13 +233,45 @@ export function toRuntimeEvent(jobId: string, conversationId: string, event: Que
     case "message_delta":
       return { id, jobId, conversationId, kind: "message_delta", message: event.delta, createdAt, data: event };
     case "tool_use_start":
-      return { id, jobId, conversationId, kind: "tool_use_start", message: `${event.toolCall.function.name} started`, createdAt, data: event.toolCall };
+      return {
+        id,
+        jobId,
+        conversationId,
+        kind: "tool_use_start",
+        message: `${event.toolCall.function.name} started`,
+        createdAt,
+        data: event.toolCall,
+      };
     case "tool_progress":
-      return { id, jobId, conversationId, kind: "tool_progress", message: `${event.record.toolName}: ${event.record.status}`, createdAt, data: event.record };
+      return {
+        id,
+        jobId,
+        conversationId,
+        kind: "tool_progress",
+        message: `${event.record.toolName}: ${event.record.status}`,
+        createdAt,
+        data: event.record,
+      };
     case "tool_result":
-      return { id, jobId, conversationId, kind: "tool_result", message: `${event.record.toolName}: ${event.record.status}`, createdAt, data: event.record };
+      return {
+        id,
+        jobId,
+        conversationId,
+        kind: "tool_result",
+        message: `${event.record.toolName}: ${event.record.status}`,
+        createdAt,
+        data: event.record,
+      };
     case "turn_complete":
-      return { id, jobId, conversationId, kind: "turn_complete", message: "Turn complete", createdAt, data: { text: event.text } };
+      return {
+        id,
+        jobId,
+        conversationId,
+        kind: "turn_complete",
+        message: "Turn complete",
+        createdAt,
+        data: { text: event.text },
+      };
     case "turn_failed":
       return { id, jobId, conversationId, kind: "turn_failed", message: event.error, createdAt, data: event.trace };
   }

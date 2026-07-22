@@ -98,13 +98,14 @@ import type {
   ToolMarketConfigUpdate,
   ToolMarketQuery,
   TaskWorktree,
-  TranscriptLoadResult
+  TranscriptLoadResult,
+  TranscriptPage,
 } from "@supbot/shared";
 
 declare global {
   interface Window {
     supbot: {
-      snapshot(): Promise<RuntimeSnapshot>;
+      snapshot(activeConversationId?: string): Promise<RuntimeSnapshot>;
       getHBClientUpdateState(): Promise<HBClientUpdateState>;
       checkHBClientUpdate(): Promise<HBClientUpdateState>;
       downloadHBClientUpdate(): Promise<HBClientUpdateState>;
@@ -118,10 +119,17 @@ declare global {
       approveToolPermission(id: string): Promise<void>;
       denyToolPermission(id: string): Promise<void>;
       setPermissionMode(mode: PermissionMode): Promise<PermissionMode>;
-      addPermissionRule(rule: Omit<PermissionRule, "id" | "createdAt" | "scope"> & { id?: string }): Promise<PermissionRule>;
+      addPermissionRule(
+        rule: Omit<PermissionRule, "id" | "createdAt" | "scope"> & { id?: string },
+      ): Promise<PermissionRule>;
       removePermissionRule(id: string): Promise<void>;
       compactConversation(conversationId: string): Promise<import("@supbot/shared").CompactBoundary>;
       loadTranscript(conversationId: string): Promise<TranscriptLoadResult>;
+      loadConversationHistory(
+        conversationId: string,
+        beforeMessageId?: string,
+        limit?: number,
+      ): Promise<TranscriptPage>;
       createProjectFromFolder(input: ProjectCreateInput): Promise<Project>;
       createProjectFromName(input: ProjectCreateFromNameInput): Promise<Project>;
       listProjects(): Promise<Project[]>;
@@ -139,7 +147,9 @@ declare global {
       discardWorktree(id: string): Promise<TaskWorktree>;
       openWorktreeFolder(id: string): Promise<void>;
       getRemoteBridgeConfig(): Promise<RemoteBridgeConfig>;
-      updateRemoteBridgeConfig(input: Partial<RemoteBridgeConfig> & { token?: string; clearToken?: boolean }): Promise<RemoteBridgeConfig>;
+      updateRemoteBridgeConfig(
+        input: Partial<RemoteBridgeConfig> & { token?: string; clearToken?: boolean },
+      ): Promise<RemoteBridgeConfig>;
       listRemoteBridgeSessions(): Promise<RemoteBridgeSession[]>;
       revokeRemoteBridgeSession(id: string): Promise<RemoteBridgeSession>;
       listRemoteBridgeAudit(): Promise<RemoteBridgeAuditRecord[]>;
@@ -157,23 +167,36 @@ declare global {
       updateServstationProject(id: string, name: string): Promise<ServstationProject>;
       deleteServstationProject(id: string): Promise<ServstationDeleteProjectResponse>;
       listServstationProjectResources(id: string): Promise<ServstationProjectResource[]>;
-      deleteServstationProjectResource(projectId: string, resourceId: string): Promise<ServstationDeleteProjectResourceResponse>;
+      deleteServstationProjectResource(
+        projectId: string,
+        resourceId: string,
+      ): Promise<ServstationDeleteProjectResourceResponse>;
       createServstationConversation(title?: string, projectId?: string): Promise<ServstationConversation>;
       deleteServstationConversation(id: string): Promise<void>;
       sendServstationPrompt(input: ServstationSendPromptInput): Promise<ServstationSendPromptResult>;
       cancelServstationJob(id: string): Promise<ServstationSessionJob>;
       createServstationScheduledJob(input: ServstationScheduledJobInput): Promise<ServstationScheduledJob>;
-      updateServstationScheduledJob(id: string, input: Partial<ServstationScheduledJobInput>): Promise<ServstationScheduledJob>;
+      updateServstationScheduledJob(
+        id: string,
+        input: Partial<ServstationScheduledJobInput>,
+      ): Promise<ServstationScheduledJob>;
       deleteServstationScheduledJob(id: string): Promise<void>;
       startServstationAutopilotRun(input: ServstationAutopilotStartInput): Promise<ServstationAutopilotRun>;
       updateServstationAutopilotRun(input: ServstationAutopilotStatusUpdate): Promise<ServstationAutopilotRun>;
       onServstationAutopilotEvent(runId: string, listener: (event: ServstationAutopilotEvent) => void): () => void;
       getServstationFlowEngineSnapshot(): Promise<ServstationFlowEngineSnapshot>;
-      launchServstationFlowEngineWorkflow(input: ServstationFlowEngineLaunchInput): Promise<ServstationFlowEngineInitiatedExecution>;
+      launchServstationFlowEngineWorkflow(
+        input: ServstationFlowEngineLaunchInput,
+      ): Promise<ServstationFlowEngineInitiatedExecution>;
       getServstationFlowEngineExecution(id: string): Promise<ServstationFlowEngineInitiatedExecution>;
       getServstationFlowEngineExecutionEvents(id: string): Promise<ServstationFlowEngineExecutionEvent[]>;
-      decideServstationFlowEngineApproval(input: ServstationFlowEngineApprovalDecisionInput): Promise<import("@supbot/shared").ServstationFlowEnginePendingTask>;
-      listServstationMessages(folder: ServstationMessageFolder, unreadOnly?: boolean): Promise<ServstationMessageListResponse>;
+      decideServstationFlowEngineApproval(
+        input: ServstationFlowEngineApprovalDecisionInput,
+      ): Promise<import("@supbot/shared").ServstationFlowEnginePendingTask>;
+      listServstationMessages(
+        folder: ServstationMessageFolder,
+        unreadOnly?: boolean,
+      ): Promise<ServstationMessageListResponse>;
       getServstationUnreadMessages(): Promise<ServstationMessageUnreadSummary>;
       getServstationMessage(id: string): Promise<ServstationMessageDetail>;
       markServstationMessageRead(id: string): Promise<ServstationMessageDetail>;
@@ -181,7 +204,10 @@ declare global {
       trashServstationMessage(id: string): Promise<ServstationMessageDetail>;
       restoreServstationMessage(id: string): Promise<ServstationMessageDetail>;
       deleteServstationMessage(id: string): Promise<void>;
-      fetchServstationMessageAttachment(messageId: string, attachmentId: string): Promise<ServstationMessageAttachmentContent>;
+      fetchServstationMessageAttachment(
+        messageId: string,
+        attachmentId: string,
+      ): Promise<ServstationMessageAttachmentContent>;
       sendServstationAgentMessage(input: ServstationSendAgentMessageInput): Promise<ServstationSessionJob>;
       sendServstationDirectMessage(input: ServstationSendDirectMessageInput): Promise<ServstationMessageDetail>;
       listServstationMailAccounts(): Promise<ServstationMailAccount[]>;
@@ -215,7 +241,10 @@ declare global {
       testModelProvider(id?: string, input?: Partial<ModelProviderUpdate>): Promise<ModelTestResult>;
       updateToolMarketConfig(input: ToolMarketConfigUpdate): Promise<ToolMarketConfig>;
       updatePersonality(input: PersonalityConfig): Promise<PersonalityConfig>;
-      updateCapability(id: string, input: CapabilityUpdateInput): Promise<import("@supbot/shared").CapabilityDefinition>;
+      updateCapability(
+        id: string,
+        input: CapabilityUpdateInput,
+      ): Promise<import("@supbot/shared").CapabilityDefinition>;
       deleteCapability(id: string): Promise<void>;
       saveSubagent(input: SubagentConfig): Promise<SubagentConfig>;
       deleteSubagent(id: string): Promise<void>;

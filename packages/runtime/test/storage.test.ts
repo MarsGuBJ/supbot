@@ -65,6 +65,35 @@ describe("JsonFileStorage", () => {
     await storage.save(createInitialState());
     await stat(join(dir, "state.json"));
   });
+
+  test("persists conversation metadata without duplicating transcript messages", async () => {
+    const dir = await createTempDir();
+    const storage = new JsonFileStorage(dir);
+    const state = createInitialState();
+    state.conversations = [
+      {
+        id: "conv-1",
+        title: "Metadata only",
+        createdAt: "2026-07-22T00:00:00.000Z",
+        updatedAt: "2026-07-22T00:00:00.000Z",
+        messages: [
+          {
+            id: "msg-1",
+            conversationId: "conv-1",
+            role: "user",
+            text: "must live only in the transcript",
+            createdAt: "2026-07-22T00:00:00.000Z",
+          },
+        ],
+      },
+    ];
+
+    await storage.save(state);
+    const persisted = JSON.parse(await readFile(join(dir, "state.json"), "utf8"));
+    expect(persisted.conversations[0]).not.toHaveProperty("messages");
+    const loaded = await storage.load();
+    expect(loaded.conversations[0].messages).toEqual([]);
+  });
 });
 
 describe("TranscriptStore", () => {
@@ -76,7 +105,7 @@ describe("TranscriptStore", () => {
       conversationId: "conv-1",
       role: "user" as const,
       text: "hello",
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
     };
     await store.append("conv-1", { type: "message", message });
     await stat(store.pathFor("conv-1"));
@@ -84,5 +113,45 @@ describe("TranscriptStore", () => {
     await expect(stat(store.pathFor("conv-1"))).rejects.toThrow();
     // Deleting a missing transcript is a no-op.
     await store.delete("conv-1");
+  });
+
+  test("pages older messages without returning duplicate transcript updates", async () => {
+    const dir = await createTempDir();
+    const store = new TranscriptStore(dir);
+    for (let index = 0; index < 120; index += 1) {
+      await store.append("conv-1", {
+        type: "message",
+        message: {
+          id: `msg-${index}`,
+          conversationId: "conv-1",
+          role: index % 2 ? "assistant" : "user",
+          text: `message ${index}`,
+          createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+        },
+      });
+    }
+    await store.append("conv-1", {
+      type: "message",
+      message: {
+        id: "msg-119",
+        conversationId: "conv-1",
+        role: "assistant",
+        text: "updated message 119",
+        createdAt: new Date(Date.UTC(2026, 0, 1, 0, 2, 0)).toISOString(),
+      },
+    });
+
+    const latest = await store.loadPage("conv-1", { limit: 50 });
+    expect(latest.total).toBe(120);
+    expect(latest.hasMore).toBe(true);
+    expect(latest.messages).toHaveLength(50);
+    expect(latest.messages[0]?.id).toBe("msg-70");
+    expect(latest.messages.at(-1)?.text).toBe("updated message 119");
+
+    const older = await store.loadPage("conv-1", { beforeMessageId: "msg-70", limit: 50 });
+    expect(older.messages.map((message) => message.id)).toEqual(
+      Array.from({ length: 50 }, (_value, index) => `msg-${index + 20}`),
+    );
+    expect(older.hasMore).toBe(true);
   });
 });

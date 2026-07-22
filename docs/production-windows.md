@@ -17,8 +17,10 @@ Before publishing a build:
 
 - Confirm `npm audit --registry=https://registry.npmjs.org` reports no unreviewed production-blocking advisories.
 - Confirm the Electron smoke output has no Electron security warning.
+- Confirm the configured Botstation base URL, OIDC issuer, and update feed all use valid HTTPS certificates. The updater rejects non-HTTPS feeds.
 - Install the generated NSIS package on a clean Windows user profile and verify first launch.
 - Upgrade over the previous installer and verify the existing user data directory still loads.
+- Verify OIDC login, update discovery, installer download, and restart-to-install against the production TLS endpoints.
 - Record the generated installer name, app version, commit, and audit result in release notes.
 
 ## Remote Updates

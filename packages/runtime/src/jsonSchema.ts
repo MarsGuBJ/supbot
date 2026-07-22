@@ -97,10 +97,16 @@ function inspect(schema: unknown, path: string, warnings: string[]): void {
   }
   const current = schema as JsonSchema;
   const types = Array.isArray(current.type) ? current.type : current.type ? [current.type] : [];
-  if (current.type && !types.every((type) => ["object", "array", "string", "number", "integer", "boolean", "null"].includes(type))) {
+  if (
+    current.type &&
+    !types.every((type) => ["object", "array", "string", "number", "integer", "boolean", "null"].includes(type))
+  ) {
     warnings.push(`${path}.type has unsupported value.`);
   }
-  const properties = current.properties && typeof current.properties === "object" && !Array.isArray(current.properties) ? current.properties : {};
+  const properties =
+    current.properties && typeof current.properties === "object" && !Array.isArray(current.properties)
+      ? current.properties
+      : {};
   if (current.properties && properties !== current.properties) {
     warnings.push(`${path}.properties must be an object.`);
   }

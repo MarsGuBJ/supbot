@@ -2,7 +2,7 @@ import type {
   ServstationConversation,
   ServstationConversationMessage,
   ServstationProject,
-  ServstationSessionJob
+  ServstationSessionJob,
 } from "@supbot/shared";
 
 export interface ServstationConversationGroup {
@@ -13,14 +13,12 @@ export interface ServstationConversationGroup {
 
 export function groupServstationConversations(
   projects: ServstationProject[],
-  conversations: ServstationConversation[]
+  conversations: ServstationConversation[],
 ): ServstationConversationGroup[] {
   const projectIds = new Set(projects.map((project) => project.id));
   const conversationsByProject = new Map<string, ServstationConversation[]>();
   for (const conversation of conversations) {
-    const projectId = conversation.projectId && projectIds.has(conversation.projectId)
-      ? conversation.projectId
-      : "";
+    const projectId = conversation.projectId && projectIds.has(conversation.projectId) ? conversation.projectId : "";
     const group = conversationsByProject.get(projectId);
     if (group) {
       group.push(conversation);
@@ -32,18 +30,18 @@ export function groupServstationConversations(
     ...projects.map((project) => ({
       key: project.id,
       project,
-      conversations: conversationsByProject.get(project.id) || []
+      conversations: conversationsByProject.get(project.id) || [],
     })),
     {
       key: "",
-      conversations: conversationsByProject.get("") || []
-    }
+      conversations: conversationsByProject.get("") || [],
+    },
   ];
 }
 
 export function servstationPromptTarget(
   conversationId?: string,
-  projectId?: string
+  projectId?: string,
 ): { conversationId?: string; projectId?: string } {
   if (conversationId) {
     return { conversationId };
@@ -53,7 +51,7 @@ export function servstationPromptTarget(
 
 export function servstationJobsForConversation(
   jobs: ServstationSessionJob[],
-  conversationId?: string
+  conversationId?: string,
 ): ServstationSessionJob[] {
   if (!conversationId) {
     return [];
@@ -63,7 +61,7 @@ export function servstationJobsForConversation(
 
 export function servstationMessagesForConversation(
   conversations: ServstationConversation[],
-  conversationId?: string
+  conversationId?: string,
 ): ServstationConversationMessage[] {
   if (!conversationId) {
     return [];

@@ -4,7 +4,8 @@ const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 
-const appPath = process.env.HBCLIENT_PACKAGED_EXE || path.resolve("apps", "desktop", "release", "win-unpacked", "HBClient.exe");
+const appPath =
+  process.env.HBCLIENT_PACKAGED_EXE || path.resolve("apps", "desktop", "release", "win-unpacked", "HBClient.exe");
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "hbclient-update-modal-"));
 const debugPort = Number(process.env.HBCLIENT_VERIFY_PORT || 9359);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -43,11 +44,13 @@ async function evaluate(wsUrl, expression, timeoutMs = 10_000) {
         resolve(data);
       }
     });
-    ws.send(JSON.stringify({
-      id: messageId,
-      method: "Runtime.evaluate",
-      params: { expression, awaitPromise: true, returnByValue: true }
-    }));
+    ws.send(
+      JSON.stringify({
+        id: messageId,
+        method: "Runtime.evaluate",
+        params: { expression, awaitPromise: true, returnByValue: true },
+      }),
+    );
   });
   ws.close();
   if (result.exceptionDetails) {
@@ -72,11 +75,11 @@ async function main() {
         "path: HBClient-0.1.3-win-x64.exe",
         "sha512: dGVzdA==",
         "releaseDate: 2026-07-16T00:00:00Z",
-        ""
+        "",
       ].join("\n");
       res.writeHead(200, {
         "Content-Type": "application/yaml",
-        "Content-Length": Buffer.byteLength(body)
+        "Content-Length": Buffer.byteLength(body),
       });
       res.end(body);
       return;
@@ -90,15 +93,17 @@ async function main() {
     env: {
       ...process.env,
       HBCLIENT_USER_DATA_DIR: userDataDir,
-      HBCLIENT_UPDATE_FEED_URL: feedUrl
+      HBCLIENT_UPDATE_FEED_URL: feedUrl,
     },
     stdio: "ignore",
-    windowsHide: true
+    windowsHide: true,
   });
 
   try {
     const page = await waitForPage();
-    const modal = await evaluate(page.webSocketDebuggerUrl, `(async () => {
+    const modal = await evaluate(
+      page.webSocketDebuggerUrl,
+      `(async () => {
       const deadline = Date.now() + 30000;
       while (Date.now() < deadline) {
         const state = await window.supbot.getHBClientUpdateState();
@@ -112,15 +117,23 @@ async function main() {
         state: await window.supbot.getHBClientUpdateState(),
         text: document.querySelector(".ant-modal")?.textContent || ""
       };
-    })()`, 35_000);
+    })()`,
+      35_000,
+    );
 
-    console.log(JSON.stringify({
-      feedUrl,
-      status: modal.state.status,
-      availableVersion: modal.state.availableVersion,
-      modalText: modal.text,
-      userDataDir
-    }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          feedUrl,
+          status: modal.state.status,
+          availableVersion: modal.state.availableVersion,
+          modalText: modal.text,
+          userDataDir,
+        },
+        null,
+        2,
+      ),
+    );
 
     if (modal.state.status !== "available" || modal.state.availableVersion !== "0.1.3" || !/0\.1\.3/.test(modal.text)) {
       throw new Error("Update modal did not appear for an available server version.");

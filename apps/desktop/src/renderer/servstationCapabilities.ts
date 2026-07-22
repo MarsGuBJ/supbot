@@ -1,7 +1,7 @@
 import type {
   ServstationLocalCapabilityAsset,
   ServstationServiceDefinition,
-  ServstationServiceInstallSpec
+  ServstationServiceInstallSpec,
 } from "@supbot/shared";
 
 export type ServstationVisibleCapabilityType = "skill" | "mcp";
@@ -21,12 +21,12 @@ export interface ServstationVisibleCapability {
 
 export function buildEffectiveServstationServices(
   services: ServstationServiceDefinition[],
-  localCapabilities: ServstationLocalCapabilityAsset[]
+  localCapabilities: ServstationLocalCapabilityAsset[],
 ): ServstationServiceDefinition[] {
   const overrides = new Map(
     localCapabilities
       .filter((item) => item.enabled && item.sourceServiceId)
-      .map((item) => [item.sourceServiceId || "", item])
+      .map((item) => [item.sourceServiceId || "", item]),
   );
   const effectiveServices = services.map((service) => applyLocalOverride(service, overrides.get(service.serviceId)));
   const localServices = localCapabilities
@@ -37,22 +37,24 @@ export function buildEffectiveServstationServices(
 }
 
 export function buildVisibleServstationCapabilities(
-  services: ServstationServiceDefinition[]
+  services: ServstationServiceDefinition[],
 ): ServstationVisibleCapability[] {
   const items: ServstationVisibleCapability[] = [];
   for (const service of services) {
     const capabilityType = normalizeCapabilityType(service.serviceType);
     if (capabilityType === "skill" || capabilityType === "mcp") {
       const promptName = capabilityPromptName(service, capabilityType);
-      items.push(createVisibleCapability({
-        key: service.serviceId,
-        name: service.name,
-        promptName,
-        idLabel: service.serviceId,
-        description: service.description || "",
-        capabilityType,
-        searchParts: [promptName]
-      }));
+      items.push(
+        createVisibleCapability({
+          key: service.serviceId,
+          name: service.name,
+          promptName,
+          idLabel: service.serviceId,
+          description: service.description || "",
+          capabilityType,
+          searchParts: [promptName],
+        }),
+      );
     }
     if (capabilityType !== "plugin") {
       continue;
@@ -64,15 +66,17 @@ export function buildVisibleServstationCapabilities(
       if (!name) {
         return;
       }
-      items.push(createVisibleCapability({
-        key: `${service.serviceId}:mcp:${name}:${index}`,
-        name,
-        promptName: name,
-        idLabel: `${service.serviceId} / ${name}`,
-        description: entry.description || service.description || "",
-        capabilityType: "mcp",
-        searchParts: [service.serviceId, service.name, entry.description || "", service.description || ""]
-      }));
+      items.push(
+        createVisibleCapability({
+          key: `${service.serviceId}:mcp:${name}:${index}`,
+          name,
+          promptName: name,
+          idLabel: `${service.serviceId} / ${name}`,
+          description: entry.description || service.description || "",
+          capabilityType: "mcp",
+          searchParts: [service.serviceId, service.name, entry.description || "", service.description || ""],
+        }),
+      );
     });
     (plugin?.skills || []).forEach((entry, index) => {
       const promptName = (entry.name || "").trim();
@@ -80,15 +84,23 @@ export function buildVisibleServstationCapabilities(
         return;
       }
       const name = entry.displayName?.trim() || promptName;
-      items.push(createVisibleCapability({
-        key: `${service.serviceId}:skill:${promptName}:${index}`,
-        name,
-        promptName,
-        idLabel: `${service.serviceId} / ${promptName}`,
-        description: entry.description || service.description || "",
-        capabilityType: "skill",
-        searchParts: [promptName, service.serviceId, service.name, entry.description || "", service.description || ""]
-      }));
+      items.push(
+        createVisibleCapability({
+          key: `${service.serviceId}:skill:${promptName}:${index}`,
+          name,
+          promptName,
+          idLabel: `${service.serviceId} / ${promptName}`,
+          description: entry.description || service.description || "",
+          capabilityType: "skill",
+          searchParts: [
+            promptName,
+            service.serviceId,
+            service.name,
+            entry.description || "",
+            service.description || "",
+          ],
+        }),
+      );
     });
   }
   return items;
@@ -96,7 +108,7 @@ export function buildVisibleServstationCapabilities(
 
 export function filterVisibleServstationCapabilities(
   items: ServstationVisibleCapability[],
-  query: string
+  query: string,
 ): ServstationVisibleCapability[] {
   const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   if (!tokens.length) {
@@ -114,7 +126,7 @@ export function formatServstationCapabilityPromptDirective(item: ServstationVisi
 
 function applyLocalOverride(
   service: ServstationServiceDefinition,
-  asset?: ServstationLocalCapabilityAsset
+  asset?: ServstationLocalCapabilityAsset,
 ): ServstationServiceDefinition {
   if (!asset) {
     return service;
@@ -129,7 +141,7 @@ function applyLocalOverride(
   if (capabilityType === "mcp" && asset.mcpServers !== undefined) {
     return {
       ...serviceWithMetadata,
-      installSpec: { ...(service.installSpec || {}), mcpServers: asset.mcpServers }
+      installSpec: { ...(service.installSpec || {}), mcpServers: asset.mcpServers },
     };
   }
   if (capabilityType === "skill") {
@@ -142,9 +154,9 @@ function applyLocalOverride(
           name: service.installSpec?.skill?.name || asset.name,
           displayName: name,
           description,
-          skillMarkdown: asset.skillMarkdown ?? service.installSpec?.skill?.skillMarkdown
-        }
-      }
+          skillMarkdown: asset.skillMarkdown ?? service.installSpec?.skill?.skillMarkdown,
+        },
+      },
     };
   }
   return serviceWithMetadata;
@@ -164,18 +176,19 @@ function localCapabilityToService(asset: ServstationLocalCapabilityAsset): Servs
     currentVersion: asset.assetKind,
     effectivePromptTemplate: capabilityType === "prompt-template" ? asset.effectivePromptTemplate || "" : "",
     promptTemplateSchema: { inputs: [] },
-    installSpec: capabilityType === "mcp"
-      ? { mcpServers: asset.mcpServers || {} }
-      : capabilityType === "skill"
-        ? {
-            skill: {
-              name: asset.name,
-              displayName: asset.name,
-              description: asset.description || "",
-              skillMarkdown: asset.skillMarkdown
+    installSpec:
+      capabilityType === "mcp"
+        ? { mcpServers: asset.mcpServers || {} }
+        : capabilityType === "skill"
+          ? {
+              skill: {
+                name: asset.name,
+                displayName: asset.name,
+                description: asset.description || "",
+                skillMarkdown: asset.skillMarkdown,
+              },
             }
-          }
-        : {}
+          : {},
   };
 }
 
@@ -202,8 +215,8 @@ function createVisibleCapability(input: {
       normalizedDescription,
       input.promptName.toLowerCase(),
       input.capabilityType,
-      ...(input.searchParts || []).map((part) => part.toLowerCase())
-    ].join(" ")
+      ...(input.searchParts || []).map((part) => part.toLowerCase()),
+    ].join(" "),
   };
 }
 
@@ -223,12 +236,17 @@ function editableCapabilityType(value: string | undefined): "skill" | "mcp" | "p
   return type === "skill" || type === "mcp" || type === "prompt-template" ? type : null;
 }
 
-function capabilityPromptName(service: ServstationServiceDefinition, capabilityType: ServstationVisibleCapabilityType): string {
+function capabilityPromptName(
+  service: ServstationServiceDefinition,
+  capabilityType: ServstationVisibleCapabilityType,
+): string {
   if (capabilityType === "skill") {
-    return service.installSpec?.skill?.displayName?.trim()
-      || service.name.trim()
-      || service.installSpec?.skill?.name?.trim()
-      || service.serviceId;
+    return (
+      service.installSpec?.skill?.displayName?.trim() ||
+      service.name.trim() ||
+      service.installSpec?.skill?.name?.trim() ||
+      service.serviceId
+    );
   }
   return service.name.trim() || firstMcpServerName(service.installSpec?.mcpServers) || service.serviceId;
 }
@@ -246,7 +264,7 @@ function firstMcpServerName(value: ServstationServiceInstallSpec["mcpServers"]):
 function compareCapabilitySearchRank(
   left: ServstationVisibleCapability,
   right: ServstationVisibleCapability,
-  tokens: string[]
+  tokens: string[],
 ): number {
   const scoreDiff = capabilitySearchScore(right, tokens) - capabilitySearchScore(left, tokens);
   if (scoreDiff !== 0) {
@@ -265,11 +283,12 @@ function compareCapabilitySearchRank(
 
 function capabilitySearchScore(item: ServstationVisibleCapability, tokens: string[]): number {
   return tokens.reduce(
-    (total, token) => total
-      + capabilityFieldScore(item.normalizedName, token, 200)
-      + capabilityFieldScore(item.normalizedIdLabel, token, 120)
-      + capabilityFieldScore(item.normalizedDescription, token, 40),
-    0
+    (total, token) =>
+      total +
+      capabilityFieldScore(item.normalizedName, token, 200) +
+      capabilityFieldScore(item.normalizedIdLabel, token, 120) +
+      capabilityFieldScore(item.normalizedDescription, token, 40),
+    0,
   );
 }
 
@@ -291,7 +310,10 @@ function capabilityFieldScore(value: string, token: string, baseScore: number): 
 }
 
 function hasWordBoundaryMatch(value: string, token: string): boolean {
-  return value.split(/[^a-z0-9]+/).filter(Boolean).some((part) => part === token || part.startsWith(token));
+  return value
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .some((part) => part === token || part.startsWith(token));
 }
 
 function firstTokenIndex(value: string, tokens: string[]): number {

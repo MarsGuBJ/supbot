@@ -1,7 +1,13 @@
 import { readdir, readFile } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import type { CapabilityDefinition, ChatMessage, CompactBoundary, PersonalityConfig, SubagentConfig } from "@supbot/shared";
+import type {
+  CapabilityDefinition,
+  ChatMessage,
+  CompactBoundary,
+  PersonalityConfig,
+  SubagentConfig,
+} from "@supbot/shared";
 import type { AdapterMessage } from "./modelAdapter";
 import { truncate } from "./localTools";
 
@@ -34,18 +40,21 @@ export class ContextManager {
     const installedSkillContext = await readInstalledSkillContext({
       dataDir: input.dataDir,
       capabilities: input.capabilities || [],
-      query: latestUserText(activeMessages)
+      query: latestUserText(activeMessages),
     });
     const systemPrompt = buildSystemPrompt({ ...input, projectInstructions, compactBoundary, installedSkillContext });
     const messages = [
       { role: "system" as const, content: systemPrompt },
-      ...activeMessages.filter((message) => message.role !== "system").map(toAdapterMessage)
+      ...activeMessages.filter((message) => message.role !== "system").map(toAdapterMessage),
     ];
     return { systemPrompt, messages, activeMessages, compactBoundary, projectInstructions };
   }
 }
 
-function latestBoundary(conversationId: string | undefined, boundaries: CompactBoundary[]): CompactBoundary | undefined {
+function latestBoundary(
+  conversationId: string | undefined,
+  boundaries: CompactBoundary[],
+): CompactBoundary | undefined {
   if (!conversationId) {
     return undefined;
   }
@@ -54,14 +63,24 @@ function latestBoundary(conversationId: string | undefined, boundaries: CompactB
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 }
 
-function projectActiveMessages(messages: ChatMessage[], boundary: CompactBoundary | undefined, maxConversationMessages: number): ChatMessage[] {
+function projectActiveMessages(
+  messages: ChatMessage[],
+  boundary: CompactBoundary | undefined,
+  maxConversationMessages: number,
+): ChatMessage[] {
   const postBoundary = boundary?.messageId
     ? messages.slice(Math.max(0, messages.findIndex((message) => message.id === boundary.messageId) + 1))
     : messages;
   return postBoundary.slice(-maxConversationMessages);
 }
 
-function buildSystemPrompt(input: ContextManagerInput & { projectInstructions?: string; compactBoundary?: CompactBoundary; installedSkillContext?: string }): string {
+function buildSystemPrompt(
+  input: ContextManagerInput & {
+    projectInstructions?: string;
+    compactBoundary?: CompactBoundary;
+    installedSkillContext?: string;
+  },
+): string {
   const identity = input.subagent
     ? `You are subagent @${input.subagent.name}. ${input.subagent.systemPrompt}`
     : "You are HBClient, a local desktop agent.";
@@ -78,11 +97,17 @@ function buildSystemPrompt(input: ContextManagerInput & { projectInstructions?: 
     "You may call tools when they help. Explain tool outcomes concisely after they complete. If a tool is denied or times out, adjust your answer without repeating the same request.",
     "Prefer reading available project instructions before making assumptions about local workflow.",
     input.compactBoundary ? `<conversation_summary>\n${input.compactBoundary.summary}\n</conversation_summary>` : "",
-    input.memoryBlock ? `${input.memoryBlock}\nUse memory as user-approved long-term context. Current user instructions override memory when they conflict.` : "",
+    input.memoryBlock
+      ? `${input.memoryBlock}\nUse memory as user-approved long-term context. Current user instructions override memory when they conflict.`
+      : "",
     input.projectInstructions ? `<project_instructions>\n${input.projectInstructions}\n</project_instructions>` : "",
-    input.installedSkillContext ? `Installed skills below are enabled by the user. When one matches the task, follow the most specific matching SKILL.md. Do not read other skills unless the user asks for that capability or the selected skill explicitly references them. If SKILL.md references another file, use ReadFile on the skill path before relying on that reference. If a referenced package is unavailable, use an equivalent installed library or create a short setup/check step before proceeding.\n<installed_skills>\n${input.installedSkillContext}\n</installed_skills>` : "",
-    systemContext ? `<system_context>\n${systemContext}\n</system_context>` : ""
-  ].filter(Boolean).join("\n");
+    input.installedSkillContext
+      ? `Installed skills below are enabled by the user. When one matches the task, follow the most specific matching SKILL.md. Do not read other skills unless the user asks for that capability or the selected skill explicitly references them. If SKILL.md references another file, use ReadFile on the skill path before relying on that reference. If a referenced package is unavailable, use an equivalent installed library or create a short setup/check step before proceeding.\n<installed_skills>\n${input.installedSkillContext}\n</installed_skills>`
+      : "",
+    systemContext ? `<system_context>\n${systemContext}\n</system_context>` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function toAdapterMessage(message: ChatMessage): AdapterMessage {
@@ -93,12 +118,12 @@ function toAdapterMessage(message: ChatMessage): AdapterMessage {
     return {
       role: "tool",
       tool_call_id: message.toolCallId || message.id,
-      content: message.text
+      content: message.text,
     };
   }
   return {
     role: "user",
-    content: formatUserMessage(message)
+    content: formatUserMessage(message),
   };
 }
 
@@ -132,7 +157,7 @@ function toolUseGuidance(): string {
     "- WriteFile paths must be relative workspace paths unless the user explicitly provided an allowed project path. Never use placeholder paths such as /path/to/file.",
     "- WriteFile cannot save directly outside the workspace. To place a final artifact on the Desktop or another external location, create scripts/assets in the workspace, then use Shell to generate or copy the final file to the requested location.",
     "- For large artifacts, prefer a short script plus Shell execution over embedding a large generated file in WriteFile content.",
-    "- On Windows, Shell runs PowerShell."
+    "- On Windows, Shell runs PowerShell.",
   ].join("\n");
 }
 
@@ -190,7 +215,7 @@ async function readInstalledSkillContext(input: SkillContextInput): Promise<stri
       name: metadata.name || capability.name || entry.dirName,
       description: metadata.description || capability.description || "",
       content,
-      score: 0
+      score: 0,
     };
     skill.score = scoreSkill(skill, input.query);
     candidates.push(skill);
@@ -219,7 +244,10 @@ interface InstalledSkillEntry {
   capabilityId?: string;
 }
 
-async function collectInstalledSkillEntries(dataDir: string, skillRootEntries: Dirent[]): Promise<InstalledSkillEntry[]> {
+async function collectInstalledSkillEntries(
+  dataDir: string,
+  skillRootEntries: Dirent[],
+): Promise<InstalledSkillEntry[]> {
   const entries: InstalledSkillEntry[] = [];
   const skillsRoot = join(dataDir, "skills");
   for (const entry of skillRootEntries) {
@@ -244,7 +272,7 @@ async function collectInstalledSkillEntries(dataDir: string, skillRootEntries: D
       entries.push({
         dirName: basename(skill.path),
         rootPath: resolve(skill.path),
-        capabilityId: skill.capabilityId
+        capabilityId: skill.capabilityId,
       });
     }
   }
@@ -273,7 +301,9 @@ async function readSkillManifest(rootPath: string): Promise<{ capabilityId?: str
   }
 }
 
-async function readPackageReceipt(rootPath: string): Promise<{ skills?: Array<{ path?: string; capabilityId?: string }> } | undefined> {
+async function readPackageReceipt(
+  rootPath: string,
+): Promise<{ skills?: Array<{ path?: string; capabilityId?: string }> } | undefined> {
   try {
     const parsed = JSON.parse(await readFile(join(rootPath, "supbot-local-package.json"), "utf8")) as {
       skills?: Array<{ path?: string; capabilityId?: string }>;
@@ -316,8 +346,10 @@ function formatSkillContext(skill: InstalledSkill, maxContentChars: number): str
     `<skill name="${escapeAttribute(skill.name)}" id="${escapeAttribute(skill.capability?.id || skill.dirName)}" path="${escapeAttribute(skill.rootPath)}">`,
     skill.description ? `Description: ${skill.description}` : "",
     `Instructions:\n${truncate(skill.content, maxContentChars)}`,
-    "</skill>"
-  ].filter(Boolean).join("\n");
+    "</skill>",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function scoreSkill(skill: InstalledSkill, query: string): number {
@@ -352,12 +384,16 @@ function queryTerms(query: string): string[] {
 
 function skillSignals(): Array<{ pattern: RegExp; keywords: string[]; weight: number }> {
   return [
-    { pattern: /pptx?|powerpoint|slides?|deck|presentation|幻灯|演示|PPT/i, keywords: ["pptx", "powerpoint", "presentation", "slides", "deck"], weight: 12 },
+    {
+      pattern: /pptx?|powerpoint|slides?|deck|presentation|幻灯|演示|PPT/i,
+      keywords: ["pptx", "powerpoint", "presentation", "slides", "deck"],
+      weight: 12,
+    },
     { pattern: /docx?|word|文档/i, keywords: ["docx", "word", "document"], weight: 10 },
     { pattern: /xlsx?|excel|spreadsheet|表格/i, keywords: ["xlsx", "excel", "spreadsheet"], weight: 10 },
     { pattern: /pdf|便携式文档/i, keywords: ["pdf"], weight: 10 },
     { pattern: /canvas|画布|海报|poster/i, keywords: ["canvas", "design", "poster"], weight: 8 },
-    { pattern: /frontend|react|web|网页|网站|前端/i, keywords: ["frontend", "react", "web"], weight: 8 }
+    { pattern: /frontend|react|web|网页|网站|前端/i, keywords: ["frontend", "react", "web"], weight: 8 },
   ];
 }
 
@@ -389,7 +425,10 @@ function skillCapabilityMatchesDir(capability: CapabilityDefinition, dirName: st
 }
 
 function slug(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function escapeAttribute(value: string): string {

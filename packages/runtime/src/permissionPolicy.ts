@@ -43,7 +43,7 @@ export class PermissionPolicy {
     }
     return {
       behavior: "ask",
-      permission: createPermission(input)
+      permission: createPermission(input),
     };
   }
 }
@@ -67,6 +67,6 @@ function createPermission(input: PermissionPolicyInput): PendingToolPermission {
     toolName: input.tool.name,
     input: input.input,
     summary: input.tool.summarize(input.input),
-    createdAt: input.nowIso()
+    createdAt: input.nowIso(),
   };
 }

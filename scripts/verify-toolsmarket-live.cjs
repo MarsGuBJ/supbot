@@ -13,11 +13,13 @@ async function evaluate(wsUrl, expression) {
         resolve(msg);
       }
     });
-    ws.send(JSON.stringify({
-      id: 1,
-      method: "Runtime.evaluate",
-      params: { expression, returnByValue: true, awaitPromise: true }
-    }));
+    ws.send(
+      JSON.stringify({
+        id: 1,
+        method: "Runtime.evaluate",
+        params: { expression, returnByValue: true, awaitPromise: true },
+      }),
+    );
   });
   ws.close();
   if (data.exceptionDetails) {
@@ -43,7 +45,9 @@ async function main() {
   }
   const wsUrl = page.webSocketDebuggerUrl;
   const config = { source: "hybrid", apiUrl: "https://i-shu.com", accountEmail: email, password };
-  const result = await evaluate(wsUrl, `new Promise(async (resolve) => {
+  const result = await evaluate(
+    wsUrl,
+    `new Promise(async (resolve) => {
     try {
       await window.supbot.updateToolMarketConfig(${JSON.stringify(config)});
       const products = await window.supbot.listToolMarket({});
@@ -60,7 +64,8 @@ async function main() {
     } catch (error) {
       resolve({ ok: false, message: error.message });
     }
-  })`);
+  })`,
+  );
   console.log(JSON.stringify(result, null, 2));
   if (!result.ok) {
     throw new Error(result.message || "Remote ToolsMarket verification failed.");

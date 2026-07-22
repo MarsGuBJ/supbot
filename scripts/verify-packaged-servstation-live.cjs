@@ -3,7 +3,8 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const appPath = process.env.HBCLIENT_PACKAGED_EXE || path.resolve("apps", "desktop", "release", "win-unpacked", "HBClient.exe");
+const appPath =
+  process.env.HBCLIENT_PACKAGED_EXE || path.resolve("apps", "desktop", "release", "win-unpacked", "HBClient.exe");
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "hbclient-servstation-"));
 const port = Number(process.env.HBCLIENT_VERIFY_PORT || 9348);
 const loginUser = process.env.HBCLIENT_BOTSTATION_USERNAME || "dev-user";
@@ -66,11 +67,13 @@ async function evaluate(wsUrl, expression, timeoutMs = 120_000) {
         resolve(data);
       }
     });
-    ws.send(JSON.stringify({
-      id: messageId,
-      method: "Runtime.evaluate",
-      params: { expression, awaitPromise: true, returnByValue: true }
-    }));
+    ws.send(
+      JSON.stringify({
+        id: messageId,
+        method: "Runtime.evaluate",
+        params: { expression, awaitPromise: true, returnByValue: true },
+      }),
+    );
   });
   ws.close();
   if (result.exceptionDetails) {
@@ -98,25 +101,30 @@ async function main() {
   child = spawn(appPath, [`--remote-debugging-port=${port}`], {
     env: { ...process.env, HBCLIENT_USER_DATA_DIR: userDataDir },
     stdio: "ignore",
-    windowsHide: true
+    windowsHide: true,
   });
   const page = await waitForPage();
   const before = await evaluate(page.webSocketDebuggerUrl, "window.supbot.snapshot()");
-  await evaluate(page.webSocketDebuggerUrl, `(() => {
+  await evaluate(
+    page.webSocketDebuggerUrl,
+    `(() => {
     window.__hbclientServstationLoginResult = null;
     window.supbot.loginServstationOidc({}).then(
       (login) => { window.__hbclientServstationLoginResult = { ok: true, login }; },
       (error) => { window.__hbclientServstationLoginResult = { ok: false, error: String(error?.message || error) }; }
     );
     return true;
-  })()`);
+  })()`,
+  );
   const loginRace = await Promise.race([
     waitForAuthPage().then((authPage) => ({ authPage })),
-    waitForLoginResult(page.webSocketDebuggerUrl).then((loginResult) => ({ loginResult }))
+    waitForLoginResult(page.webSocketDebuggerUrl).then((loginResult) => ({ loginResult })),
   ]);
   let loginResult = loginRace.loginResult;
   if (loginRace.authPage) {
-    const submitted = await evaluate(loginRace.authPage.webSocketDebuggerUrl, `(() => {
+    const submitted = await evaluate(
+      loginRace.authPage.webSocketDebuggerUrl,
+      `(() => {
       const user = document.querySelector('input[name="userId"]');
       const password = document.querySelector('input[name="password"]');
       const form = document.querySelector('form');
@@ -125,7 +133,8 @@ async function main() {
       password.value = ${JSON.stringify(loginPassword)};
       form.submit();
       return true;
-    })()`);
+    })()`,
+    );
     if (!submitted) {
       throw new Error("Servstation OIDC login form was not ready.");
     }
@@ -134,7 +143,9 @@ async function main() {
   if (!loginResult.ok) {
     throw new Error(`Servstation OIDC login failed: ${loginResult.error}`);
   }
-  const result = await evaluate(page.webSocketDebuggerUrl, `(async () => {
+  const result = await evaluate(
+    page.webSocketDebuggerUrl,
+    `(async () => {
     const historyAgentInstanceId = ${JSON.stringify(historyAgentInstanceId)};
     if (historyAgentInstanceId) {
       await window.supbot.updateServstationA2AConfig({ agentInstanceId: historyAgentInstanceId });
@@ -194,11 +205,14 @@ async function main() {
       historyJobCount: history?.jobs.length || 0,
       historyJobsScoped: Boolean(historyConversation && history?.jobs.every((job) => job.conversationId === historyConversation.id))
     };
-  })()`);
+  })()`,
+  );
   let uiResult;
   try {
     if (historyAgentInstanceId && result.historyConversationId) {
-      uiResult = await evaluate(page.webSocketDebuggerUrl, `(async () => {
+      uiResult = await evaluate(
+        page.webSocketDebuggerUrl,
+        `(async () => {
       const historyConversationId = ${JSON.stringify(result.historyConversationId || "")};
       const historyFirstMessageText = ${JSON.stringify(result.historyFirstMessageText || "")};
       const secondHistoryConversationId = ${JSON.stringify(result.secondHistoryConversationId || "")};
@@ -251,69 +265,83 @@ async function main() {
         usedProjectDraft: Boolean(projectDraftButton),
         createdConversationId
       };
-      })()`, 45_000);
+      })()`,
+        45_000,
+      );
       if (uiResult?.createdConversationId && uiResult.createdConversationId !== result.historyConversationId) {
         await evaluate(
           page.webSocketDebuggerUrl,
-          `window.supbot.deleteServstationConversation(${JSON.stringify(uiResult.createdConversationId)})`
+          `window.supbot.deleteServstationConversation(${JSON.stringify(uiResult.createdConversationId)})`,
         );
-        const cleanupSnapshot = await evaluate(page.webSocketDebuggerUrl, "window.supbot.getServstationClientSnapshot()");
-        uiResult.cleanedCreatedConversation = !cleanupSnapshot.conversations.some((conversation) =>
-          conversation.id === uiResult.createdConversationId
+        const cleanupSnapshot = await evaluate(
+          page.webSocketDebuggerUrl,
+          "window.supbot.getServstationClientSnapshot()",
+        );
+        uiResult.cleanedCreatedConversation = !cleanupSnapshot.conversations.some(
+          (conversation) => conversation.id === uiResult.createdConversationId,
         );
       } else if (uiResult) {
         uiResult.cleanedCreatedConversation = true;
       }
     }
   } finally {
-    await evaluate(page.webSocketDebuggerUrl, "window.supbot.disconnectServstationReverseBridge()").catch(() => undefined);
+    await evaluate(page.webSocketDebuggerUrl, "window.supbot.disconnectServstationReverseBridge()").catch(
+      () => undefined,
+    );
   }
-  const {
-    historyFirstMessageText: _historyFirstMessageText,
-    secondHistoryFirstMessageText: _secondHistoryFirstMessageText,
-    ...printableResult
-  } = result;
-  console.log(JSON.stringify({
-    baseUrl: before.servstationA2A.config.baseUrl,
-    issuerUrl: before.servstationA2A.config.oidc?.issuerUrl,
-    loginUserId: loginResult.login?.identityContext?.userId,
-    ...printableResult,
-    uiResult,
-    userDataDir
-  }, null, 2));
+  const printableResult = Object.fromEntries(
+    Object.entries(result).filter(
+      ([key]) => key !== "historyFirstMessageText" && key !== "secondHistoryFirstMessageText",
+    ),
+  );
+  console.log(
+    JSON.stringify(
+      {
+        baseUrl: before.servstationA2A.config.baseUrl,
+        issuerUrl: before.servstationA2A.config.oidc?.issuerUrl,
+        loginUserId: loginResult.login?.identityContext?.userId,
+        ...printableResult,
+        uiResult,
+        userDataDir,
+      },
+      null,
+      2,
+    ),
+  );
   if (
     before.servstationA2A.config.baseUrl !== "http://101.227.67.76:8800" ||
     before.servstationA2A.config.oidc?.issuerUrl !== "http://101.227.67.76:8092" ||
     loginResult.login?.identityContext?.userId !== loginUser ||
     result.reverseStatus !== "connected" ||
     !result.peerId ||
-    (historyAgentInstanceId && (
-      !result.historyConversationId ||
-      result.historyMessageCount < 1 ||
-      !result.historyJobsScoped ||
-      !uiResult?.serverTabFound ||
-      !uiResult.historyButtonFound ||
-      !uiResult.historyVisible ||
-      uiResult.historyMessageCount < 1 ||
-      !uiResult.secondHistoryButtonFound ||
-      !uiResult.secondHistoryVisible ||
-      uiResult.secondHistoryMessageCount < 1 ||
-      !uiResult.draftButtonFound ||
-      !uiResult.draftEmpty ||
-      !uiResult.cleanedCreatedConversation
-    ))
+    (historyAgentInstanceId &&
+      (!result.historyConversationId ||
+        result.historyMessageCount < 1 ||
+        !result.historyJobsScoped ||
+        !uiResult?.serverTabFound ||
+        !uiResult.historyButtonFound ||
+        !uiResult.historyVisible ||
+        uiResult.historyMessageCount < 1 ||
+        !uiResult.secondHistoryButtonFound ||
+        !uiResult.secondHistoryVisible ||
+        uiResult.secondHistoryMessageCount < 1 ||
+        !uiResult.draftButtonFound ||
+        !uiResult.draftEmpty ||
+        !uiResult.cleanedCreatedConversation))
   ) {
     throw new Error("Packaged app failed the live Servstation history conversation check.");
   }
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-}).finally(async () => {
-  if (child && !child.killed) {
-    child.kill();
-  }
-  await sleep(800);
-  fs.rmSync(userDataDir, { recursive: true, force: true });
-});
+main()
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    if (child && !child.killed) {
+      child.kill();
+    }
+    await sleep(800);
+    fs.rmSync(userDataDir, { recursive: true, force: true });
+  });

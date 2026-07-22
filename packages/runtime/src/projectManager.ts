@@ -7,13 +7,7 @@ interface ProjectManagerHost {
   nowIso(): string;
 }
 
-export const projectSandboxRoots = [
-  "datasets/raw",
-  "datasets/processed",
-  "outputs",
-  "reports",
-  ".supbot/runs"
-];
+export const projectSandboxRoots = ["datasets/raw", "datasets/processed", "outputs", "reports", ".supbot/runs"];
 
 export class ProjectManager {
   constructor(private readonly host: ProjectManagerHost) {}
@@ -39,7 +33,7 @@ export class ProjectManager {
       createdAt: current?.createdAt || now,
       updatedAt: now,
       lastRunAt: current?.lastRunAt,
-      error: current?.error
+      error: current?.error,
     };
 
     await this.ensureProjectFolders(project.rootPath);
@@ -52,7 +46,7 @@ export class ProjectManager {
       ...project,
       name: input.name?.trim() || project.name,
       status: input.status || project.status,
-      updatedAt: this.host.nowIso()
+      updatedAt: this.host.nowIso(),
     };
     await this.writeProjectMetadata(next);
     return next;
@@ -72,13 +66,14 @@ export class ProjectManager {
       maxRuntimeMinutes: 120,
       maxTasks: 16,
       maxRetries: 1,
-      allowedWriteRoots: normalizeAllowedWriteRoots(overrides.allowedWriteRoots || projectSandboxRoots)
+      allowedWriteRoots: normalizeAllowedWriteRoots(overrides.allowedWriteRoots || projectSandboxRoots),
     };
   }
 
   absoluteAllowedWriteRoots(projectRoot: string, policy?: Pick<AutopilotWritePolicy, "allowedWriteRoots">): string[] {
-    return normalizeAllowedWriteRoots(policy?.allowedWriteRoots || projectSandboxRoots)
-      .map((root) => resolve(projectRoot, root));
+    return normalizeAllowedWriteRoots(policy?.allowedWriteRoots || projectSandboxRoots).map((root) =>
+      resolve(projectRoot, root),
+    );
   }
 
   validateProjectPath(project: Project): void {

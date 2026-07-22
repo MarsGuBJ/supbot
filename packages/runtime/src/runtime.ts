@@ -9,7 +9,6 @@ import {
   type AutopilotEvent,
   type AutopilotRun,
   type AutopilotRunReport,
-  type AutopilotStage,
   type AutopilotStartDataRunInput,
   type AutopilotTask,
   type AutopilotWritePolicy,
@@ -50,7 +49,6 @@ import {
   type MemoryReplayRecallResult,
   type MemorySearchQuery,
   type MemorySearchResult,
-  type MemorySnapshot,
   type MemoryTransfer,
   type MemoryUpdateInput,
   type ModelConfig,
@@ -93,7 +91,7 @@ import {
   type ToolMarketMcpDeployment,
   type ToolMarketPackageFile,
   type ToolMarketProduct,
-  type ToolMarketQuery
+  type ToolMarketQuery,
 } from "@supbot/shared";
 import { AutopilotOrchestrator } from "./autopilotOrchestrator";
 import { stripQuotes, type LocalToolHost, type LocalToolResult } from "./localTools";
@@ -113,14 +111,26 @@ import {
   oidcAccessTokenExpiringSoon,
   parseServstationOidcSecret,
   refreshServstationOidcTokenSet,
-  serializeServstationOidcSecret
+  serializeServstationOidcSecret,
 } from "./servstationOidc";
-import { createInitialState, normalizeIdentityContext, type ModelProviderState, type RuntimeState, type StorageAdapter } from "./storage";
+import {
+  createInitialState,
+  normalizeIdentityContext,
+  type ModelProviderState,
+  type RuntimeState,
+  type StorageAdapter,
+} from "./storage";
 import { SubagentRunner } from "./subagentRunner";
 import { ToolExecutor } from "./toolExecutor";
 import { ToolRegistry } from "./toolRegistry";
-import { TranscriptStore } from "./transcriptStore";
-import { fetchRemoteToolMarketProducts, findLocalToolMarketProduct, findMarketProduct, listToolMarketCatalog, localToolMarketProducts } from "./toolMarket";
+import { messagesFromEntries, TranscriptStore } from "./transcriptStore";
+import {
+  fetchRemoteToolMarketProducts,
+  findLocalToolMarketProduct,
+  findMarketProduct,
+  listToolMarketCatalog,
+  localToolMarketProducts,
+} from "./toolMarket";
 import { WorktreeManager } from "./worktreeManager";
 
 interface RunningJob {
@@ -142,6 +152,7 @@ interface PendingPermissionWaiter {
 }
 
 const MAX_CONVERSATION_MESSAGES = 200;
+const SNAPSHOT_RECENT_MESSAGES = 50;
 const MAX_JOBS = 200;
 const MAX_JOB_PROGRESS_ENTRIES = 50;
 const PERSIST_DEBOUNCE_MS = 150;
@@ -169,8 +180,16 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
   private readonly rootDir: string;
   private schedulerTimer: ReturnType<typeof setInterval> | null = null;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
+  private activeConversationId?: string;
 
-  constructor(private readonly storage: StorageAdapter, options: { secretStorageKind?: ModelConfig["apiKeyStorage"]; marketSecretStorageKind?: ToolMarketConfig["tokenStorage"]; rootDir?: string } = {}) {
+  constructor(
+    private readonly storage: StorageAdapter,
+    options: {
+      secretStorageKind?: ModelConfig["apiKeyStorage"];
+      marketSecretStorageKind?: ToolMarketConfig["tokenStorage"];
+      rootDir?: string;
+    } = {},
+  ) {
     super();
     this.secretStorageKind = options.secretStorageKind || "file";
     this.marketSecretStorageKind = options.marketSecretStorageKind || this.secretStorageKind || "file";
@@ -178,7 +197,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     this.localPackageManager = new LocalPackageManager({
       dataDir: this.storage.getDataDir(),
       randomId,
-      nowIso
+      nowIso,
     });
     this.mcpManager = new McpManager({
       randomId,
@@ -189,14 +208,14 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
           kind: event.kind,
           message: event.message,
           createdAt: nowIso(),
-          data: event.data ? { serverId: event.serverId, ...objectData(event.data) } : { serverId: event.serverId }
+          data: event.data ? { serverId: event.serverId, ...objectData(event.data) } : { serverId: event.serverId },
         };
         this.addRuntimeEvent(record);
         if (this.loaded) {
           await this.persistAndBroadcast();
           this.emitTyped({ type: "query_event", event: record });
         }
-      }
+      },
     });
     this.worktreeManager = new WorktreeManager({
       dataDir: this.storage.getDataDir(),
@@ -205,18 +224,24 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       nowIso,
       onEvent: async (event) => {
         this.upsertWorktreeState(event.worktree);
-        const record = this.createRuntimeEvent("worktree_event", event.message, {
-          worktreeId: event.worktree.id,
-          status: event.worktree.status,
-          path: event.worktree.path,
-          data: event.data
-        }, event.worktree.jobId, event.worktree.conversationId);
+        const record = this.createRuntimeEvent(
+          "worktree_event",
+          event.message,
+          {
+            worktreeId: event.worktree.id,
+            status: event.worktree.status,
+            path: event.worktree.path,
+            data: event.data,
+          },
+          event.worktree.jobId,
+          event.worktree.conversationId,
+        );
         this.addRuntimeEvent(record);
         if (this.loaded) {
           await this.persistAndBroadcast();
           this.emitTyped({ type: "worktree_event", worktree: event.worktree, event: record });
         }
-      }
+      },
     });
     this.remoteBridgeManager = new RemoteBridgeManager({
       randomId,
@@ -245,14 +270,14 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
           await this.persistAndBroadcast();
           this.emitTyped({ type: "remote_bridge", config: this.state.remoteBridgeConfig, event });
         }
-      }
+      },
     });
     this.servstationA2AProvider = new ServstationA2AProvider({
       getConfig: () => this.state.servstationA2AConfig,
       getAccessToken: (signal) => this.servstationA2AAccessToken(signal),
       getIdentityContext: () => this.state.identityContext,
       updateConfig: (input) => this.updateServstationA2AConfig(input),
-      randomId
+      randomId,
     });
     this.servstationReverseBridgeClient = new ServstationReverseBridgeClient({
       getConfig: () => this.state.servstationA2AConfig,
@@ -271,7 +296,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       resumeAutopilotRun: (id) => this.resumeAutopilotRun(id),
       cancelAutopilotRun: (id) => this.cancelAutopilotRun(id),
       randomId,
-      nowIso
+      nowIso,
     });
     this.servstationAgentClient = new ServstationAgentClient({
       getConfig: () => this.state.servstationA2AConfig,
@@ -280,7 +305,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       getIdentityContext: () => this.state.identityContext,
       updateConfig: (input) => this.updateServstationA2AConfig(input),
       randomId,
-      nowIso
+      nowIso,
     });
     this.toolRegistry.addProvider(this.mcpManager);
     this.toolRegistry.addProvider(this.servstationA2AProvider);
@@ -300,7 +325,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       config: this.state.remoteBridgeConfig,
       token: this.state.remoteBridgeSecret,
       sessions: this.state.remoteBridgeSessions,
-      audit: this.state.remoteBridgeAudit
+      audit: this.state.remoteBridgeAudit,
     });
     await this.mcpManager.autoConnectEnabled();
     if (this.state.servstationA2AConfig.reverse?.enabled) {
@@ -309,8 +334,14 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     return this.snapshot();
   }
 
-  snapshot(): RuntimeSnapshot {
+  snapshot(activeConversationId?: string): RuntimeSnapshot {
     this.assertLoaded();
+    if (activeConversationId && this.findConversation(activeConversationId)) {
+      this.activeConversationId = activeConversationId;
+    }
+    if (!this.activeConversationId || !this.findConversation(this.activeConversationId)) {
+      this.activeConversationId = this.state.conversations[0]?.id;
+    }
     const activeProvider = this.ensureActiveModelProvider();
     return {
       status: this.runningJobs.size || this.runningAutopilotRuns.size ? "running" : "ready",
@@ -319,11 +350,22 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       modelConfig: this.modelConfigFromProvider(activeProvider),
       modelProviders: this.state.modelProviders.map((provider) => this.redactModelProvider(provider)),
       activeModelProviderId: activeProvider.id,
-      toolMarketConfig: redactToolMarketConfig(this.state.toolMarketConfig, this.state.toolMarketSecret, this.state.toolMarketPasswordSecret),
+      toolMarketConfig: redactToolMarketConfig(
+        this.state.toolMarketConfig,
+        this.state.toolMarketSecret,
+        this.state.toolMarketPasswordSecret,
+      ),
       personality: this.state.personality,
       capabilities: this.state.capabilities,
       subagents: this.state.subagents,
-      conversations: this.state.conversations,
+      activeConversationId: this.activeConversationId,
+      conversations: this.state.conversations.map((conversation) => ({
+        ...conversation,
+        messageCount: conversation.messageCount ?? conversation.messages.length,
+        lastMessagePreview: conversation.lastMessagePreview || messagePreview(conversation.messages.at(-1)),
+        messages:
+          conversation.id === this.activeConversationId ? conversation.messages.slice(-SNAPSHOT_RECENT_MESSAGES) : [],
+      })),
       jobs: this.state.jobs,
       scheduledJobs: this.state.scheduledJobs,
       projects: this.state.projects,
@@ -344,8 +386,8 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       worktrees: this.worktreeManager.list(),
       remoteBridge: this.remoteBridgeManager.snapshot(),
       servstationA2A: {
-        config: this.redactServstationA2AConfig()
-      }
+        config: this.redactServstationA2AConfig(),
+      },
     };
   }
 
@@ -363,9 +405,11 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       title,
       createdAt: now,
       updatedAt: now,
-      messages: []
+      messageCount: 0,
+      messages: [],
     };
     this.state.conversations = [conversation, ...this.state.conversations];
+    this.activeConversationId = conversation.id;
     await this.persistAndBroadcast();
     return conversation;
   }
@@ -393,12 +437,17 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
 
     this.state.conversations = this.state.conversations.filter((item) => item.id !== id);
     this.state.jobs = this.state.jobs.filter((item) => !belongsToDeletedConversation(item));
-    this.state.pendingToolPermissions = this.state.pendingToolPermissions.filter((item) => !belongsToDeletedConversation(item));
+    this.state.pendingToolPermissions = this.state.pendingToolPermissions.filter(
+      (item) => !belongsToDeletedConversation(item),
+    );
     this.state.agentLoopTraces = this.state.agentLoopTraces.filter((item) => !belongsToDeletedConversation(item));
     this.state.querySessions = this.state.querySessions.filter((item) => !belongsToDeletedConversation(item));
     this.state.runtimeEvents = this.state.runtimeEvents.filter((item) => !belongsToDeletedConversation(item));
     this.state.worktrees = this.state.worktrees.filter((item) => !belongsToDeletedConversation(item));
     this.state.compactBoundaries = this.state.compactBoundaries.filter((item) => item.conversationId !== id);
+    if (this.activeConversationId === id) {
+      this.activeConversationId = this.state.conversations[0]?.id;
+    }
     await new TranscriptStore(this.storage.getDataDir()).delete(id).catch(() => undefined);
     this.worktreeManager.setWorktrees(this.state.worktrees);
     await this.persistAndBroadcast();
@@ -409,7 +458,9 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     const project = await this.projectManager.createFromFolder(input, this.state.projects);
     this.state.projects = [
       project,
-      ...this.state.projects.filter((item) => item.id !== project.id && resolve(item.rootPath) !== resolve(project.rootPath))
+      ...this.state.projects.filter(
+        (item) => item.id !== project.id && resolve(item.rootPath) !== resolve(project.rootPath),
+      ),
     ];
     await this.persistAndBroadcast();
     this.emitTyped({ type: "project_changed", project });
@@ -434,7 +485,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       if (existing && existing.status !== "archived" && existing.name.trim() === name) {
         return this.createProjectFromFolder({ rootPath, name });
       }
-      if (!await pathExists(rootPath)) {
+      if (!(await pathExists(rootPath))) {
         return this.createProjectFromFolder({ rootPath, name });
       }
     }
@@ -454,7 +505,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     this.assertLoaded();
     const current = this.requireProject(id);
     const project = await this.projectManager.update(current, input);
-    this.state.projects = this.state.projects.map((item) => item.id === id ? project : item);
+    this.state.projects = this.state.projects.map((item) => (item.id === id ? project : item));
     await this.persistAndBroadcast();
     this.emitTyped({ type: "project_changed", project });
     return project;
@@ -482,13 +533,15 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       checkpointIds: [],
       evidence: [],
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
     };
     const tasks = this.autopilotOrchestrator.createTasks(run);
     const nextRun = { ...run, taskIds: tasks.map((task) => task.id) };
     this.state.autopilotRuns = [nextRun, ...this.state.autopilotRuns];
     this.state.autopilotTasks = [...tasks, ...this.state.autopilotTasks];
-    this.state.projects = this.state.projects.map((item) => item.id === project.id ? { ...item, lastRunAt: now, updatedAt: now } : item);
+    this.state.projects = this.state.projects.map((item) =>
+      item.id === project.id ? { ...item, lastRunAt: now, updatedAt: now } : item,
+    );
     await this.addAutopilotCheckpoint(nextRun, "Autopilot data run queued");
     await this.addAutopilotEvent(nextRun, "info", "Autopilot data run queued", { taskCount: tasks.length });
     await this.persistAndBroadcast();
@@ -498,7 +551,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
 
   async pauseAutopilotRun(id: string): Promise<AutopilotRun> {
     this.assertLoaded();
-    const run = this.requireAutopilotRun(id);
+    this.requireAutopilotRun(id);
     this.runningAutopilotRuns.get(id)?.controller.abort();
     const next = this.patchAutopilotRun(id, { status: "paused", updatedAt: nowIso(), error: undefined });
     await this.addAutopilotEvent(next, "info", "Autopilot data run paused");
@@ -522,13 +575,15 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
 
   async cancelAutopilotRun(id: string): Promise<AutopilotRun> {
     this.assertLoaded();
-    const run = this.requireAutopilotRun(id);
+    this.requireAutopilotRun(id);
     this.runningAutopilotRuns.get(id)?.controller.abort();
     const now = nowIso();
     const next = this.patchAutopilotRun(id, { status: "canceled", updatedAt: now, finishedAt: now });
-    this.state.autopilotTasks = this.state.autopilotTasks.map((task) => task.runId === id && (task.status === "queued" || task.status === "running")
-      ? { ...task, status: "skipped", updatedAt: now, finishedAt: now, error: "Run canceled" }
-      : task);
+    this.state.autopilotTasks = this.state.autopilotTasks.map((task) =>
+      task.runId === id && (task.status === "queued" || task.status === "running")
+        ? { ...task, status: "skipped", updatedAt: now, finishedAt: now, error: "Run canceled" }
+        : task,
+    );
     await this.addAutopilotEvent(next, "warning", "Autopilot data run canceled");
     await this.addAutopilotCheckpoint(next, "Canceled by user");
     await this.persistAndBroadcast();
@@ -544,17 +599,20 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       tasks: this.state.autopilotTasks.filter((task) => task.runId === id),
       artifacts: this.state.dataArtifacts.filter((artifact) => artifact.runId === id),
       checkpoints: this.state.autopilotCheckpoints.filter((checkpoint) => checkpoint.runId === id),
-      events: this.state.autopilotEvents.filter((event) => event.runId === id)
+      events: this.state.autopilotEvents.filter((event) => event.runId === id),
     };
   }
 
   async sendPrompt(input: SendPromptInput): Promise<SendPromptResult> {
     this.assertLoaded();
     const existingConversation = input.conversationId ? this.findConversation(input.conversationId) : undefined;
-    const conversation = existingConversation || await this.createConversation({
-      title: titleFromPrompt(input.prompt),
-      projectId: input.projectId
-    });
+    const conversation =
+      existingConversation ||
+      (await this.createConversation({
+        title: titleFromPrompt(input.prompt),
+        projectId: input.projectId,
+      }));
+    this.activeConversationId = conversation.id;
 
     const now = nowIso();
     const userMessage: ChatMessage = {
@@ -563,7 +621,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       role: "user",
       text: input.prompt,
       createdAt: now,
-      attachments: input.attachments || []
+      attachments: input.attachments || [],
     };
     const job: AgentJob = {
       id: randomId("job"),
@@ -575,7 +633,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       diffStatus: "unavailable",
       createdAt: now,
       updatedAt: now,
-      progress: ["Queued locally"]
+      progress: ["Queued locally"],
     };
 
     this.appendMessage(conversation.id, userMessage);
@@ -626,19 +684,18 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     return this.state.permissionMode;
   }
 
-  async addPermissionRule(rule: Omit<PermissionRule, "id" | "createdAt" | "scope"> & { id?: string }): Promise<PermissionRule> {
+  async addPermissionRule(
+    rule: Omit<PermissionRule, "id" | "createdAt" | "scope"> & { id?: string },
+  ): Promise<PermissionRule> {
     this.assertLoaded();
     const next: PermissionRule = {
       id: rule.id || randomId("rule"),
       toolName: rule.toolName.trim() || "*",
       behavior: rule.behavior,
       scope: "session",
-      createdAt: nowIso()
+      createdAt: nowIso(),
     };
-    this.state.permissionRules = [
-      next,
-      ...this.state.permissionRules.filter((item) => item.id !== next.id)
-    ];
+    this.state.permissionRules = [next, ...this.state.permissionRules.filter((item) => item.id !== next.id)];
     await this.persistAndBroadcast();
     return next;
   }
@@ -662,7 +719,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       summary: summarizeConversationForManualCompact(conversation.messages),
       preservedMessageIds: conversation.messages.slice(-6).map((message) => message.id),
       originalMessageCount: conversation.messages.length,
-      createdAt: nowIso()
+      createdAt: nowIso(),
     };
     this.upsertCompactBoundary(boundary);
     const summaryMessage: ChatMessage = {
@@ -671,7 +728,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       role: "system",
       text: boundary.summary,
       createdAt: boundary.createdAt,
-      blocks: [{ type: "compact_summary", boundaryId: boundary.id, summary: boundary.summary }]
+      blocks: [{ type: "compact_summary", boundaryId: boundary.id, summary: boundary.summary }],
     };
     this.appendMessage(conversationId, summaryMessage);
     await this.appendTranscript(conversationId, { type: "compact", boundary });
@@ -682,7 +739,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       kind: "compact",
       message: "Conversation manually compacted",
       createdAt: boundary.createdAt,
-      data: boundary
+      data: boundary,
     };
     this.addRuntimeEvent(event);
     await this.appendTranscript(conversationId, { type: "event", event });
@@ -695,7 +752,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         kind: "memory_candidate",
         message: "Memory candidate created from compact summary",
         createdAt: candidate.createdAt,
-        data: candidate
+        data: candidate,
       };
       this.addRuntimeEvent(candidateEvent);
       await this.appendTranscript(conversationId, { type: "event", event: candidateEvent });
@@ -719,6 +776,14 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     }
     const store = new TranscriptStore(this.storage.getDataDir());
     return store.loadRecoverable(conversationId, conversation.messages, this.state.compactBoundaries);
+  }
+
+  async loadConversationHistory(conversationId: string, beforeMessageId?: string, limit?: number) {
+    this.assertLoaded();
+    if (!this.findConversation(conversationId)) {
+      throw new Error(`Conversation not found: ${conversationId}`);
+    }
+    return new TranscriptStore(this.storage.getDataDir()).loadPage(conversationId, { beforeMessageId, limit });
   }
 
   async listWorktrees(): Promise<TaskWorktree[]> {
@@ -756,14 +821,16 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
 
   async identityContext(): Promise<IdentityContext | undefined> {
     this.assertLoaded();
-    return this.state.identityContext ? { ...this.state.identityContext, roleIds: [...this.state.identityContext.roleIds] } : undefined;
+    return this.state.identityContext
+      ? { ...this.state.identityContext, roleIds: [...this.state.identityContext.roleIds] }
+      : undefined;
   }
 
   async updateIdentityContext(input: IdentityContext): Promise<IdentityContext> {
     this.assertLoaded();
     const normalized = normalizeIdentityContext({
       ...input,
-      updatedAt: input.updatedAt ?? nowIso()
+      updatedAt: input.updatedAt ?? nowIso(),
     });
     if (!normalized) {
       throw new Error("Invalid identity context");
@@ -787,18 +854,25 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     this.assertLoaded();
     const current = this.state.servstationA2AConfig;
     const baseUrl = input.baseUrl !== undefined ? normalizeHttpUrl(input.baseUrl) : current.baseUrl;
-    const nextSecret = input.clearBearerToken ? undefined : input.bearerToken?.trim() || this.state.servstationA2ASecret;
-    const authMode = input.authMode === "bearer" || input.authMode === "identityHeaders" || input.authMode === "oidc" ? input.authMode : current.authMode;
+    const nextSecret = input.clearBearerToken
+      ? undefined
+      : input.bearerToken?.trim() || this.state.servstationA2ASecret;
+    const authMode =
+      input.authMode === "bearer" || input.authMode === "identityHeaders" || input.authMode === "oidc"
+        ? input.authMode
+        : current.authMode;
     const currentOidc = this.redactServstationA2AOidcConfig();
     const oidc = {
       ...currentOidc,
       issuerUrl: input.oidcIssuerUrl !== undefined ? normalizeHttpUrl(input.oidcIssuerUrl) : currentOidc.issuerUrl,
       clientId: input.oidcClientId !== undefined ? emptyToUndefined(input.oidcClientId) : currentOidc.clientId,
       scope: input.oidcScope !== undefined ? emptyToUndefined(input.oidcScope) : currentOidc.scope,
-      redirectUri: input.oidcRedirectUri !== undefined ? normalizeHttpUrl(input.oidcRedirectUri) : currentOidc.redirectUri,
-      refreshTokenSaved: currentOidc.refreshTokenSaved
+      redirectUri:
+        input.oidcRedirectUri !== undefined ? normalizeHttpUrl(input.oidcRedirectUri) : currentOidc.redirectUri,
+      refreshTokenSaved: currentOidc.refreshTokenSaved,
     };
-    const staffAgentAccount = input.staffAgentAccount !== undefined ? emptyToUndefined(input.staffAgentAccount) : current.staffAgentAccount;
+    const staffAgentAccount =
+      input.staffAgentAccount !== undefined ? emptyToUndefined(input.staffAgentAccount) : current.staffAgentAccount;
     const previousStaffAgentPassword = this.state.servstationA2AStaffAgentPasswordSecret;
     let nextStaffAgentPassword = previousStaffAgentPassword;
     let staffAgentPasswordChanged = false;
@@ -810,26 +884,32 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       staffAgentPasswordChanged = nextStaffAgentPassword !== previousStaffAgentPassword;
     }
     const oidcContextChanged =
-      baseUrl !== current.baseUrl
-      || oidc.issuerUrl !== currentOidc.issuerUrl
-      || oidc.clientId !== currentOidc.clientId
-      || staffAgentAccount !== current.staffAgentAccount
-      || staffAgentPasswordChanged;
+      baseUrl !== current.baseUrl ||
+      oidc.issuerUrl !== currentOidc.issuerUrl ||
+      oidc.clientId !== currentOidc.clientId ||
+      staffAgentAccount !== current.staffAgentAccount ||
+      staffAgentPasswordChanged;
     const nextOidc = oidcContextChanged
       ? {
           ...oidc,
           accessTokenExpiresAt: undefined,
           refreshTokenSaved: false,
-          userId: undefined
+          userId: undefined,
         }
       : oidc;
-    const currentReverse = this.state.servstationA2AConfig.reverse || { enabled: false, status: "disconnected" as const };
+    const currentReverse = this.state.servstationA2AConfig.reverse || {
+      enabled: false,
+      status: "disconnected" as const,
+    };
     const reverse = {
       ...currentReverse,
       enabled: input.reverseEnabled ?? currentReverse.enabled,
-      clientInstanceId: input.reverseClientInstanceId !== undefined ? emptyToUndefined(input.reverseClientInstanceId) : currentReverse.clientInstanceId,
-      status: input.reverseEnabled === false ? "disconnected" as const : currentReverse.status,
-      updatedAt: nowIso()
+      clientInstanceId:
+        input.reverseClientInstanceId !== undefined
+          ? emptyToUndefined(input.reverseClientInstanceId)
+          : currentReverse.clientInstanceId,
+      status: input.reverseEnabled === false ? ("disconnected" as const) : currentReverse.status,
+      updatedAt: nowIso(),
     };
     this.state.servstationA2AConfig = {
       ...current,
@@ -842,8 +922,9 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       staffAgentPasswordStorage: nextStaffAgentPassword ? this.secretStorageKind : undefined,
       oidc: nextOidc,
       reverse,
-      agentInstanceId: input.agentInstanceId !== undefined ? emptyToUndefined(input.agentInstanceId) : current.agentInstanceId,
-      updatedAt: nowIso()
+      agentInstanceId:
+        input.agentInstanceId !== undefined ? emptyToUndefined(input.agentInstanceId) : current.agentInstanceId,
+      updatedAt: nowIso(),
     };
     this.state.servstationA2ASecret = nextSecret;
     this.state.servstationA2AStaffAgentPasswordSecret = nextStaffAgentPassword;
@@ -859,7 +940,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       staffAgentAccount,
       staffAgentPasswordSaved: Boolean(nextStaffAgentPassword),
       oidc: nextOidc,
-      reverse
+      reverse,
     });
     this.addRuntimeEvent(event);
     await this.persistAndBroadcast();
@@ -870,13 +951,16 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
 
   async connectServstationReverseBridge(): Promise<ServstationA2AConfig> {
     this.assertLoaded();
-    if (this.state.servstationA2AConfig.authMode === "oidc" && !parseServstationOidcSecret(this.state.servstationA2AOidcSecret)) {
+    if (
+      this.state.servstationA2AConfig.authMode === "oidc" &&
+      !parseServstationOidcSecret(this.state.servstationA2AOidcSecret)
+    ) {
       throw new Error("Servstation OIDC session is not configured.");
     }
     await this.updateServstationReverseState({
       enabled: true,
       status: "connecting",
-      lastError: undefined
+      lastError: undefined,
     });
     this.servstationReverseBridgeClient.start();
     return this.waitForServstationReverseConnection();
@@ -891,9 +975,10 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
   async updateServstationA2AOidcSession(input: ServstationA2AOidcSessionUpdate): Promise<ServstationA2AConfig> {
     this.assertLoaded();
     const current = this.state.servstationA2AConfig;
-    const baseUrl = input.baseUrl !== undefined
-      ? normalizeHttpUrl(input.baseUrl)
-      : current.baseUrl || this.state.identityContext?.servstationUrl || input.identityContext?.servstationUrl;
+    const baseUrl =
+      input.baseUrl !== undefined
+        ? normalizeHttpUrl(input.baseUrl)
+        : current.baseUrl || this.state.identityContext?.servstationUrl || input.identityContext?.servstationUrl;
     const issuerUrl = normalizeHttpUrl(input.issuerUrl);
     if (!issuerUrl) {
       throw new Error("Servstation OIDC issuer URL is required.");
@@ -902,14 +987,14 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     const tokens = {
       ...input.tokens,
       issuerUrl,
-      clientId
+      clientId,
     };
     const derivedIdentity = input.identityContext
       ? normalizeIdentityContext({ ...input.identityContext, servstationUrl: baseUrl, updatedAt: nowIso() })
       : identityContextFromAccessToken(tokens.accessToken, {
-        ...(this.state.identityContext || {}),
-        servstationUrl: baseUrl
-      });
+          ...(this.state.identityContext || {}),
+          servstationUrl: baseUrl,
+        });
     if (derivedIdentity) {
       this.state.identityContext = derivedIdentity;
     }
@@ -927,17 +1012,17 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         redirectUri: input.redirectUri !== undefined ? normalizeHttpUrl(input.redirectUri) : current.oidc?.redirectUri,
         accessTokenExpiresAt: tokens.expiresAt,
         refreshTokenSaved: Boolean(tokens.refreshToken),
-        userId: derivedIdentity?.userId || current.oidc?.userId
+        userId: derivedIdentity?.userId || current.oidc?.userId,
       },
       agentInstanceId: derivedIdentity?.agentInstanceId || current.agentInstanceId,
-      updatedAt: nowIso()
+      updatedAt: nowIso(),
     };
     const event = this.createRuntimeEvent("servstation_a2a", "Servstation OIDC session updated", {
       baseUrl,
       issuerUrl,
       clientId,
       userId: derivedIdentity?.userId,
-      refreshTokenSaved: Boolean(tokens.refreshToken)
+      refreshTokenSaved: Boolean(tokens.refreshToken),
     });
     this.addRuntimeEvent(event);
     await this.persistAndBroadcast();
@@ -957,7 +1042,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     const derivedIdentity = identityContextFromAccessToken(refreshed.accessToken, {
       ...(this.state.identityContext || {}),
       agentInstanceId: current.agentInstanceId || this.state.identityContext?.agentInstanceId,
-      servstationUrl: current.baseUrl || this.state.identityContext?.servstationUrl
+      servstationUrl: current.baseUrl || this.state.identityContext?.servstationUrl,
     });
     if (derivedIdentity) {
       this.state.identityContext = normalizeIdentityContext(derivedIdentity);
@@ -973,16 +1058,16 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         scope: refreshed.scope || current.oidc?.scope,
         accessTokenExpiresAt: refreshed.expiresAt,
         refreshTokenSaved: Boolean(refreshed.refreshToken),
-        userId: derivedIdentity?.userId || current.oidc?.userId
+        userId: derivedIdentity?.userId || current.oidc?.userId,
       },
       agentInstanceId: derivedIdentity?.agentInstanceId || current.agentInstanceId,
-      updatedAt: nowIso()
+      updatedAt: nowIso(),
     };
     const event = this.createRuntimeEvent("servstation_a2a", "Servstation OIDC token refreshed", {
       issuerUrl: refreshed.issuerUrl,
       clientId: refreshed.clientId,
       userId: derivedIdentity?.userId,
-      refreshTokenSaved: Boolean(refreshed.refreshToken)
+      refreshTokenSaved: Boolean(refreshed.refreshToken),
     });
     this.addRuntimeEvent(event);
     await this.persistAndBroadcast();
@@ -1002,13 +1087,13 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         ...this.redactServstationA2AOidcConfig(),
         accessTokenExpiresAt: undefined,
         refreshTokenSaved: false,
-        userId: undefined
+        userId: undefined,
       },
-      updatedAt: nowIso()
+      updatedAt: nowIso(),
     };
     const event = this.createRuntimeEvent("servstation_a2a", "Servstation OIDC session cleared", {
       issuerUrl: current.oidc?.issuerUrl,
-      clientId: current.oidc?.clientId
+      clientId: current.oidc?.clientId,
     });
     this.addRuntimeEvent(event);
     await this.persistAndBroadcast();
@@ -1017,7 +1102,9 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     return redacted;
   }
 
-  async updateRemoteBridgeConfig(input: Partial<RemoteBridgeConfig> & { token?: string; clearToken?: boolean }): Promise<RemoteBridgeConfig> {
+  async updateRemoteBridgeConfig(
+    input: Partial<RemoteBridgeConfig> & { token?: string; clearToken?: boolean },
+  ): Promise<RemoteBridgeConfig> {
     this.assertLoaded();
     const result = await this.remoteBridgeManager.update(input);
     this.state.remoteBridgeConfig = result.config;
@@ -1052,7 +1139,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       ...query,
       scope: query.scope || "all",
       includeDisabled: query.includeDisabled ?? true,
-      limit: query.limit ?? 100
+      limit: query.limit ?? 100,
     });
   }
 
@@ -1061,7 +1148,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     return this.memoryManager.search(this.state.memory, {
       ...query,
       scope: query.scope || "all",
-      limit: query.limit ?? 20
+      limit: query.limit ?? 20,
     });
   }
 
@@ -1070,7 +1157,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     const result = this.memoryManager.add(this.state.memory, {
       ...input,
       title: requiredString(input.title, "Memory title"),
-      content: requiredString(input.content, "Memory content")
+      content: requiredString(input.content, "Memory content"),
     });
     this.state.memory = result.memory;
     await this.recordMemoryWrite("Memory added", result.record, result.record.conversationId);
@@ -1108,7 +1195,11 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       throw new Error(`Pending memory candidate not found: ${id}`);
     }
     this.state.memory = result.memory;
-    await this.recordMemoryWrite("Memory candidate approved", { candidate: result.candidate, record: result.record }, result.record.conversationId);
+    await this.recordMemoryWrite(
+      "Memory candidate approved",
+      { candidate: result.candidate, record: result.record },
+      result.record.conversationId,
+    );
     await this.persistAndBroadcast();
     this.emitTyped({ type: "memory_candidate", candidate: result.candidate });
     this.emitTyped({ type: "memory_changed", memory: this.state.memory });
@@ -1140,7 +1231,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     this.state.memory = result.memory;
     await this.recordMemoryWrite("Memory imported", {
       mode: result.mode,
-      imported: result.imported
+      imported: result.imported,
     });
     await this.persistAndBroadcast();
     this.emitTyped({ type: "memory_changed", memory: this.state.memory });
@@ -1162,7 +1253,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       name: basename(filePath),
       path: filePath,
       size: info.size,
-      createdAt
+      createdAt,
     };
     await this.recordMemoryWrite("Memory backup created", file);
     await this.persistAndBroadcast();
@@ -1171,7 +1262,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
 
   async restoreMemory(filePath?: string): Promise<MemoryImportResult> {
     this.assertLoaded();
-    const restorePath = filePath?.trim() || await this.latestMemoryBackupPath();
+    const restorePath = filePath?.trim() || (await this.latestMemoryBackupPath());
     if (!restorePath) {
       throw new Error("No memory backup found.");
     }
@@ -1181,7 +1272,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     this.state.memory = result.memory;
     await this.recordMemoryWrite("Memory restored", {
       path: restorePath,
-      imported: result.imported
+      imported: result.imported,
     });
     await this.persistAndBroadcast();
     this.emitTyped({ type: "memory_changed", memory: this.state.memory });
@@ -1194,7 +1285,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       ...input,
       scope: input.scope || "all",
       conversationId: input.conversationId || undefined,
-      subagentName: input.subagentName || undefined
+      subagentName: input.subagentName || undefined,
     });
   }
 
@@ -1229,7 +1320,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
   async updateMcpServer(id: string, input: McpServerUpdate): Promise<McpServerConfig> {
     this.assertLoaded();
     const server = this.mcpManager.update(id, input);
-    this.state.mcpServers = this.state.mcpServers.map((item) => item.id === id ? server : item);
+    this.state.mcpServers = this.state.mcpServers.map((item) => (item.id === id ? server : item));
     this.upsertMcpCapability();
     await this.recordMcpEvent("MCP server updated", server.id, { name: server.name });
     await this.persistAndBroadcast();
@@ -1292,10 +1383,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
   async importMcpConfig(input: McpConfigTransfer): Promise<McpImportResult> {
     this.assertLoaded();
     const result = this.mcpManager.importConfig(input);
-    this.state.mcpServers = [
-      ...result.servers,
-      ...this.state.mcpServers
-    ];
+    this.state.mcpServers = [...result.servers, ...this.state.mcpServers];
     this.upsertMcpCapability();
     await this.recordMcpEvent("MCP config imported", undefined, { imported: result.imported, skipped: result.skipped });
     await this.persistAndBroadcast();
@@ -1309,7 +1397,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       serverName: result.serverName,
       toolCount: result.toolCount,
       error: result.error,
-      durationMs: result.durationMs
+      durationMs: result.durationMs,
     });
     await this.persistAndBroadcast();
     return result;
@@ -1358,9 +1446,9 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     for (const job of due) {
       const ranAt = at.toISOString();
       const nextSchedule = nextScheduleState(job, at);
-      this.state.scheduledJobs = this.state.scheduledJobs.map((item) => item.id === job.id
-        ? { ...item, ...nextSchedule, lastRunAt: ranAt, updatedAt: ranAt }
-        : item);
+      this.state.scheduledJobs = this.state.scheduledJobs.map((item) =>
+        item.id === job.id ? { ...item, ...nextSchedule, lastRunAt: ranAt, updatedAt: ranAt } : item,
+      );
       await this.sendPrompt({ projectId: job.projectId, prompt: `[Scheduled] ${job.title}\n\n${job.prompt}` });
     }
     if (due.length) {
@@ -1380,17 +1468,20 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     this.assertLoaded();
     this.ensureActiveModelProvider();
     const createdAt = nowIso();
-    const provider = this.applyModelProviderUpdate({
-      id: randomId("model_provider"),
-      providerName: "",
-      baseUrl: "",
-      model: "",
-      temperature: 0.7,
-      maxTokens: 4096,
-      apiKeySaved: false,
-      createdAt,
-      updatedAt: createdAt
-    }, update);
+    const provider = this.applyModelProviderUpdate(
+      {
+        id: randomId("model_provider"),
+        providerName: "",
+        baseUrl: "",
+        model: "",
+        temperature: 0.7,
+        maxTokens: 4096,
+        apiKeySaved: false,
+        createdAt,
+        updatedAt: createdAt,
+      },
+      update,
+    );
     this.state.modelProviders = [...this.state.modelProviders, provider];
     await this.persistAndBroadcast();
     return this.redactModelProvider(provider);
@@ -1400,7 +1491,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     this.assertLoaded();
     const provider = this.requireModelProvider(id);
     const next = this.applyModelProviderUpdate(provider, update);
-    this.state.modelProviders = this.state.modelProviders.map((item) => item.id === provider.id ? next : item);
+    this.state.modelProviders = this.state.modelProviders.map((item) => (item.id === provider.id ? next : item));
     await this.persistAndBroadcast();
     return this.redactModelProvider(next);
   }
@@ -1434,12 +1525,15 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     const accountEmail = update.accountEmail?.trim() || "";
     const requestedSource = normalizeToolMarketSource(update.source);
     const next: ToolMarketConfig = {
-      source: requestedSource === "local" && (apiUrl || accountEmail || update.password?.trim() || update.accessToken?.trim()) ? "hybrid" : requestedSource,
+      source:
+        requestedSource === "local" && (apiUrl || accountEmail || update.password?.trim() || update.accessToken?.trim())
+          ? "hybrid"
+          : requestedSource,
       apiUrl,
       accountEmail,
       accessTokenSaved: false,
       passwordSaved: false,
-      lastSyncedAt: this.state.toolMarketConfig.lastSyncedAt
+      lastSyncedAt: this.state.toolMarketConfig.lastSyncedAt,
     };
     if (update.clearAccessToken) {
       this.state.toolMarketSecret = undefined;
@@ -1457,7 +1551,11 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     next.passwordStorage = next.passwordSaved ? this.marketSecretStorageKind : undefined;
     this.state.toolMarketConfig = next;
     await this.persistAndBroadcast();
-    return redactToolMarketConfig(this.state.toolMarketConfig, this.state.toolMarketSecret, this.state.toolMarketPasswordSecret);
+    return redactToolMarketConfig(
+      this.state.toolMarketConfig,
+      this.state.toolMarketSecret,
+      this.state.toolMarketPasswordSecret,
+    );
   }
 
   async testModelConfig(update?: Partial<ModelConfigUpdate>): Promise<ModelTestResult> {
@@ -1482,7 +1580,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       temperature: update?.temperature ?? baseProvider.temperature,
       maxTokens: update?.maxTokens ?? baseProvider.maxTokens,
       apiKeySaved: Boolean(update?.apiKey || (!update?.clearApiKey && baseProvider.apiKeySecret)),
-      apiKeyStorage: baseProvider.apiKeySecret ? this.secretStorageKind : undefined
+      apiKeyStorage: baseProvider.apiKeySecret ? this.secretStorageKind : undefined,
     };
     let apiKey: string;
     try {
@@ -1491,20 +1589,25 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       return { ok: false, message: (error as Error).message };
     }
     if (!apiKey) {
-      return { ok: false, message: "No API key configured. Fallback mode is available, but real model calls need a key." };
+      return {
+        ok: false,
+        message: "No API key configured. Fallback mode is available, but real model calls need a key.",
+      };
     }
     try {
       const result = await generateReply({
         modelConfig,
         apiKey,
         personality: this.state.personality,
-        messages: [{
-          id: "model-test",
-          conversationId: "model-test",
-          role: "user",
-          text: "Reply with exactly: HBClient model test ok",
-          createdAt: nowIso()
-        }]
+        messages: [
+          {
+            id: "model-test",
+            conversationId: "model-test",
+            role: "user",
+            text: "Reply with exactly: HBClient model test ok",
+            createdAt: nowIso(),
+          },
+        ],
       });
       return { ok: true, message: result.text.slice(0, 500) };
     } catch (error) {
@@ -1517,7 +1620,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     this.state.personality = {
       summary: personality.summary.trim(),
       traits: personality.traits.map((item) => item.trim()).filter(Boolean),
-      instructions: personality.instructions.trim()
+      instructions: personality.instructions.trim(),
     };
     await this.persistAndBroadcast();
     return this.state.personality;
@@ -1533,9 +1636,9 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       ...current,
       name: input.name !== undefined ? requiredString(input.name, "Capability name") : current.name,
       description: input.description !== undefined ? input.description.trim() : current.description,
-      enabled: input.enabled !== undefined ? Boolean(input.enabled) : current.enabled
+      enabled: input.enabled !== undefined ? Boolean(input.enabled) : current.enabled,
     };
-    this.state.capabilities = this.state.capabilities.map((item) => item.id === id ? next : item);
+    this.state.capabilities = this.state.capabilities.map((item) => (item.id === id ? next : item));
     await this.persistAndBroadcast();
     return next;
   }
@@ -1557,12 +1660,11 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       name: requiredString(subagent.name, "Subagent name"),
       description: subagent.description.trim(),
       systemPrompt: subagent.systemPrompt.trim(),
-      enabled: Boolean(subagent.enabled)
+      enabled: Boolean(subagent.enabled),
     };
-    this.state.subagents = [
-      ...this.state.subagents.filter((item) => item.id !== next.id),
-      next
-    ].sort((a, b) => a.name.localeCompare(b.name));
+    this.state.subagents = [...this.state.subagents.filter((item) => item.id !== next.id), next].sort((a, b) =>
+      a.name.localeCompare(b.name),
+    );
     await this.persistAndBroadcast();
     return next;
   }
@@ -1590,7 +1692,11 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         }
       }
     }
-    return listToolMarketCatalog(uniqueMarketProducts([...local, ...remote, ...installed]), this.state.capabilities, query);
+    return listToolMarketCatalog(
+      uniqueMarketProducts([...local, ...remote, ...installed]),
+      this.state.capabilities,
+      query,
+    );
   }
 
   async installToolMarketProduct(productId: string): Promise<ToolMarketCatalogItem> {
@@ -1606,16 +1712,16 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     const installPath = await this.installToolMarketPackage(product, deployment);
     const capability: CapabilityDefinition = {
       ...(deployment.capability || product.capability),
-      enabled: true
+      enabled: true,
     };
-    this.state.capabilities = [
-      ...this.state.capabilities.filter((item) => item.id !== capability.id),
-      capability
-    ];
+    this.state.capabilities = [...this.state.capabilities.filter((item) => item.id !== capability.id), capability];
     this.state.deletedCapabilityIds = this.state.deletedCapabilityIds.filter((id) => id !== capability.id);
     const mcpServer = this.upsertMarketMcpServer(product, deployment, installPath);
     if (mcpServer) {
-      await this.recordMcpEvent("Tool market MCP installed locally", mcpServer.id, { productId: product.id, installPath });
+      await this.recordMcpEvent("Tool market MCP installed locally", mcpServer.id, {
+        productId: product.id,
+        installPath,
+      });
     }
     await this.persistAndBroadcast();
     if (mcpServer?.enabled && mcpServer.autoConnect) {
@@ -1657,7 +1763,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       enabled: input.enabled ?? true,
       createdAt: now,
       updatedAt: now,
-      nextRunAt: input.runAt
+      nextRunAt: input.runAt,
     };
     this.state.scheduledJobs = [job, ...this.state.scheduledJobs];
     await this.persistAndBroadcast();
@@ -1679,9 +1785,9 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       title: input.title !== undefined ? input.title.trim() : current.title,
       prompt: input.prompt !== undefined ? input.prompt.trim() : current.prompt,
       updatedAt: nowIso(),
-      nextRunAt: input.runAt !== undefined ? input.runAt : current.nextRunAt
+      nextRunAt: input.runAt !== undefined ? input.runAt : current.nextRunAt,
     };
-    this.state.scheduledJobs = this.state.scheduledJobs.map((item) => item.id === id ? next : item);
+    this.state.scheduledJobs = this.state.scheduledJobs.map((item) => (item.id === id ? next : item));
     await this.persistAndBroadcast();
     return next;
   }
@@ -1699,7 +1805,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       id: randomId("att"),
       name: basename(filePath),
       path: filePath,
-      size: info.size
+      size: info.size,
     };
   }
 
@@ -1719,10 +1825,16 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     }
     const knownPaths = [
       ...this.state.worktrees.map((worktree) => worktree.path),
-      ...this.state.conversations.flatMap((conversation) => conversation.messages.flatMap((message) => [
-        ...(message.attachments || []).map((attachment) => attachment.path).filter((path): path is string => Boolean(path)),
-        ...(message.generatedFiles || []).map((file) => file.path)
-      ]).flat())
+      ...this.state.conversations.flatMap((conversation) =>
+        conversation.messages
+          .flatMap((message) => [
+            ...(message.attachments || [])
+              .map((attachment) => attachment.path)
+              .filter((path): path is string => Boolean(path)),
+            ...(message.generatedFiles || []).map((file) => file.path),
+          ])
+          .flat(),
+      ),
     ];
     return knownPaths.some((knownPath) => pathIsInside(knownPath, normalized) || resolve(knownPath) === normalized);
   }
@@ -1747,9 +1859,10 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       if (!conversation) {
         throw new Error("Conversation disappeared before the job could run.");
       }
-      const project = (job.projectId || conversation.projectId)
-        ? this.requireConversationProject(job.projectId || conversation.projectId!)
-        : undefined;
+      const project =
+        job.projectId || conversation.projectId
+          ? this.requireConversationProject(job.projectId || conversation.projectId!)
+          : undefined;
       const toolContextOptions: ProjectToolContextOptions = project ? { project, allowProjectRootWrites: true } : {};
       const cwd = project?.rootPath || process.cwd();
       const subagent = resolveMentionedSubagent(job.prompt, this.state.subagents);
@@ -1760,7 +1873,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         text: subagent ? `@${subagent.name} is thinking...` : "HBClient is thinking...",
         createdAt: nowIso(),
         jobId,
-        status: "running"
+        status: "running",
       };
       this.appendMessage(conversation.id, assistantSeed);
       this.emitTyped({ type: "message", conversationId: conversation.id, message: assistantSeed });
@@ -1771,14 +1884,12 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
           ...assistantSeed,
           text: localTool.text,
           status: "completed",
-          blocks: [
-            ...toolBlocksFromRecords(trace?.toolCalls || []),
-            { type: "text", text: localTool.text }
-          ],
+          blocks: [...toolBlocksFromRecords(trace?.toolCalls || []), { type: "text", text: localTool.text }],
           generatedFiles: localTool.generatedFiles,
-          createdAt: nowIso()
+          createdAt: nowIso(),
         };
         this.replaceMessage(conversation.id, assistantSeed.id, finalMessage);
+        await this.appendTranscript(conversation.id, { type: "message", message: finalMessage });
         this.updateJob(jobId, "completed", "Completed local tool command");
         await this.completeJobWorktree(jobId);
         await this.persistAndBroadcast();
@@ -1797,7 +1908,8 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         personality: this.state.personality,
         subagent,
         capabilities: this.state.capabilities,
-        messages: this.findConversation(conversation.id)?.messages.filter((message) => message.id !== assistantSeed.id) || [],
+        messages:
+          this.findConversation(conversation.id)?.messages.filter((message) => message.id !== assistantSeed.id) || [],
         compactBoundaries: this.state.compactBoundaries,
         memory: this.state.memory,
         registry: this.toolRegistry,
@@ -1817,7 +1929,12 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         },
         onMessageDelta: (delta) => {
           this.appendAssistantDelta(conversation.id, assistantSeed.id, delta);
-          this.emitTyped({ type: "message_delta", conversationId: conversation.id, messageId: assistantSeed.id, delta });
+          this.emitTyped({
+            type: "message_delta",
+            conversationId: conversation.id,
+            messageId: assistantSeed.id,
+            delta,
+          });
         },
         onTrace: (trace) => {
           this.upsertTrace(trace);
@@ -1846,7 +1963,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
           this.resolvePermission(permission.id, "denied");
           await this.persistAndBroadcast();
           this.emitTyped({ type: "permission_timeout", permission });
-        }
+        },
       });
       const response = await engine.submitTurn();
       const finalMessage: ChatMessage = {
@@ -1855,13 +1972,22 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         status: "completed",
         blocks: [
           ...toolBlocksFromRecords(response.trace.toolCalls),
-          ...(response.compactBoundary ? [{ type: "compact_summary" as const, boundaryId: response.compactBoundary.id, summary: response.compactBoundary.summary }] : []),
-          { type: "text", text: response.text }
+          ...(response.compactBoundary
+            ? [
+                {
+                  type: "compact_summary" as const,
+                  boundaryId: response.compactBoundary.id,
+                  summary: response.compactBoundary.summary,
+                },
+              ]
+            : []),
+          { type: "text", text: response.text },
         ],
         generatedFiles: response.generatedFiles,
-        createdAt: nowIso()
+        createdAt: nowIso(),
       };
       this.replaceMessage(conversation.id, assistantSeed.id, finalMessage);
+      await this.appendTranscript(conversation.id, { type: "message", message: finalMessage });
       this.updateJob(jobId, "completed", "Completed");
       await this.completeJobWorktree(jobId);
       await this.persistAndBroadcast();
@@ -1870,6 +1996,10 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       const status: JobStatus = controller.signal.aborted ? "canceled" : "failed";
       const message = controller.signal.aborted ? "Canceled by user" : (error as Error).message;
       this.updateAssistantMessageForJob(job.conversationId, jobId, status, message);
+      const failedMessage = this.findConversation(job.conversationId)?.messages.find((item) => item.jobId === jobId);
+      if (failedMessage) {
+        await this.appendTranscript(job.conversationId, { type: "message", message: failedMessage });
+      }
       this.updateJob(jobId, status, message);
       await this.finishJobWorktree(jobId, status, message);
       await this.persistAndBroadcast();
@@ -1897,7 +2027,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         status: "running",
         startedAt: run.startedAt || now,
         updatedAt: now,
-        error: undefined
+        error: undefined,
       });
       await this.addAutopilotEvent(run, "info", "Autopilot supervisor started", { projectRoot: project.rootPath });
       await this.addAutopilotCheckpoint(run, "Supervisor started");
@@ -1933,10 +2063,17 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       }
 
       run = this.requireAutopilotRun(runId);
-      if (controller.signal.aborted || run.status === "paused" || run.status === "canceled" || run.status === "blocked") {
+      if (
+        controller.signal.aborted ||
+        run.status === "paused" ||
+        run.status === "canceled" ||
+        run.status === "blocked"
+      ) {
         return;
       }
-      const completed = this.state.autopilotTasks.filter((task) => task.runId === runId).every((task) => task.status === "completed" || task.status === "skipped");
+      const completed = this.state.autopilotTasks
+        .filter((task) => task.runId === runId)
+        .every((task) => task.status === "completed" || task.status === "skipped");
       if (completed) {
         const reportArtifact = await this.writeAutopilotRunReportArtifact(run);
         const finishedAt = nowIso();
@@ -1945,9 +2082,12 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
           artifactIds: uniqueStrings([...run.artifactIds, reportArtifact.id]),
           reportPath: reportArtifact.path,
           updatedAt: finishedAt,
-          finishedAt
+          finishedAt,
         });
-        this.state.dataArtifacts = [reportArtifact, ...this.state.dataArtifacts.filter((artifact) => artifact.id !== reportArtifact.id)];
+        this.state.dataArtifacts = [
+          reportArtifact,
+          ...this.state.dataArtifacts.filter((artifact) => artifact.id !== reportArtifact.id),
+        ];
         await this.addAutopilotEvent(next, "info", "Autopilot data run completed", { reportPath: reportArtifact.path });
         await this.addAutopilotCheckpoint(next, "Completed all data-run stages");
         await this.persistAndBroadcast();
@@ -1962,7 +2102,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         status: "failed",
         error: (error as Error).message,
         updatedAt: now,
-        finishedAt: now
+        finishedAt: now,
       });
       await this.addAutopilotEvent(failed, "error", "Autopilot data run failed", { error: failed.error });
       await this.addAutopilotCheckpoint(failed, `Failed: ${failed.error}`);
@@ -1980,7 +2120,11 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     });
   }
 
-  private async ensureAutopilotGoalAligned(project: Project, run: AutopilotRun, signal: AbortSignal): Promise<"aligned" | "queued-fix" | "blocked"> {
+  private async ensureAutopilotGoalAligned(
+    project: Project,
+    run: AutopilotRun,
+    signal: AbortSignal,
+  ): Promise<"aligned" | "queued-fix" | "blocked"> {
     if (signal.aborted) {
       return "blocked";
     }
@@ -1988,7 +2132,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       const blocked = this.patchAutopilotRun(run.id, {
         status: "blocked",
         error: "Autopilot task budget exhausted before goal-output review could run.",
-        updatedAt: nowIso()
+        updatedAt: nowIso(),
       });
       await this.addAutopilotEvent(blocked, "error", "Autopilot task budget exhausted before goal-output review");
       await this.addAutopilotCheckpoint(blocked, "Blocked: task budget exhausted before goal-output review");
@@ -2000,26 +2144,36 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       stage: "review",
       staffAgent: "reviewer",
       title: `Goal-output alignment review ${this.nextAutopilotIteration(run.id)}`,
-      prompt: this.buildGoalAlignmentReviewPrompt(run.id)
+      prompt: this.buildGoalAlignmentReviewPrompt(run.id),
     });
     let activeRun = this.requireAutopilotRun(run.id);
-    await this.addAutopilotEvent(activeRun, "info", "Supervisor queued goal-output alignment review", { taskId: reviewTask.id });
+    await this.addAutopilotEvent(activeRun, "info", "Supervisor queued goal-output alignment review", {
+      taskId: reviewTask.id,
+    });
     await this.addAutopilotCheckpoint(activeRun, "Queued goal-output alignment review");
     await this.persistAndBroadcast();
 
     await this.runAutopilotTask(project, activeRun, reviewTask, signal);
     const completedReview = this.requireAutopilotTask(reviewTask.id);
     activeRun = this.requireAutopilotRun(run.id);
-    if (signal.aborted || activeRun.status === "paused" || activeRun.status === "canceled" || activeRun.status === "blocked") {
+    if (
+      signal.aborted ||
+      activeRun.status === "paused" ||
+      activeRun.status === "canceled" ||
+      activeRun.status === "blocked"
+    ) {
       return "blocked";
     }
     if (completedReview.status !== "completed") {
       const blocked = this.patchAutopilotRun(run.id, {
         status: "blocked",
         error: completedReview.error || "Goal-output review did not complete.",
-        updatedAt: nowIso()
+        updatedAt: nowIso(),
       });
-      await this.addAutopilotEvent(blocked, "error", "Goal-output review did not complete", { taskId: completedReview.id, error: blocked.error });
+      await this.addAutopilotEvent(blocked, "error", "Goal-output review did not complete", {
+        taskId: completedReview.id,
+        error: blocked.error,
+      });
       await this.addAutopilotCheckpoint(blocked, `Blocked: ${blocked.error}`);
       await this.persistAndBroadcast();
       return "blocked";
@@ -2036,9 +2190,11 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       const blocked = this.patchAutopilotRun(run.id, {
         status: "blocked",
         error: "Goal-output review failed and no task budget remains for another fix iteration.",
-        updatedAt: nowIso()
+        updatedAt: nowIso(),
       });
-      await this.addAutopilotEvent(blocked, "error", "Goal-output review failed; task budget exhausted", { taskId: completedReview.id });
+      await this.addAutopilotEvent(blocked, "error", "Goal-output review failed; task budget exhausted", {
+        taskId: completedReview.id,
+      });
       await this.addAutopilotCheckpoint(blocked, "Blocked: goal-output review failed and task budget exhausted");
       await this.persistAndBroadcast();
       return "blocked";
@@ -2048,10 +2204,13 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       stage: "report",
       staffAgent: "analyst",
       title: `Revise outputs to match goal ${this.nextAutopilotIteration(run.id)}`,
-      prompt: this.buildGoalAlignmentFixPrompt(run.id, completedReview.output || "Goal-output review failed.")
+      prompt: this.buildGoalAlignmentFixPrompt(run.id, completedReview.output || "Goal-output review failed."),
     });
     const queuedRun = this.requireAutopilotRun(run.id);
-    await this.addAutopilotEvent(queuedRun, "warning", "Goal-output review failed; queued fix iteration", { reviewTaskId: completedReview.id, fixTaskId: fixTask.id });
+    await this.addAutopilotEvent(queuedRun, "warning", "Goal-output review failed; queued fix iteration", {
+      reviewTaskId: completedReview.id,
+      fixTaskId: fixTask.id,
+    });
     await this.addAutopilotCheckpoint(queuedRun, "Goal-output review failed; queued fix iteration");
     await this.persistAndBroadcast();
     return "queued-fix";
@@ -2063,10 +2222,20 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
   }
 
   private nextAutopilotIteration(runId: string): number {
-    return this.state.autopilotTasks.filter((task) => task.runId === runId && (task.title.startsWith("Goal-output alignment review") || task.title.startsWith("Revise outputs to match goal"))).length + 1;
+    return (
+      this.state.autopilotTasks.filter(
+        (task) =>
+          task.runId === runId &&
+          (task.title.startsWith("Goal-output alignment review") ||
+            task.title.startsWith("Revise outputs to match goal")),
+      ).length + 1
+    );
   }
 
-  private appendAutopilotTask(runId: string, input: Pick<AutopilotTask, "stage" | "staffAgent" | "title" | "prompt">): AutopilotTask {
+  private appendAutopilotTask(
+    runId: string,
+    input: Pick<AutopilotTask, "stage" | "staffAgent" | "title" | "prompt">,
+  ): AutopilotTask {
     const run = this.requireAutopilotRun(runId);
     const now = nowIso();
     const task: AutopilotTask = {
@@ -2083,17 +2252,22 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       artifactIds: [],
       evidence: [],
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
     };
     this.state.autopilotTasks = [...this.state.autopilotTasks, task];
     this.patchAutopilotRun(run.id, {
       taskIds: uniqueStrings([...run.taskIds, task.id]),
-      updatedAt: now
+      updatedAt: now,
     });
     return task;
   }
 
-  private async runAutopilotTask(project: Project, run: AutopilotRun, task: AutopilotTask, signal: AbortSignal): Promise<void> {
+  private async runAutopilotTask(
+    project: Project,
+    run: AutopilotRun,
+    task: AutopilotTask,
+    signal: AbortSignal,
+  ): Promise<void> {
     let currentTask = task;
     while (currentTask.attempts < currentTask.maxAttempts) {
       if (signal.aborted) {
@@ -2105,24 +2279,32 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         attempts: currentTask.attempts + 1,
         startedAt: currentTask.startedAt || startedAt,
         updatedAt: startedAt,
-        error: undefined
+        error: undefined,
       });
       const activeRun = this.patchAutopilotRun(run.id, {
         status: currentTask.stage === "review" ? "reviewing" : "running",
         currentStage: currentTask.stage,
-        updatedAt: startedAt
+        updatedAt: startedAt,
       });
-      await this.addAutopilotEvent(activeRun, "info", `${currentTask.title} started`, { taskId: currentTask.id, attempt: currentTask.attempts });
+      await this.addAutopilotEvent(activeRun, "info", `${currentTask.title} started`, {
+        taskId: currentTask.id,
+        attempt: currentTask.attempts,
+      });
       await this.addAutopilotCheckpoint(activeRun, `${currentTask.title} started`);
       await this.persistAndBroadcast();
 
       try {
         const result = await this.runAutopilotTaskEngine(project, activeRun, currentTask, signal);
-        const artifacts = await this.artifactsFromGeneratedFiles(project, activeRun, currentTask, result.generatedFiles);
+        const artifacts = await this.artifactsFromGeneratedFiles(
+          project,
+          activeRun,
+          currentTask,
+          result.generatedFiles,
+        );
         const artifactIds = artifacts.map((artifact) => artifact.id);
         this.state.dataArtifacts = [
           ...artifacts,
-          ...this.state.dataArtifacts.filter((artifact) => !artifactIds.includes(artifact.id))
+          ...this.state.dataArtifacts.filter((artifact) => !artifactIds.includes(artifact.id)),
         ];
         for (const artifact of artifacts) {
           this.emitTyped({ type: "data_artifact", artifact });
@@ -2132,16 +2314,23 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
           status: "completed",
           output: result.text,
           artifactIds: uniqueStrings([...currentTask.artifactIds, ...artifactIds]),
-          evidence: uniqueStrings([...currentTask.evidence, ...artifacts.map((artifact) => artifact.path), ...extractEvidencePaths(result.text)]),
+          evidence: uniqueStrings([
+            ...currentTask.evidence,
+            ...artifacts.map((artifact) => artifact.path),
+            ...extractEvidencePaths(result.text),
+          ]),
           updatedAt: finishedAt,
-          finishedAt
+          finishedAt,
         });
         const completedRun = this.patchAutopilotRun(run.id, {
           artifactIds: uniqueStrings([...activeRun.artifactIds, ...artifactIds]),
           evidence: uniqueStrings([...activeRun.evidence, ...currentTask.evidence]),
-          updatedAt: finishedAt
+          updatedAt: finishedAt,
         });
-        await this.addAutopilotEvent(completedRun, "info", `${currentTask.title} completed`, { taskId: currentTask.id, artifacts: artifactIds.length });
+        await this.addAutopilotEvent(completedRun, "info", `${currentTask.title} completed`, {
+          taskId: currentTask.id,
+          artifacts: artifactIds.length,
+        });
         await this.addAutopilotCheckpoint(completedRun, `${currentTask.title} completed`);
         await this.persistAndBroadcast();
         return;
@@ -2155,16 +2344,19 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
           status: currentTask.attempts >= currentTask.maxAttempts ? "blocked" : "failed",
           error: message,
           updatedAt: failedAt,
-          finishedAt: currentTask.attempts >= currentTask.maxAttempts ? failedAt : undefined
+          finishedAt: currentTask.attempts >= currentTask.maxAttempts ? failedAt : undefined,
         });
         const level = currentTask.status === "blocked" ? "error" : "warning";
         const currentRun = this.requireAutopilotRun(run.id);
-        await this.addAutopilotEvent(currentRun, level, `${currentTask.title} ${currentTask.status}`, { taskId: currentTask.id, error: message });
+        await this.addAutopilotEvent(currentRun, level, `${currentTask.title} ${currentTask.status}`, {
+          taskId: currentTask.id,
+          error: message,
+        });
         if (currentTask.status === "blocked") {
           const blocked = this.patchAutopilotRun(run.id, {
             status: "blocked",
             error: message,
-            updatedAt: failedAt
+            updatedAt: failedAt,
           });
           await this.addAutopilotCheckpoint(blocked, `${currentTask.title} blocked: ${message}`);
           await this.persistAndBroadcast();
@@ -2176,7 +2368,12 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     }
   }
 
-  private async runAutopilotTaskEngine(project: Project, run: AutopilotRun, task: AutopilotTask, signal: AbortSignal): Promise<{ text: string; generatedFiles: GeneratedFile[] }> {
+  private async runAutopilotTaskEngine(
+    project: Project,
+    run: AutopilotRun,
+    task: AutopilotTask,
+    signal: AbortSignal,
+  ): Promise<{ text: string; generatedFiles: GeneratedFile[] }> {
     const staff = this.resolveStaffSubagent(task.staffAgent);
     const modelProvider = this.ensureActiveModelProvider();
     const query = new QueryEngine({
@@ -2190,17 +2387,22 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       personality: this.state.personality,
       subagent: staff,
       capabilities: this.state.capabilities,
-      messages: [{
-        id: randomId("msg"),
-        conversationId: `autopilot_${run.id}`,
-        role: "user",
-        text: this.autopilotTaskPrompt(run, task),
-        createdAt: nowIso()
-      }],
+      messages: [
+        {
+          id: randomId("msg"),
+          conversationId: `autopilot_${run.id}`,
+          role: "user",
+          text: this.autopilotTaskPrompt(run, task),
+          createdAt: nowIso(),
+        },
+      ],
       compactBoundaries: this.state.compactBoundaries,
       memory: this.state.memory,
       registry: this.toolRegistry,
-      toolContext: this.createToolExecutionContext(signal, `${run.id}:${task.id}`, 0, { project, policy: run.writePolicy }),
+      toolContext: this.createToolExecutionContext(signal, `${run.id}:${task.id}`, 0, {
+        project,
+        policy: run.writePolicy,
+      }),
       permissionMode: "bypassPermissions",
       permissionRules: this.state.permissionRules,
       signal,
@@ -2243,7 +2445,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         this.resolvePermission(permission.id, "denied");
         await this.persistAndBroadcast();
         this.emitTyped({ type: "permission_timeout", permission });
-      }
+      },
     });
     const result = await query.submitTurn();
     return { text: result.text, generatedFiles: result.generatedFiles };
@@ -2257,32 +2459,47 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       const now = nowIso();
       return {
         ...conversation,
-        title: conversation.title === "New conversation" && message.role === "user" ? titleFromPrompt(message.text) : conversation.title,
+        title:
+          conversation.title === "New conversation" && message.role === "user"
+            ? titleFromPrompt(message.text)
+            : conversation.title,
         updatedAt: now,
         lastMessageAt: now,
-        messages: [...conversation.messages, message].slice(-MAX_CONVERSATION_MESSAGES)
+        messageCount: (conversation.messageCount ?? conversation.messages.length) + 1,
+        lastMessagePreview: messagePreview(message),
+        messages: [...conversation.messages, message].slice(-MAX_CONVERSATION_MESSAGES),
       };
     });
   }
 
   private replaceMessage(conversationId: string, messageId: string, message: ChatMessage): void {
-    this.state.conversations = this.state.conversations.map((conversation) => conversation.id === conversationId
-      ? {
-          ...conversation,
-          updatedAt: nowIso(),
-          lastMessageAt: nowIso(),
-          messages: conversation.messages.map((item) => item.id === messageId ? message : item)
-        }
-      : conversation);
+    this.state.conversations = this.state.conversations.map((conversation) =>
+      conversation.id === conversationId
+        ? {
+            ...conversation,
+            updatedAt: nowIso(),
+            lastMessageAt: nowIso(),
+            lastMessagePreview: messagePreview(message),
+            messages: conversation.messages.map((item) => (item.id === messageId ? message : item)),
+          }
+        : conversation,
+    );
   }
 
   private updateAssistantMessageForJob(conversationId: string, jobId: string, status: JobStatus, text: string): void {
-    this.state.conversations = this.state.conversations.map((conversation) => conversation.id === conversationId
-      ? {
-          ...conversation,
-          messages: conversation.messages.map((message) => message.jobId === jobId ? { ...message, text, status } : message)
-        }
-      : conversation);
+    this.state.conversations = this.state.conversations.map((conversation) => {
+      if (conversation.id !== conversationId) {
+        return conversation;
+      }
+      const messages = conversation.messages.map((message) =>
+        message.jobId === jobId ? { ...message, text, status } : message,
+      );
+      return {
+        ...conversation,
+        lastMessagePreview: messagePreview(messages.at(-1)),
+        messages,
+      };
+    });
   }
 
   private updateJob(jobId: string, status: JobStatus, progress: string): void {
@@ -2298,7 +2515,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         startedAt: status === "running" ? job.startedAt || now : job.startedAt,
         finishedAt: ["completed", "failed", "canceled"].includes(status) ? now : job.finishedAt,
         error: status === "failed" ? progress : job.error,
-        progress: [...job.progress, progress].slice(-MAX_JOB_PROGRESS_ENTRIES)
+        progress: [...job.progress, progress].slice(-MAX_JOB_PROGRESS_ENTRIES),
       };
     });
     const updated = this.findJob(jobId);
@@ -2363,7 +2580,12 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     return next || this.requireAutopilotTask(id);
   }
 
-  private async addAutopilotEvent(run: AutopilotRun, level: AutopilotEvent["level"], message: string, data?: unknown): Promise<AutopilotEvent> {
+  private async addAutopilotEvent(
+    run: AutopilotRun,
+    level: AutopilotEvent["level"],
+    message: string,
+    data?: unknown,
+  ): Promise<AutopilotEvent> {
     const event: AutopilotEvent = {
       id: randomId("apevent"),
       runId: run.id,
@@ -2371,7 +2593,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       level,
       message,
       createdAt: nowIso(),
-      data
+      data,
     };
     this.state.autopilotEvents = [event, ...this.state.autopilotEvents].slice(0, 500);
     this.emitTyped({ type: "autopilot_event", event });
@@ -2388,12 +2610,14 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       summary,
       taskIds: [...run.taskIds],
       artifactIds: [...run.artifactIds],
-      createdAt: nowIso()
+      createdAt: nowIso(),
     };
     this.state.autopilotCheckpoints = [checkpoint, ...this.state.autopilotCheckpoints];
-    this.state.autopilotRuns = this.state.autopilotRuns.map((item) => item.id === run.id
-      ? { ...item, checkpointIds: uniqueStrings([checkpoint.id, ...item.checkpointIds]), updatedAt: nowIso() }
-      : item);
+    this.state.autopilotRuns = this.state.autopilotRuns.map((item) =>
+      item.id === run.id
+        ? { ...item, checkpointIds: uniqueStrings([checkpoint.id, ...item.checkpointIds]), updatedAt: nowIso() }
+        : item,
+    );
     await this.writeAutopilotCheckpointFile(run, checkpoint);
     return checkpoint;
   }
@@ -2405,12 +2629,17 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       checkpoint,
       run: this.state.autopilotRuns.find((item) => item.id === run.id) || run,
       tasks: this.state.autopilotTasks.filter((task) => task.runId === run.id),
-      artifacts: this.state.dataArtifacts.filter((artifact) => artifact.runId === run.id)
+      artifacts: this.state.dataArtifacts.filter((artifact) => artifact.runId === run.id),
     };
     await writeFile(join(runDir, "checkpoint.json"), `${JSON.stringify(payload, null, 2)}\n`, "utf8");
   }
 
-  private async artifactsFromGeneratedFiles(project: Project, run: AutopilotRun, task: AutopilotTask, files: GeneratedFile[]): Promise<DataArtifact[]> {
+  private async artifactsFromGeneratedFiles(
+    project: Project,
+    run: AutopilotRun,
+    task: AutopilotTask,
+    files: GeneratedFile[],
+  ): Promise<DataArtifact[]> {
     const artifacts: DataArtifact[] = [];
     for (const file of files) {
       if (!pathIsInside(project.rootPath, file.path)) {
@@ -2421,7 +2650,13 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     return artifacts;
   }
 
-  private async dataArtifactFromPath(project: Project, run: AutopilotRun, task: Pick<AutopilotTask, "id" | "stage">, filePath: string, source: string): Promise<DataArtifact> {
+  private async dataArtifactFromPath(
+    project: Project,
+    run: AutopilotRun,
+    task: Pick<AutopilotTask, "id" | "stage">,
+    filePath: string,
+    source: string,
+  ): Promise<DataArtifact> {
     const info = await stat(filePath);
     const content = await readFile(filePath);
     const text = content.toString("utf8");
@@ -2438,7 +2673,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       size: info.size,
       sha256: createHash("sha256").update(content).digest("hex"),
       lineCount: text.length ? text.split(/\r?\n/).length : 0,
-      createdAt: nowIso()
+      createdAt: nowIso(),
     };
   }
 
@@ -2457,24 +2692,34 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       run.status,
       "",
       "## Artifacts",
-      artifacts.length ? artifacts.map((artifact) => `- ${artifact.kind}: ${artifact.path}`).join("\n") : "- No artifacts recorded.",
+      artifacts.length
+        ? artifacts.map((artifact) => `- ${artifact.kind}: ${artifact.path}`).join("\n")
+        : "- No artifacts recorded.",
       "",
       "## Stage Outputs",
-      tasks.map((task) => [
-        `### ${task.title}`,
-        `Status: ${task.status}`,
-        task.output || task.error || "No output."
-      ].join("\n\n")).join("\n\n"),
-      ""
+      tasks
+        .map((task) =>
+          [`### ${task.title}`, `Status: ${task.status}`, task.output || task.error || "No output."].join("\n\n"),
+        )
+        .join("\n\n"),
+      "",
     ].join("\n");
     await mkdir(dirname(reportPath), { recursive: true });
     await writeFile(reportPath, content, "utf8");
-    return this.dataArtifactFromPath(project, run, { id: `${run.id}:summary`, stage: "review" }, reportPath, "autopilot summary");
+    return this.dataArtifactFromPath(
+      project,
+      run,
+      { id: `${run.id}:summary`, stage: "review" },
+      reportPath,
+      "autopilot summary",
+    );
   }
 
   private resolveStaffSubagent(name: string): SubagentConfig {
     const key = name.toLowerCase();
-    const existing = this.state.subagents.find((item) => item.enabled && (item.id.toLowerCase() === key || item.name.toLowerCase() === key));
+    const existing = this.state.subagents.find(
+      (item) => item.enabled && (item.id.toLowerCase() === key || item.name.toLowerCase() === key),
+    );
     if (existing) {
       return existing;
     }
@@ -2482,8 +2727,9 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       id: key || "collector",
       name: key || "collector",
       description: "Autopilot data staff-agent",
-      systemPrompt: "You are a local data staff-agent. Work inside the approved project folders and return evidence-backed output.",
-      enabled: true
+      systemPrompt:
+        "You are a local data staff-agent. Work inside the approved project folders and return evidence-backed output.",
+      enabled: true,
     };
   }
 
@@ -2495,11 +2741,13 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       .join("\n");
     const outputs = this.state.autopilotTasks
       .filter((task) => task.runId === run.id && task.status === "completed")
-      .map((task) => [
-        `## ${task.stage}: ${task.title}`,
-        task.output || "Completed without text output.",
-        task.artifactIds.length ? `Artifacts: ${task.artifactIds.join(", ")}` : "Artifacts: none"
-      ].join("\n"))
+      .map((task) =>
+        [
+          `## ${task.stage}: ${task.title}`,
+          task.output || "Completed without text output.",
+          task.artifactIds.length ? `Artifacts: ${task.artifactIds.join(", ")}` : "Artifacts: none",
+        ].join("\n"),
+      )
       .join("\n\n");
     return [
       `Autopilot data run: ${run.title}`,
@@ -2524,7 +2772,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       "First line must be exactly one of:",
       "PASS",
       "FAIL",
-      "Then provide concise evidence and, for FAIL, concrete fixes needed."
+      "Then provide concise evidence and, for FAIL, concrete fixes needed.",
     ].join("\n");
   }
 
@@ -2552,7 +2800,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       "Address every review failure and update project artifacts so the final output matches the Goal.",
       "Prefer updating reports and outputs in reports/ and outputs/ unless raw or processed data is genuinely incomplete.",
       "Write any revised report or analysis file inside approved project write folders.",
-      "Mention every file changed and evidence path in the final answer."
+      "Mention every file changed and evidence path in the final answer.",
     ].join("\n");
   }
 
@@ -2572,7 +2820,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       artifacts || "- None yet.",
       "",
       "Completed stage notes:",
-      completed || "- None yet."
+      completed || "- None yet.",
     ].join("\n");
   }
 
@@ -2583,23 +2831,55 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
   private async recoverTranscriptsOnStartup(): Promise<void> {
     const store = new TranscriptStore(this.storage.getDataDir());
     let changed = false;
-    for (const conversation of this.state.conversations) {
-      const result = await store.loadRecoverable(conversation.id, conversation.messages, this.state.compactBoundaries);
+    for (const conversation of [...this.state.conversations]) {
+      let result = await store.loadRecoverable(conversation.id, conversation.messages, this.state.compactBoundaries);
+      const transcriptMessages = messagesFromEntries(result.entries, conversation.id);
+      const missingStateMessages = messagesMissingFromTranscript(transcriptMessages, conversation.messages);
+      if (missingStateMessages.length) {
+        for (const message of missingStateMessages) {
+          await store.append(conversation.id, { type: "message", message });
+        }
+        changed = true;
+      }
+      if (!result.entries.length && conversation.messages.length) {
+        for (const boundary of this.state.compactBoundaries.filter((item) => item.conversationId === conversation.id)) {
+          await store.append(conversation.id, { type: "compact", boundary });
+        }
+        changed = true;
+      }
+      if (missingStateMessages.length || (!result.entries.length && conversation.messages.length)) {
+        result = await store.loadRecoverable(conversation.id, [], this.state.compactBoundaries);
+      }
+      const allMessages = messagesFromEntries(result.entries, conversation.id);
+      const recoveredMessages = result.activeMessages.slice(-MAX_CONVERSATION_MESSAGES);
+      const lastMessage = allMessages.at(-1) || recoveredMessages.at(-1);
+      this.state.conversations = this.state.conversations.map((item) =>
+        item.id === conversation.id
+          ? {
+              ...item,
+              messages: recoveredMessages,
+              messageCount: allMessages.length || recoveredMessages.length,
+              lastMessageAt: lastMessage?.createdAt || item.lastMessageAt,
+              lastMessagePreview: messagePreview(lastMessage),
+            }
+          : item,
+      );
       if (result.diagnostics.length || result.source === "state") {
         const event: RuntimeEventRecord = {
           id: randomId("event"),
           conversationId: conversation.id,
           kind: "transcript_recovery",
-          message: result.source === "state"
-            ? `Transcript fallback used for ${conversation.title}.`
-            : `Transcript checked for ${conversation.title}.`,
+          message:
+            result.source === "state"
+              ? `Transcript fallback used for ${conversation.title}.`
+              : `Transcript checked for ${conversation.title}.`,
           createdAt: nowIso(),
           data: {
             source: result.source,
-            activeMessageCount: result.activeMessages.length,
+            activeMessageCount: recoveredMessages.length,
             compactBoundaryId: result.compactBoundary?.id,
-            diagnostics: result.diagnostics
-          }
+            diagnostics: result.diagnostics,
+          },
         };
         this.addRuntimeEvent(event);
         changed = true;
@@ -2613,13 +2893,18 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
   private async recoverAutopilotRunsOnStartup(): Promise<void> {
     let changed = false;
     for (const run of this.state.autopilotRuns) {
-      if (run.status !== "queued" && run.status !== "planning" && run.status !== "running" && run.status !== "reviewing") {
+      if (
+        run.status !== "queued" &&
+        run.status !== "planning" &&
+        run.status !== "running" &&
+        run.status !== "reviewing"
+      ) {
         continue;
       }
       const next = this.patchAutopilotRun(run.id, {
         status: "paused",
         error: "Recovered after app restart. Resume the run to continue.",
-        updatedAt: nowIso()
+        updatedAt: nowIso(),
       });
       await this.addAutopilotEvent(next, "warning", "Autopilot run recovered and paused after app restart");
       await this.addAutopilotCheckpoint(next, "Recovered and paused after app restart");
@@ -2630,12 +2915,19 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     }
   }
 
-  private createToolExecutionContext(signal: AbortSignal, jobId: string, depth = 0, options: ProjectToolContextOptions = {}) {
+  private createToolExecutionContext(
+    signal: AbortSignal,
+    jobId: string,
+    depth = 0,
+    options: ProjectToolContextOptions = {},
+  ) {
     const job = this.findRootJob(jobId);
     const worktree = job?.worktreeId ? this.worktreeManager.get(job.worktreeId) : undefined;
     const project = options.project;
     const allowedWriteRoots = project
-      ? options.allowProjectRootWrites ? [resolve(project.rootPath)] : this.projectManager.absoluteAllowedWriteRoots(project.rootPath, options.policy)
+      ? options.allowProjectRootWrites
+        ? [resolve(project.rootPath)]
+        : this.projectManager.absoluteAllowedWriteRoots(project.rootPath, options.policy)
       : undefined;
     const workspacePath = project?.rootPath || worktree?.path || this.rootDir;
     const allowedAttachmentPaths = this.attachmentPathsForConversation(job?.conversationId);
@@ -2648,7 +2940,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       projectRoot: project?.rootPath,
       allowedWriteRoots,
       randomId,
-      nowIso
+      nowIso,
     };
     return {
       signal,
@@ -2661,10 +2953,17 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       ensureIsolatedWorkspace: async (toolName: string) => this.ensureJobWorktree(jobId, toolName),
       inspectPackageArchive: async (input: { path: string }): Promise<LocalPackageInspection> =>
         this.inspectPackageArchive(input.path, allowedAttachmentPaths),
-      installPackageArchive: async (input: { path: string; expectedSha256: string }): Promise<LocalPackageInstallResult> =>
+      installPackageArchive: async (input: {
+        path: string;
+        expectedSha256: string;
+      }): Promise<LocalPackageInstallResult> =>
         this.installPackageArchive(input.path, input.expectedSha256, allowedAttachmentPaths, signal),
       subagents: this.state.subagents,
-      runSubagent: async (input: { subagentType?: string; prompt: string; signal: AbortSignal }): Promise<LocalToolResult> => {
+      runSubagent: async (input: {
+        subagentType?: string;
+        prompt: string;
+        signal: AbortSignal;
+      }): Promise<LocalToolResult> => {
         const modelProvider = this.ensureActiveModelProvider();
         const runner = new SubagentRunner({
           dataDir: this.storage.getDataDir(),
@@ -2680,7 +2979,8 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
           permissionMode: this.state.permissionMode,
           permissionRules: this.state.permissionRules,
           randomId,
-          createToolContext: (childSignal, parentJobId, childDepth) => this.createToolExecutionContext(childSignal, parentJobId, childDepth, options),
+          createToolContext: (childSignal, parentJobId, childDepth) =>
+            this.createToolExecutionContext(childSignal, parentJobId, childDepth, options),
           requestPermission: (permission) => this.requestToolPermission(permission),
           onSession: async (session) => {
             this.upsertQuerySession(session);
@@ -2717,16 +3017,16 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
             this.resolvePermission(permission.id, "denied");
             await this.persistAndBroadcast();
             this.emitTyped({ type: "permission_timeout", permission });
-          }
+          },
         });
         return runner.run({
           parentJobId: jobId,
           subagentType: input.subagentType,
           prompt: input.prompt,
           signal: input.signal,
-          depth
+          depth,
         });
-      }
+      },
     };
   }
 
@@ -2735,9 +3035,13 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       return [];
     }
     const conversation = this.findConversation(conversationId);
-    return conversation?.messages.flatMap((message) =>
-      (message.attachments || []).map((attachment) => attachment.path).filter((path): path is string => Boolean(path))
-    ) || [];
+    return (
+      conversation?.messages.flatMap((message) =>
+        (message.attachments || [])
+          .map((attachment) => attachment.path)
+          .filter((path): path is string => Boolean(path)),
+      ) || []
+    );
   }
 
   private assertPackageAttachmentPath(filePath: string, allowedAttachmentPaths: string[]): string {
@@ -2748,26 +3052,40 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     return resolvedPath;
   }
 
-  private async inspectPackageArchive(filePath: string, allowedAttachmentPaths: string[]): Promise<LocalPackageInspection> {
+  private async inspectPackageArchive(
+    filePath: string,
+    allowedAttachmentPaths: string[],
+  ): Promise<LocalPackageInspection> {
     const resolvedPath = this.assertPackageAttachmentPath(filePath, allowedAttachmentPaths);
     return this.localPackageManager.inspectArchive(resolvedPath);
   }
 
-  private async installPackageArchive(filePath: string, expectedSha256: string, allowedAttachmentPaths: string[], signal: AbortSignal): Promise<LocalPackageInstallResult> {
+  private async installPackageArchive(
+    filePath: string,
+    expectedSha256: string,
+    allowedAttachmentPaths: string[],
+    signal: AbortSignal,
+  ): Promise<LocalPackageInstallResult> {
     const resolvedPath = this.assertPackageAttachmentPath(filePath, allowedAttachmentPaths);
     const inspection = await this.localPackageManager.inspectArchive(resolvedPath);
     const oldManagedServerIds = this.state.mcpServers
       .filter((server) => server.source?.kind === "local-package" && server.source.packageId === inspection.id)
       .map((server) => server.id);
-    await Promise.all(oldManagedServerIds.map((serverId) => this.mcpManager.disconnect(serverId).catch(() => undefined)));
+    await Promise.all(
+      oldManagedServerIds.map((serverId) => this.mcpManager.disconnect(serverId).catch(() => undefined)),
+    );
     let result: LocalPackageInstallResult;
     try {
       result = await this.localPackageManager.installArchive(resolvedPath, expectedSha256, signal);
     } catch (error) {
-      await Promise.all(oldManagedServerIds.map((serverId) => {
-        const server = this.state.mcpServers.find((item) => item.id === serverId);
-        return server?.enabled && server.autoConnect ? this.mcpManager.connect(serverId).catch(() => undefined) : Promise.resolve(undefined);
-      }));
+      await Promise.all(
+        oldManagedServerIds.map((serverId) => {
+          const server = this.state.mcpServers.find((item) => item.id === serverId);
+          return server?.enabled && server.autoConnect
+            ? this.mcpManager.connect(serverId).catch(() => undefined)
+            : Promise.resolve(undefined);
+        }),
+      );
       throw error;
     }
 
@@ -2787,14 +3105,18 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     if (activationWarnings.length) {
       await this.localPackageManager.rollbackInstall(result);
       await this.reconcileLocalPackages();
-      await Promise.all(oldManagedServerIds.map((serverId) => {
-        const server = this.state.mcpServers.find((item) => item.id === serverId);
-        return server?.enabled && server.autoConnect ? this.mcpManager.connect(serverId).catch(() => undefined) : Promise.resolve(undefined);
-      }));
+      await Promise.all(
+        oldManagedServerIds.map((serverId) => {
+          const server = this.state.mcpServers.find((item) => item.id === serverId);
+          return server?.enabled && server.autoConnect
+            ? this.mcpManager.connect(serverId).catch(() => undefined)
+            : Promise.resolve(undefined);
+        }),
+      );
       await this.recordMcpEvent("Local package installation rolled back", undefined, {
         packageId: result.id,
         kind: result.kind,
-        errors: activationWarnings
+        errors: activationWarnings,
       });
       await this.persistAndBroadcast();
       throw new Error(`Local package activation failed and was rolled back: ${activationWarnings.join("; ")}`);
@@ -2807,7 +3129,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       packageId: finalResult.id,
       kind: finalResult.kind,
       installPath: finalResult.installPath,
-      mcpServers: finalResult.activatedMcpServerIds
+      mcpServers: finalResult.activatedMcpServerIds,
     });
     await this.persistAndBroadcast();
     return finalResult;
@@ -2819,11 +3141,15 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     const localCapabilityIds = new Set(scan.capabilities.map((capability) => capability.id));
     const nextLocalCapabilities = scan.capabilities.map((capability) => ({
       ...capability,
-      enabled: existingCapabilities.get(capability.id)?.enabled ?? capability.enabled
+      enabled: existingCapabilities.get(capability.id)?.enabled ?? capability.enabled,
     }));
     this.state.capabilities = [
-      ...this.state.capabilities.filter((capability) => !isLocalPackageCapabilityId(capability.id) || localCapabilityIds.has(capability.id)),
-      ...nextLocalCapabilities.filter((capability) => !this.state.capabilities.some((current) => current.id === capability.id))
+      ...this.state.capabilities.filter(
+        (capability) => !isLocalPackageCapabilityId(capability.id) || localCapabilityIds.has(capability.id),
+      ),
+      ...nextLocalCapabilities.filter(
+        (capability) => !this.state.capabilities.some((current) => current.id === capability.id),
+      ),
     ].map((capability) => nextLocalCapabilities.find((item) => item.id === capability.id) || capability);
 
     const existingServers = new Map(this.state.mcpServers.map((server) => [server.id, server]));
@@ -2835,7 +3161,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         enabled: existing?.enabled ?? server.enabled,
         autoConnect: existing?.autoConnect ?? server.autoConnect,
         createdAt: existing?.createdAt || server.createdAt,
-        updatedAt: nowIso()
+        updatedAt: nowIso(),
       };
     });
     this.state.mcpServers = [...nonLocalServers, ...localServers];
@@ -2858,7 +3184,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       }
       installedCapabilities.set(capability.id, {
         ...capability,
-        enabled: existingCapabilities.get(capability.id)?.enabled ?? capability.enabled ?? true
+        enabled: existingCapabilities.get(capability.id)?.enabled ?? capability.enabled ?? true,
       });
     }
     if (!installedCapabilities.size) {
@@ -2866,7 +3192,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     }
     this.state.capabilities = [
       ...this.state.capabilities.filter((capability) => !installedCapabilities.has(capability.id)),
-      ...installedCapabilities.values()
+      ...installedCapabilities.values(),
     ];
   }
 
@@ -2876,7 +3202,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     }
     this.state.pendingToolPermissions = [
       ...this.state.pendingToolPermissions.filter((item) => item.id !== permission.id),
-      permission
+      permission,
     ];
     await this.persistAndBroadcast();
     this.emitTyped({ type: "tool_permission", permission });
@@ -2895,7 +3221,9 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
   }
 
   private resolveJobPermissions(jobId: string, decision: "approved" | "denied"): void {
-    const permissions = this.state.pendingToolPermissions.filter((item) => item.jobId === jobId || item.jobId.startsWith(`${jobId}:`));
+    const permissions = this.state.pendingToolPermissions.filter(
+      (item) => item.jobId === jobId || item.jobId.startsWith(`${jobId}:`),
+    );
     for (const permission of permissions) {
       this.resolvePermission(permission.id, decision);
     }
@@ -2924,13 +3252,16 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
           cwd: existing.path,
           worktreeId: existing.id,
           randomId,
-          nowIso
+          nowIso,
         };
       }
     }
     try {
       const rootDir = this.resolveJobWorktreeRoot(job);
-      const worktree = await this.worktreeManager.createForJob({ jobId: job.id, conversationId: job.conversationId }, rootDir);
+      const worktree = await this.worktreeManager.createForJob(
+        { jobId: job.id, conversationId: job.conversationId },
+        rootDir,
+      );
       this.state.worktrees = this.worktreeManager.list();
       this.markJobWorktree(worktree);
       await this.persistAndBroadcast();
@@ -2940,7 +3271,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         cwd: worktree.path,
         worktreeId: worktree.id,
         randomId,
-        nowIso
+        nowIso,
       };
     } catch (error) {
       const detail = (error as Error).message;
@@ -2949,7 +3280,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       const event = this.createRuntimeEvent("worktree_event", message, { toolName }, job.id, job.conversationId);
       this.addRuntimeEvent(event);
       await this.appendTranscript(job.conversationId, { type: "event", event });
-      throw new Error(message);
+      throw new Error(message, { cause: error });
     }
   }
 
@@ -2978,38 +3309,41 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     if (!job?.worktreeId) {
       return;
     }
-    const worktree = status === "canceled"
-      ? await this.worktreeManager.abandon(job.worktreeId, message)
-      : await this.worktreeManager.fail(job.worktreeId, message);
+    const worktree =
+      status === "canceled"
+        ? await this.worktreeManager.abandon(job.worktreeId, message)
+        : await this.worktreeManager.fail(job.worktreeId, message);
     this.state.worktrees = this.worktreeManager.list();
     this.markJobWorktree(worktree);
   }
 
   private markJobWorktree(worktree: TaskWorktree): void {
     this.upsertWorktreeState(worktree);
-    this.state.jobs = this.state.jobs.map((job) => job.id === worktree.jobId
-      ? {
-          ...job,
-          workspaceMode: worktree.status === "discarded" || worktree.status === "applied" ? job.workspaceMode : "isolated",
-          worktreeId: worktree.id,
-          baseRef: worktree.baseRef,
-          diffStatus: worktree.diffStatus,
-          updatedAt: nowIso()
-        }
-      : job);
+    this.state.jobs = this.state.jobs.map((job) =>
+      job.id === worktree.jobId
+        ? {
+            ...job,
+            workspaceMode:
+              worktree.status === "discarded" || worktree.status === "applied" ? job.workspaceMode : "isolated",
+            worktreeId: worktree.id,
+            baseRef: worktree.baseRef,
+            diffStatus: worktree.diffStatus,
+            updatedAt: nowIso(),
+          }
+        : job,
+    );
   }
 
   private upsertWorktreeState(worktree: TaskWorktree): void {
-    this.state.worktrees = [
-      worktree,
-      ...this.state.worktrees.filter((item) => item.id !== worktree.id)
-    ];
+    this.state.worktrees = [worktree, ...this.state.worktrees.filter((item) => item.id !== worktree.id)];
   }
 
   private upsertTrace(trace: RuntimeState["agentLoopTraces"][number]): void {
     this.state.agentLoopTraces = [
       trace,
-      ...this.state.agentLoopTraces.filter((item) => !(item.jobId === trace.jobId && item.conversationId === trace.conversationId))
+      ...this.state.agentLoopTraces.filter(
+        (item) => !(item.jobId === trace.jobId && item.conversationId === trace.conversationId),
+      ),
     ].slice(0, 100);
   }
 
@@ -3020,34 +3354,37 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       turns: 0,
       toolCalls: [],
       startedAt: toolCall.createdAt,
-      updatedAt: toolCall.updatedAt
+      updatedAt: toolCall.updatedAt,
     };
     const next = {
       ...trace,
       updatedAt: nowIso(),
-      toolCalls: [
-        ...trace.toolCalls.filter((item) => item.id !== toolCall.id),
-        toolCall
-      ]
+      toolCalls: [...trace.toolCalls.filter((item) => item.id !== toolCall.id), toolCall],
     };
     this.upsertTrace(next);
   }
 
   private upsertQuerySession(session: QuerySession): void {
-    this.state.querySessions = [
-      session,
-      ...this.state.querySessions.filter((item) => item.id !== session.id)
-    ].slice(0, 100);
+    this.state.querySessions = [session, ...this.state.querySessions.filter((item) => item.id !== session.id)].slice(
+      0,
+      100,
+    );
   }
 
   private addRuntimeEvent(event: RuntimeEventRecord): void {
-    this.state.runtimeEvents = [
-      event,
-      ...this.state.runtimeEvents.filter((item) => item.id !== event.id)
-    ].slice(0, 300);
+    this.state.runtimeEvents = [event, ...this.state.runtimeEvents.filter((item) => item.id !== event.id)].slice(
+      0,
+      300,
+    );
   }
 
-  private createRuntimeEvent(kind: RuntimeEventRecord["kind"], message: string, data?: unknown, jobId?: string, conversationId?: string): RuntimeEventRecord {
+  private createRuntimeEvent(
+    kind: RuntimeEventRecord["kind"],
+    message: string,
+    data?: unknown,
+    jobId?: string,
+    conversationId?: string,
+  ): RuntimeEventRecord {
     return {
       id: randomId("event"),
       jobId,
@@ -3055,11 +3392,14 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       kind,
       message,
       createdAt: nowIso(),
-      data
+      data,
     };
   }
 
-  private async appendTranscript(conversationId: string, entry: Parameters<TranscriptStore["append"]>[1]): Promise<void> {
+  private async appendTranscript(
+    conversationId: string,
+    entry: Parameters<TranscriptStore["append"]>[1],
+  ): Promise<void> {
     try {
       await new TranscriptStore(this.storage.getDataDir()).append(conversationId, entry);
     } catch {
@@ -3067,7 +3407,10 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     }
   }
 
-  private async recordPermissionDecision(permission: PendingToolPermission, decision: "approved" | "denied"): Promise<void> {
+  private async recordPermissionDecision(
+    permission: PendingToolPermission,
+    decision: "approved" | "denied",
+  ): Promise<void> {
     const event: RuntimeEventRecord = {
       id: randomId("event"),
       jobId: permission.jobId,
@@ -3075,7 +3418,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       kind: "permission_decision",
       message: `${permission.toolName} permission ${decision}`,
       createdAt: nowIso(),
-      data: { permission, decision }
+      data: { permission, decision },
     };
     this.addRuntimeEvent(event);
     await this.appendTranscript(permission.conversationId, { type: "event", event });
@@ -3088,7 +3431,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       kind: "memory_write",
       message,
       createdAt: nowIso(),
-      data
+      data,
     };
     this.addRuntimeEvent(event);
     if (conversationId) {
@@ -3102,7 +3445,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       kind: "mcp_server",
       message,
       createdAt: nowIso(),
-      data: data ? { serverId, ...objectData(data) } : { serverId }
+      data: data ? { serverId, ...objectData(data) } : { serverId },
     };
     this.addRuntimeEvent(event);
   }
@@ -3114,12 +3457,9 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       name: "Local MCP",
       kind: "tool",
       description: "Connect local stdio MCP servers and expose their tools through the runtime permission system.",
-      enabled
+      enabled,
     };
-    this.state.capabilities = [
-      ...this.state.capabilities.filter((item) => item.id !== capability.id),
-      capability
-    ];
+    this.state.capabilities = [...this.state.capabilities.filter((item) => item.id !== capability.id), capability];
   }
 
   private appendAssistantDelta(conversationId: string, messageId: string, delta: string): void {
@@ -3127,22 +3467,24 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       if (conversation.id !== conversationId) {
         return conversation;
       }
+      const messages = conversation.messages.map((message) => {
+        if (message.id !== messageId) {
+          return message;
+        }
+        const current = message.text.endsWith("is thinking...") ? "" : message.text;
+        const text = `${current}${delta}`;
+        return {
+          ...message,
+          text,
+          blocks: [{ type: "message_delta" as const, text }],
+        };
+      });
       return {
         ...conversation,
         updatedAt: nowIso(),
         lastMessageAt: nowIso(),
-        messages: conversation.messages.map((message) => {
-          if (message.id !== messageId) {
-            return message;
-          }
-          const current = message.text.endsWith("is thinking...") ? "" : message.text;
-          const text = `${current}${delta}`;
-          return {
-            ...message,
-            text,
-            blocks: [{ type: "message_delta", text }]
-          };
-        })
+        lastMessagePreview: messagePreview(messages.at(-1)),
+        messages,
       };
     });
   }
@@ -3150,7 +3492,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
   private upsertCompactBoundary(boundary: CompactBoundary): void {
     this.state.compactBoundaries = [
       boundary,
-      ...this.state.compactBoundaries.filter((item) => item.id !== boundary.id)
+      ...this.state.compactBoundaries.filter((item) => item.id !== boundary.id),
     ].slice(0, 100);
   }
 
@@ -3180,7 +3522,12 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     const conversation = this.findConversation(job.conversationId);
     const projectId = job.projectId || conversation?.projectId;
     const project = projectId ? this.requireConversationProject(projectId) : undefined;
-    const context = this.createToolExecutionContext(signal, job.id, 0, project ? { project, allowProjectRootWrites: true } : {});
+    const context = this.createToolExecutionContext(
+      signal,
+      job.id,
+      0,
+      project ? { project, allowProjectRootWrites: true } : {},
+    );
     const executor = new ToolExecutor();
     const executeSlash = async (toolName: string, input: unknown) => {
       const envelope = await executor.execute({
@@ -3189,7 +3536,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         toolCall: {
           id: randomId("tool"),
           type: "function",
-          function: { name: toolName, arguments: JSON.stringify(input) }
+          function: { name: toolName, arguments: JSON.stringify(input) },
         },
         registry: this.toolRegistry,
         context,
@@ -3205,11 +3552,11 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
           this.upsertToolCall(job.id, toolCall);
           await this.persistAndBroadcast();
           this.emitTyped({ type: "tool_progress", toolCall });
-        }
+        },
       });
       return {
         text: envelope.toolResultText,
-        generatedFiles: envelope.generatedFiles
+        generatedFiles: envelope.generatedFiles,
       };
     };
     if (trimmed.startsWith("/read ")) {
@@ -3244,11 +3591,13 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
   private async sendRemotePrompt(input: SendPromptInput): Promise<SendPromptResult> {
     return this.sendPrompt({
       ...input,
-      workspaceMode: "readOnly"
+      workspaceMode: "readOnly",
     });
   }
 
-  private async sendRemotePromptAndWait(input: SendPromptInput & { timeoutMs?: number; signal?: AbortSignal }): Promise<ReversePromptResult> {
+  private async sendRemotePromptAndWait(
+    input: SendPromptInput & { timeoutMs?: number; signal?: AbortSignal },
+  ): Promise<ReversePromptResult> {
     const sent = await this.sendRemotePrompt(input);
     const timeoutMs = Math.max(1_000, Math.min(300_000, Math.trunc(input.timeoutMs || 120_000)));
     const startedAt = Date.now();
@@ -3268,9 +3617,9 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
             assistantText: assistant?.text,
             generatedFiles: assistant?.generatedFiles || [],
             progress: job.progress,
-            workspaceMode: job.workspaceMode
+            workspaceMode: job.workspaceMode,
           },
-          error: job.error
+          error: job.error,
         };
       }
       await delay(250);
@@ -3279,7 +3628,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       status: "failed",
       conversationId: sent.job.conversationId,
       jobId: sent.job.id,
-      error: "Timed out waiting for HBClient prompt result."
+      error: "Timed out waiting for HBClient prompt result.",
     };
   }
 
@@ -3287,7 +3636,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     if (this.state.servstationA2AConfig.authMode !== "oidc") {
       return this.state.servstationA2ASecret;
     }
-    let tokens = parseServstationOidcSecret(this.state.servstationA2AOidcSecret);
+    const tokens = parseServstationOidcSecret(this.state.servstationA2AOidcSecret);
     if (!tokens) {
       throw new Error("Servstation OIDC session is not configured.");
     }
@@ -3313,13 +3662,15 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     throw new Error("Timed out waiting for Servstation reverse A2A connection.");
   }
 
-  private async updateServstationReverseState(input: Partial<NonNullable<ServstationA2AConfig["reverse"]>>): Promise<void> {
+  private async updateServstationReverseState(
+    input: Partial<NonNullable<ServstationA2AConfig["reverse"]>>,
+  ): Promise<void> {
     this.assertLoaded();
     const current = this.state.servstationA2AConfig.reverse || { enabled: false, status: "disconnected" as const };
     const next = {
       ...current,
       ...input,
-      updatedAt: nowIso()
+      updatedAt: nowIso(),
     };
     if (next.enabled === false) {
       next.status = "disconnected";
@@ -3328,10 +3679,10 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     this.state.servstationA2AConfig = {
       ...this.state.servstationA2AConfig,
       reverse: next,
-      updatedAt: nowIso()
+      updatedAt: nowIso(),
     };
     const event = this.createRuntimeEvent("servstation_a2a", `Servstation reverse A2A ${next.status}`, {
-      reverse: next
+      reverse: next,
     });
     this.addRuntimeEvent(event);
     await this.persistAndBroadcast();
@@ -3340,9 +3691,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
 
   private findAssistantMessageForJob(conversationId: string, jobId: string): ChatMessage | undefined {
     const conversation = this.findConversation(conversationId);
-    return conversation?.messages
-      .filter((message) => message.role === "assistant" && message.jobId === jobId)
-      .at(-1);
+    return conversation?.messages.filter((message) => message.role === "assistant" && message.jobId === jobId).at(-1);
   }
 
   private redactServstationA2AConfig(): ServstationA2AConfig {
@@ -3353,7 +3702,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       staffAgentPasswordStorage: this.state.servstationA2AStaffAgentPasswordSecret
         ? this.state.servstationA2AConfig.staffAgentPasswordStorage || this.secretStorageKind || "file"
         : undefined,
-      oidc: this.redactServstationA2AOidcConfig()
+      oidc: this.redactServstationA2AOidcConfig(),
     };
   }
 
@@ -3363,7 +3712,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       ...(this.state.servstationA2AConfig.oidc || { refreshTokenSaved: false }),
       accessTokenExpiresAt: tokens?.expiresAt || this.state.servstationA2AConfig.oidc?.accessTokenExpiresAt,
       refreshTokenSaved: Boolean(tokens?.refreshToken),
-      userId: this.state.servstationA2AConfig.oidc?.userId || this.state.identityContext?.userId
+      userId: this.state.servstationA2AConfig.oidc?.userId || this.state.identityContext?.userId,
     };
   }
 
@@ -3413,7 +3762,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       apiKeySecret,
       apiKeySaved: Boolean(apiKeySecret),
       apiKeyStorage: apiKeySecret ? this.secretStorageKind : undefined,
-      updatedAt: nowIso()
+      updatedAt: nowIso(),
     };
   }
 
@@ -3425,7 +3774,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       temperature: provider.temperature,
       maxTokens: provider.maxTokens,
       apiKeySaved: Boolean(provider.apiKeySecret),
-      apiKeyStorage: provider.apiKeySecret ? provider.apiKeyStorage || this.secretStorageKind : undefined
+      apiKeyStorage: provider.apiKeySecret ? provider.apiKeyStorage || this.secretStorageKind : undefined,
     };
   }
 
@@ -3440,7 +3789,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       apiKeySaved: Boolean(provider.apiKeySecret),
       apiKeyStorage: provider.apiKeySecret ? provider.apiKeyStorage || this.secretStorageKind : undefined,
       createdAt: provider.createdAt,
-      updatedAt: provider.updatedAt
+      updatedAt: provider.updatedAt,
     };
   }
 
@@ -3499,10 +3848,16 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     return products;
   }
 
-  private async installToolMarketPackage(product: ToolMarketProduct, deployment: ToolMarketLocalDeployment): Promise<string> {
+  private async installToolMarketPackage(
+    product: ToolMarketProduct,
+    deployment: ToolMarketLocalDeployment,
+  ): Promise<string> {
     const installPath = this.localToolInstallDir(product, deployment);
     const receiptPath = this.toolMarketInstallDir(product);
-    if (!pathIsInside(this.storage.getDataDir(), installPath) || !pathIsInside(this.storage.getDataDir(), receiptPath)) {
+    if (
+      !pathIsInside(this.storage.getDataDir(), installPath) ||
+      !pathIsInside(this.storage.getDataDir(), receiptPath)
+    ) {
       throw new Error(`Tool market product resolved outside local data directory: ${product.name}`);
     }
     await rm(installPath, { recursive: true, force: true });
@@ -3527,7 +3882,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         priceLabel: product.priceLabel,
         sourceHealth: product.sourceHealth,
         purchased: product.purchased === true,
-        free: product.free
+        free: product.free,
       },
       deployment: {
         kind: deployment.kind,
@@ -3536,9 +3891,9 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         mcpServer: deployment.mcpServer,
         files: (deployment.files || []).map((file) => ({
           path: file.path,
-          encoding: file.encoding || "utf8"
-        }))
-      }
+          encoding: file.encoding || "utf8",
+        })),
+      },
     };
     await writeFile(join(installPath, "supbot-local-tool.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
     await mkdir(receiptPath, { recursive: true });
@@ -3546,7 +3901,11 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     return installPath;
   }
 
-  private upsertMarketMcpServer(product: ToolMarketProduct, deployment: ToolMarketLocalDeployment, installPath: string): McpServerConfig | undefined {
+  private upsertMarketMcpServer(
+    product: ToolMarketProduct,
+    deployment: ToolMarketLocalDeployment,
+    installPath: string,
+  ): McpServerConfig | undefined {
     const input = deployment.mcpServer;
     if (!input) {
       return undefined;
@@ -3573,21 +3932,22 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       source: {
         kind: "tool-market",
         packageId: product.id,
-        packageKind: product.type === "skill" || product.type === "plugin" || product.type === "mcp" ? product.type : undefined,
+        packageKind:
+          product.type === "skill" || product.type === "plugin" || product.type === "mcp" ? product.type : undefined,
         packagePath: installPath,
-        componentId: input.id || id
-      }
+        componentId: input.id || id,
+      },
     };
-    this.state.mcpServers = [
-      server,
-      ...this.state.mcpServers.filter((item) => item.id !== server.id)
-    ];
+    this.state.mcpServers = [server, ...this.state.mcpServers.filter((item) => item.id !== server.id)];
     this.mcpManager.setServers(this.state.mcpServers);
     this.upsertMcpCapability();
     return server;
   }
 
-  private async removeMarketMcpServer(product: ToolMarketProduct, deployment: ToolMarketLocalDeployment): Promise<void> {
+  private async removeMarketMcpServer(
+    product: ToolMarketProduct,
+    deployment: ToolMarketLocalDeployment,
+  ): Promise<void> {
     if (!deployment.mcpServer) {
       return;
     }
@@ -3633,7 +3993,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     return {
       accessToken: this.state.toolMarketSecret,
       email: this.state.toolMarketConfig.accountEmail,
-      password: this.state.toolMarketPasswordSecret
+      password: this.state.toolMarketPasswordSecret,
     };
   }
 }
@@ -3655,7 +4015,11 @@ async function writeToolMarketPackageFile(root: string, file: ToolMarketPackageF
   await writeFile(target, content);
 }
 
-async function writeLocalToolScaffold(root: string, product: ToolMarketProduct, deployment: ToolMarketLocalDeployment): Promise<void> {
+async function writeLocalToolScaffold(
+  root: string,
+  product: ToolMarketProduct,
+  deployment: ToolMarketLocalDeployment,
+): Promise<void> {
   const declaredFiles = new Set((deployment.files || []).map((file) => normalizePackagePath(file.path)));
   const templates = deployment.commandTemplates || product.commandTemplates || [];
   if (deployment.kind === "skill" && !declaredFiles.has("skill.md")) {
@@ -3664,22 +4028,38 @@ async function writeLocalToolScaffold(root: string, product: ToolMarketProduct, 
   if (deployment.kind === "plugin") {
     if (!declaredFiles.has(".codex-plugin/plugin.json")) {
       await mkdir(join(root, ".codex-plugin"), { recursive: true });
-      await writeFile(join(root, ".codex-plugin", "plugin.json"), `${JSON.stringify({
-        id: marketInstallSlug(product.id),
-        name: product.name,
-        version: "1.0.0",
-        description: product.description
-      }, null, 2)}\n`, "utf8");
+      await writeFile(
+        join(root, ".codex-plugin", "plugin.json"),
+        `${JSON.stringify(
+          {
+            id: marketInstallSlug(product.id),
+            name: product.name,
+            version: "1.0.0",
+            description: product.description,
+          },
+          null,
+          2,
+        )}\n`,
+        "utf8",
+      );
     }
     if (!declaredFiles.has("readme.md")) {
       await writeFile(join(root, "README.md"), renderPluginReadme(product, templates), "utf8");
     }
   }
   if (deployment.kind === "tool" && !declaredFiles.has("supbot-tool.json")) {
-    await writeFile(join(root, "supbot-tool.json"), `${JSON.stringify(localToolDescriptor(product, deployment), null, 2)}\n`, "utf8");
+    await writeFile(
+      join(root, "supbot-tool.json"),
+      `${JSON.stringify(localToolDescriptor(product, deployment), null, 2)}\n`,
+      "utf8",
+    );
   }
   if (deployment.kind === "mcp" && !declaredFiles.has("supbot-mcp.json")) {
-    await writeFile(join(root, "supbot-mcp.json"), `${JSON.stringify(localToolDescriptor(product, deployment), null, 2)}\n`, "utf8");
+    await writeFile(
+      join(root, "supbot-mcp.json"),
+      `${JSON.stringify(localToolDescriptor(product, deployment), null, 2)}\n`,
+      "utf8",
+    );
   }
 }
 
@@ -3698,7 +4078,7 @@ function defaultLocalDeployment(product: ToolMarketProduct): ToolMarketLocalDepl
   return {
     kind: product.type,
     capability: product.capability,
-    commandTemplates: product.commandTemplates || []
+    commandTemplates: product.commandTemplates || [],
   };
 }
 
@@ -3716,7 +4096,10 @@ function localToolDirName(kind: ToolMarketProduct["type"]): string {
 }
 
 function normalizePackagePath(value: string): string {
-  return value.replace(/\\/g, "/").replace(/^\.\/+/, "").toLowerCase();
+  return value
+    .replace(/\\/g, "/")
+    .replace(/^\.\/+/, "")
+    .toLowerCase();
 }
 
 function renderSkillFile(product: ToolMarketProduct, templates: string[]): string {
@@ -3729,12 +4112,9 @@ function renderSkillFile(product: ToolMarketProduct, templates: string[]): strin
     "",
     `Installed locally from ${product.origin === "remote" ? "Tool Market" : "the built-in catalog"}.`,
     "",
-    ...(templates.length ? [
-      "## Templates",
-      "",
-      ...templates.map((template) => `- ${JSON.stringify(template)}`),
-      ""
-    ] : [])
+    ...(templates.length
+      ? ["## Templates", "", ...templates.map((template) => `- ${JSON.stringify(template)}`), ""]
+      : []),
   ].join("\n");
 }
 
@@ -3746,23 +4126,23 @@ function renderPluginReadme(product: ToolMarketProduct, templates: string[]): st
     "",
     "Installed as a local plugin package.",
     "",
-    ...(templates.length ? [
-      "## Templates",
-      "",
-      ...templates.map((template) => `- ${JSON.stringify(template)}`),
-      ""
-    ] : [])
+    ...(templates.length
+      ? ["## Templates", "", ...templates.map((template) => `- ${JSON.stringify(template)}`), ""]
+      : []),
   ].join("\n");
 }
 
-function localToolDescriptor(product: ToolMarketProduct, deployment: ToolMarketLocalDeployment): Record<string, unknown> {
+function localToolDescriptor(
+  product: ToolMarketProduct,
+  deployment: ToolMarketLocalDeployment,
+): Record<string, unknown> {
   return {
     id: product.id,
     name: product.name,
     kind: deployment.kind,
     description: product.description,
     commandTemplates: deployment.commandTemplates || product.commandTemplates || [],
-    mcpServer: deployment.mcpServer
+    mcpServer: deployment.mcpServer,
   };
 }
 
@@ -3790,7 +4170,7 @@ function installedManifestToProduct(manifest: Record<string, unknown>): ToolMark
     name,
     kind: type === "plugin" || type === "mcp" ? type : type === "skill" ? "skill" : "tool",
     description,
-    enabled: true
+    enabled: true,
   });
   const commandTemplates = stringArrayValue(deployment.commandTemplates);
   const mcpServer = manifestMcpServer(deployment.mcpServer);
@@ -3813,8 +4193,8 @@ function installedManifestToProduct(manifest: Record<string, unknown>): ToolMark
       kind: normalizeMarketProductType(stringRecordValue(deployment, "kind") || type),
       capability,
       ...(commandTemplates.length ? { commandTemplates } : {}),
-      ...(mcpServer ? { mcpServer } : {})
-    }
+      ...(mcpServer ? { mcpServer } : {}),
+    },
   };
 }
 
@@ -3831,7 +4211,7 @@ function normalizeMarketProductType(value: unknown): ToolMarketProduct["type"] {
 }
 
 function objectRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 function stringRecordValue(value: Record<string, unknown>, key: string): string | undefined {
@@ -3840,7 +4220,11 @@ function stringRecordValue(value: Record<string, unknown>, key: string): string 
 }
 
 function stringArrayValue(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim()) : [];
+  return Array.isArray(value)
+    ? value
+        .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+        .map((item) => item.trim())
+    : [];
 }
 
 function manifestCapability(value: unknown, fallback: CapabilityDefinition): CapabilityDefinition {
@@ -3850,12 +4234,18 @@ function manifestCapability(value: unknown, fallback: CapabilityDefinition): Cap
     name: stringRecordValue(input, "name") || fallback.name,
     kind: normalizeCapabilityKind(input.kind, fallback.kind),
     description: stringRecordValue(input, "description") || fallback.description,
-    enabled: input.enabled !== false
+    enabled: input.enabled !== false,
   };
 }
 
 function normalizeCapabilityKind(value: unknown, fallback: CapabilityDefinition["kind"]): CapabilityDefinition["kind"] {
-  return value === "skill" || value === "tool" || value === "plugin" || value === "mcp" || value === "subagent" || value === "scheduler" || value === "storage"
+  return value === "skill" ||
+    value === "tool" ||
+    value === "plugin" ||
+    value === "mcp" ||
+    value === "subagent" ||
+    value === "scheduler" ||
+    value === "storage"
     ? value
     : fallback;
 }
@@ -3876,7 +4266,7 @@ function manifestMcpServer(value: unknown): ToolMarketMcpDeployment | undefined 
     env: manifestEnv(input.env),
     requestTimeoutMs: normalizeMarketMcpTimeout(input.requestTimeoutMs),
     enabled: input.enabled !== false,
-    autoConnect: Boolean(input.autoConnect)
+    autoConnect: Boolean(input.autoConnect),
   };
 }
 
@@ -3893,7 +4283,12 @@ function marketMcpServerId(product: ToolMarketProduct, input: ToolMarketMcpDeplo
 }
 
 function sanitizeMarketId(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "market-tool";
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "market-tool"
+  );
 }
 
 function marketInstallSlug(value: string): string {
@@ -3915,17 +4310,21 @@ export function redactModelConfig(config: ModelConfig, secret?: string): ModelCo
   return {
     ...config,
     apiKeySaved: Boolean(secret),
-    apiKeyStorage: secret ? config.apiKeyStorage || "file" : undefined
+    apiKeyStorage: secret ? config.apiKeyStorage || "file" : undefined,
   };
 }
 
-export function redactToolMarketConfig(config: ToolMarketConfig, secret?: string, passwordSecret?: string): ToolMarketConfig {
+export function redactToolMarketConfig(
+  config: ToolMarketConfig,
+  secret?: string,
+  passwordSecret?: string,
+): ToolMarketConfig {
   return {
     ...config,
     accessTokenSaved: Boolean(secret),
     passwordSaved: Boolean(passwordSecret),
     tokenStorage: secret ? config.tokenStorage || "file" : undefined,
-    passwordStorage: passwordSecret ? config.passwordStorage || "file" : undefined
+    passwordStorage: passwordSecret ? config.passwordStorage || "file" : undefined,
   };
 }
 
@@ -4006,7 +4405,7 @@ function normalizeHttpUrl(value: string): string | undefined {
     if (error instanceof Error && error.message.includes("http or https")) {
       throw error;
     }
-    throw new Error("Servstation A2A URL is invalid.");
+    throw new Error("Servstation A2A URL is invalid.", { cause: error });
   }
 }
 
@@ -4014,20 +4413,30 @@ function normalizeDataSources(sources: DataSourceSpec[]): DataSourceSpec[] {
   return sources.map((source) => ({
     id: source.id?.trim() || randomId("source"),
     kind: normalizeDataSourceKind(source.kind),
-    label: source.label?.trim() || source.path || source.url || source.mcpToolName || source.shellCommand || "Data source",
+    label:
+      source.label?.trim() || source.path || source.url || source.mcpToolName || source.shellCommand || "Data source",
     path: source.path?.trim() || undefined,
-    paths: Array.isArray(source.paths) ? source.paths.filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim()) : undefined,
+    paths: Array.isArray(source.paths)
+      ? source.paths.filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim())
+      : undefined,
     url: source.url?.trim() || undefined,
     method: source.method === "POST" ? "POST" : source.method === "GET" ? "GET" : undefined,
     headers: source.headers && typeof source.headers === "object" ? source.headers : undefined,
     body: source.body,
     mcpToolName: source.mcpToolName?.trim() || undefined,
-    shellCommand: source.shellCommand?.trim() || undefined
+    shellCommand: source.shellCommand?.trim() || undefined,
   }));
 }
 
 function normalizeDataSourceKind(kind: DataSourceSpec["kind"]): DataSourceSpec["kind"] {
-  return kind === "localFiles" || kind === "folderScan" || kind === "httpApi" || kind === "webUrl" || kind === "mcpTool" || kind === "shellCommand" ? kind : "folderScan";
+  return kind === "localFiles" ||
+    kind === "folderScan" ||
+    kind === "httpApi" ||
+    kind === "webUrl" ||
+    kind === "mcpTool" ||
+    kind === "shellCommand"
+    ? kind
+    : "folderScan";
 }
 
 function artifactKindForPath(projectRoot: string, filePath: string): DataArtifactKind {
@@ -4053,7 +4462,11 @@ function extractEvidencePaths(text: string): string[] {
 }
 
 function goalReviewPassed(text: string): boolean {
-  const firstMeaningfulLine = text.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "";
+  const firstMeaningfulLine =
+    text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean) || "";
   if (/^PASS\b/i.test(firstMeaningfulLine)) {
     return true;
   }
@@ -4068,7 +4481,12 @@ function uniqueStrings(values: string[]): string[] {
 }
 
 function slug(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || randomId("subagent");
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") || randomId("subagent")
+  );
 }
 
 function normalizeToolMarketSource(value: ToolMarketConfigUpdate["source"]): ToolMarketConfig["source"] {
@@ -4076,7 +4494,9 @@ function normalizeToolMarketSource(value: ToolMarketConfigUpdate["source"]): Too
 }
 
 function normalizePermissionMode(value: PermissionMode): PermissionMode {
-  return value === "acceptEdits" || value === "bypassPermissions" || value === "plan" || value === "default" ? value : "default";
+  return value === "acceptEdits" || value === "bypassPermissions" || value === "plan" || value === "default"
+    ? value
+    : "default";
 }
 
 function pathIsInside(parent: string, child: string): boolean {
@@ -4109,7 +4529,10 @@ function toolBlocksFromRecords(records: ToolCallRecord[]): ChatMessageBlock[] {
       toolCallId: record.id,
       toolName: record.toolName,
       input: record.input,
-      status: status === "denied" || status === "failed" || status === "completed" || status === "running" ? status : "pending"
+      status:
+        status === "denied" || status === "failed" || status === "completed" || status === "running"
+          ? status
+          : "pending",
     };
     const resultText = record.output || record.error;
     if (!resultText) {
@@ -4124,8 +4547,8 @@ function toolBlocksFromRecords(records: ToolCallRecord[]): ChatMessageBlock[] {
         output: resultText,
         isError: Boolean(record.error),
         outputParts: record.outputParts,
-        outputTruncated: record.outputTruncated
-      }
+        outputTruncated: record.outputTruncated,
+      },
     ];
   });
 }
@@ -4140,8 +4563,25 @@ function summarizeConversationForManualCompact(messages: ChatMessage[]): string 
     "Manual compact summary:",
     recent || "No prior messages.",
     "",
-    "Continue from this summary and the preserved recent messages. Do not treat this as permanent memory."
+    "Continue from this summary and the preserved recent messages. Do not treat this as permanent memory.",
   ].join("\n");
+}
+
+function messagePreview(message?: ChatMessage): string | undefined {
+  const preview = message?.text.replace(/\s+/g, " ").trim();
+  return preview ? preview.slice(0, 180) : undefined;
+}
+
+function messagesMissingFromTranscript(transcriptMessages: ChatMessage[], stateMessages: ChatMessage[]): ChatMessage[] {
+  const transcriptIds = new Set(transcriptMessages.map((message) => message.id));
+  const transcriptSignatures = new Set(transcriptMessages.map(messageRecoverySignature));
+  return stateMessages.filter(
+    (message) => !transcriptIds.has(message.id) && !transcriptSignatures.has(messageRecoverySignature(message)),
+  );
+}
+
+function messageRecoverySignature(message: ChatMessage): string {
+  return [message.role, message.jobId || "", message.text].join("\u0000");
 }
 
 function isScheduleDue(job: ScheduledJob, at: Date): boolean {
@@ -4189,7 +4629,7 @@ function cronMatches(expr: string, at: Date): boolean {
     [0, 23],
     [1, 31],
     [1, 12],
-    [0, 6]
+    [0, 6],
   ] as const;
   return parts.every((part, index) => cronPartMatches(part, values[index], ranges[index][0], ranges[index][1]));
 }

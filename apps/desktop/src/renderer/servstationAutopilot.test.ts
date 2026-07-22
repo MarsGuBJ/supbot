@@ -6,7 +6,7 @@ import {
   servstationAutopilotDecisionReason,
   servstationAutopilotEvidenceCount,
   servstationAutopilotIsActive,
-  servstationAutopilotLatestStep
+  servstationAutopilotLatestStep,
 } from "./servstationAutopilot";
 
 function run(status: string, overrides: Partial<ServstationAutopilotRun> = {}): ServstationAutopilotRun {
@@ -18,7 +18,7 @@ function run(status: string, overrides: Partial<ServstationAutopilotRun> = {}): 
     status,
     createdAt: "2026-07-14T00:00:00.000Z",
     updatedAt: "2026-07-14T00:00:01.000Z",
-    ...overrides
+    ...overrides,
   };
 }
 
@@ -33,7 +33,7 @@ function step(sequence: number, overrides: Partial<ServstationAutopilotStep> = {
     attempt: 1,
     createdAt: "2026-07-14T00:00:00.000Z",
     updatedAt: "2026-07-14T00:00:01.000Z",
-    ...overrides
+    ...overrides,
   };
 }
 
@@ -44,7 +44,7 @@ describe("Servstation Autopilot panel state", () => {
       promptLocked: false,
       canPause: false,
       canResume: false,
-      canStop: false
+      canStop: false,
     });
   });
 
@@ -54,7 +54,7 @@ describe("Servstation Autopilot panel state", () => {
       promptLocked: true,
       canPause: true,
       canResume: false,
-      canStop: true
+      canStop: true,
     });
     expect(servstationAutopilotIsActive(run("watching", { lifecycleStatus: "active" }))).toBe(true);
   });
@@ -64,7 +64,7 @@ describe("Servstation Autopilot panel state", () => {
       promptLocked: false,
       canPause: false,
       canResume: true,
-      canStop: true
+      canStop: true,
     });
   });
 
@@ -74,25 +74,39 @@ describe("Servstation Autopilot panel state", () => {
       promptLocked: false,
       canPause: false,
       canResume: false,
-      canStop: false
+      canStop: false,
     });
     expect(servstationAutopilotIsActive(run(status))).toBe(false);
   });
 
   test("derives latest step, evidence progress, and decision detail", () => {
-    const latest = step(3, { decision: { action: "continue", reason: "More evidence is required", nextPrompt: "Check again" } });
+    const latest = step(3, {
+      decision: { action: "continue", reason: "More evidence is required", nextPrompt: "Check again" },
+    });
     expect(servstationAutopilotLatestStep([latest, step(1), step(2)])?.id).toBe("step-3");
     expect(servstationAutopilotDecisionReason(latest)).toBe("More evidence is required");
-    expect(servstationAutopilotEvidenceCount(run("watching", {
-      latestEvidence: [
-        { id: "one", type: "job", status: "met", label: "Job complete", source: "job" },
-        { id: "two", type: "output", status: "unmet", label: "Output verified", source: "runtime" }
-      ]
-    }))).toEqual({ met: 1, total: 2 });
+    expect(
+      servstationAutopilotEvidenceCount(
+        run("watching", {
+          latestEvidence: [
+            { id: "one", type: "job", status: "met", label: "Job complete", source: "job" },
+            { id: "two", type: "output", status: "unmet", label: "Output verified", source: "runtime" },
+          ],
+        }),
+      ),
+    ).toEqual({ met: 1, total: 2 });
   });
 
   test("deduplicates streamed events and keeps the newest event first", () => {
-    const first = { id: "event-1", runId: "run-1", agentInstanceId: "agent-1", eventType: "step", level: "info", message: "first", createdAt: "2026-07-14T00:00:00.000Z" };
+    const first = {
+      id: "event-1",
+      runId: "run-1",
+      agentInstanceId: "agent-1",
+      eventType: "step",
+      level: "info",
+      message: "first",
+      createdAt: "2026-07-14T00:00:00.000Z",
+    };
     const updated = { ...first, message: "updated" };
     expect(mergeServstationAutopilotEvent([first], updated)).toEqual([updated]);
   });

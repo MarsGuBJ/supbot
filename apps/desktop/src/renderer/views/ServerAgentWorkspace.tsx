@@ -1,14 +1,22 @@
 import { useEffect, useState } from "react";
 import { ApiOutlined, CheckCircleOutlined } from "@ant-design/icons";
 import { Button, Form, Input, Modal, Select, message } from "antd";
-import { defaultServstationBaseUrl, defaultServstationClientId, defaultServstationIssuerUrl, defaultServstationRedirectUri, defaultServstationScope, defaultServstationUser, type RuntimeSnapshot } from "@supbot/shared";
+import {
+  defaultServstationBaseUrl,
+  defaultServstationClientId,
+  defaultServstationIssuerUrl,
+  defaultServstationRedirectUri,
+  defaultServstationScope,
+  defaultServstationUser,
+  type RuntimeSnapshot,
+} from "@supbot/shared";
 import type { Translator } from "../lib/types";
 
 export function ServerAgentConnectionButton({
   snapshot,
   refresh,
   t,
-  compact = false
+  compact = false,
 }: {
   snapshot: RuntimeSnapshot;
   refresh: () => void;
@@ -75,19 +83,20 @@ export function hasUsableServstationOidcSession(config: RuntimeSnapshot["servsta
 export async function ensureServstationOidcSession(
   config: RuntimeSnapshot["servstationA2A"]["config"],
   identity: RuntimeSnapshot["identityContext"],
-  loginHint?: string
+  loginHint?: string,
 ): Promise<void> {
   if (config.authMode !== "oidc") {
     return;
   }
-  const login = () => window.supbot.loginServstationOidc({
-    baseUrl: config.baseUrl || identity?.servstationUrl || defaultServstationBaseUrl,
-    issuerUrl: config.oidc?.issuerUrl || defaultServstationIssuerUrl,
-    clientId: config.oidc?.clientId || defaultServstationClientId,
-    scope: config.oidc?.scope || defaultServstationScope,
-    redirectUri: config.oidc?.redirectUri || defaultServstationRedirectUri,
-    loginHint: loginHint || defaultServstationUser
-  });
+  const login = () =>
+    window.supbot.loginServstationOidc({
+      baseUrl: config.baseUrl || identity?.servstationUrl || defaultServstationBaseUrl,
+      issuerUrl: config.oidc?.issuerUrl || defaultServstationIssuerUrl,
+      clientId: config.oidc?.clientId || defaultServstationClientId,
+      scope: config.oidc?.scope || defaultServstationScope,
+      redirectUri: config.oidc?.redirectUri || defaultServstationRedirectUri,
+      loginHint: loginHint || defaultServstationUser,
+    });
   if (!hasUsableServstationOidcSession(config)) {
     await login();
     return;
@@ -104,15 +113,27 @@ export function RemoteScheduleModal({
   disabled,
   onCancel,
   onSave,
-  t
+  t,
 }: {
   open: boolean;
   disabled: boolean;
   onCancel: () => void;
-  onSave: (input: { title?: string; prompt: string; scheduleKind: string; runAt?: string; cronExpr?: string }) => Promise<void>;
+  onSave: (input: {
+    title?: string;
+    prompt: string;
+    scheduleKind: string;
+    runAt?: string;
+    cronExpr?: string;
+  }) => Promise<void>;
   t: Translator;
 }) {
-  const [form] = Form.useForm<{ title?: string; prompt: string; scheduleKind: string; runAt?: string; cronExpr?: string }>();
+  const [form] = Form.useForm<{
+    title?: string;
+    prompt: string;
+    scheduleKind: string;
+    runAt?: string;
+    cronExpr?: string;
+  }>();
   const [saving, setSaving] = useState(false);
   useEffect(() => {
     if (open) {
@@ -141,13 +162,27 @@ export function RemoteScheduleModal({
           }
         }}
       >
-        <Form.Item label={t("Title")} name="title"><Input disabled={disabled} /></Form.Item>
-        <Form.Item label={t("Prompt")} name="prompt" rules={[{ required: true }]}><Input.TextArea rows={4} disabled={disabled} /></Form.Item>
-        <Form.Item label={t("Kind")} name="scheduleKind" rules={[{ required: true }]}>
-          <Select disabled={disabled} options={[{ value: "once", label: t("Once") }, { value: "cron", label: t("Cron") }]} />
+        <Form.Item label={t("Title")} name="title">
+          <Input disabled={disabled} />
         </Form.Item>
-        <Form.Item label={t("Run at ISO time")} name="runAt"><Input disabled={disabled} placeholder={new Date(Date.now() + 3600000).toISOString()} /></Form.Item>
-        <Form.Item label={t("Cron expression")} name="cronExpr"><Input disabled={disabled} placeholder="0 9 * * 1-5" /></Form.Item>
+        <Form.Item label={t("Prompt")} name="prompt" rules={[{ required: true }]}>
+          <Input.TextArea rows={4} disabled={disabled} />
+        </Form.Item>
+        <Form.Item label={t("Kind")} name="scheduleKind" rules={[{ required: true }]}>
+          <Select
+            disabled={disabled}
+            options={[
+              { value: "once", label: t("Once") },
+              { value: "cron", label: t("Cron") },
+            ]}
+          />
+        </Form.Item>
+        <Form.Item label={t("Run at ISO time")} name="runAt">
+          <Input disabled={disabled} placeholder={new Date(Date.now() + 3600000).toISOString()} />
+        </Form.Item>
+        <Form.Item label={t("Cron expression")} name="cronExpr">
+          <Input disabled={disabled} placeholder="0 9 * * 1-5" />
+        </Form.Item>
       </Form>
     </Modal>
   );

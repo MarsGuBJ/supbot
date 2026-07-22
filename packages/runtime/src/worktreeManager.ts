@@ -50,7 +50,7 @@ export class WorktreeManager {
         status: "active",
         diffStatus: "unavailable",
         createdAt: now,
-        updatedAt: now
+        updatedAt: now,
       };
       this.upsert(worktree);
       await this.emit("Worktree active", worktree, { scratch: true, reason: gitStatus.reason });
@@ -73,7 +73,7 @@ export class WorktreeManager {
       status: "creating",
       diffStatus: "unavailable",
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
     };
     this.upsert(worktree);
     await this.emit("Worktree creating", worktree);
@@ -84,8 +84,17 @@ export class WorktreeManager {
       await this.emit("Worktree active", worktree);
       return worktree;
     } catch (error) {
-      const wrapped = new WorktreeSetupError(`Could not prepare isolated worktree at ${baseDir}: ${(error as Error).message}`, baseDir);
-      worktree = { ...worktree, status: "failed", diffStatus: "unavailable", error: wrapped.message, updatedAt: this.host.nowIso() };
+      const wrapped = new WorktreeSetupError(
+        `Could not prepare isolated worktree at ${baseDir}: ${(error as Error).message}`,
+        baseDir,
+      );
+      worktree = {
+        ...worktree,
+        status: "failed",
+        diffStatus: "unavailable",
+        error: wrapped.message,
+        updatedAt: this.host.nowIso(),
+      };
       this.upsert(worktree);
       await this.emit("Worktree failed", worktree, { error: worktree.error });
       throw wrapped;
@@ -101,7 +110,7 @@ export class WorktreeManager {
       diffStatus: diffSummary.changedFiles.length ? "dirty" : "none",
       diffSummary,
       completedAt: this.host.nowIso(),
-      updatedAt: this.host.nowIso()
+      updatedAt: this.host.nowIso(),
     };
     this.upsert(next);
     await this.emit("Worktree completed", next, { changedFiles: diffSummary.changedFiles.length });
@@ -114,7 +123,7 @@ export class WorktreeManager {
       ...current,
       status: "abandoned",
       error: message,
-      updatedAt: this.host.nowIso()
+      updatedAt: this.host.nowIso(),
     };
     this.upsert(next);
     await this.emit("Worktree abandoned", next);
@@ -127,7 +136,7 @@ export class WorktreeManager {
       ...current,
       status: "failed",
       error,
-      updatedAt: this.host.nowIso()
+      updatedAt: this.host.nowIso(),
     };
     this.upsert(next);
     await this.emit("Worktree failed", next, { error });
@@ -144,12 +153,15 @@ export class WorktreeManager {
         insertions: undefined,
         deletions: undefined,
         summary: entries.length ? `${entries.length} file(s) in scratch workspace` : "No changes",
-        patch: undefined
+        patch: undefined,
       };
     }
     await runGit(worktree.path, ["add", "-N", "."]).catch(() => undefined);
     const nameStatus = await runGit(worktree.path, ["diff", "--name-only", "HEAD"]);
-    const changedFiles = nameStatus.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const changedFiles = nameStatus.stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
     const shortstat = await runGit(worktree.path, ["diff", "--shortstat", "HEAD"]);
     const patch = includePatch ? (await runGit(worktree.path, ["diff", "HEAD"])).stdout : undefined;
     const counts = parseShortstat(shortstat.stdout);
@@ -158,8 +170,9 @@ export class WorktreeManager {
       changedFiles,
       insertions: counts.insertions,
       deletions: counts.deletions,
-      summary: shortstat.stdout.trim() || (changedFiles.length ? `${changedFiles.length} changed file(s)` : "No changes"),
-      patch
+      summary:
+        shortstat.stdout.trim() || (changedFiles.length ? `${changedFiles.length} changed file(s)` : "No changes"),
+      patch,
     };
   }
 
@@ -172,7 +185,7 @@ export class WorktreeManager {
         diffStatus: "applied",
         diffSummary: await this.getDiff(id, false),
         appliedAt: this.host.nowIso(),
-        updatedAt: this.host.nowIso()
+        updatedAt: this.host.nowIso(),
       };
       this.upsert(next);
       await this.emit("Worktree applied", next, { scratch: true });
@@ -190,7 +203,7 @@ export class WorktreeManager {
       diffStatus: "applied",
       diffSummary: { ...diff, patch: undefined },
       appliedAt: this.host.nowIso(),
-      updatedAt: this.host.nowIso()
+      updatedAt: this.host.nowIso(),
     };
     this.upsert(next);
     await this.emit("Worktree applied", next);
@@ -205,7 +218,7 @@ export class WorktreeManager {
       status: "discarded",
       diffStatus: "discarded",
       discardedAt: this.host.nowIso(),
-      updatedAt: this.host.nowIso()
+      updatedAt: this.host.nowIso(),
     };
     this.upsert(next);
     await this.emit("Worktree discarded", next);
@@ -249,10 +262,7 @@ export class WorktreeManager {
   }
 
   private upsert(worktree: TaskWorktree): void {
-    this.worktrees = [
-      cloneWorktree(worktree),
-      ...this.worktrees.filter((item) => item.id !== worktree.id)
-    ];
+    this.worktrees = [cloneWorktree(worktree), ...this.worktrees.filter((item) => item.id !== worktree.id)];
   }
 
   private async emit(message: string, worktree: TaskWorktree, data?: unknown): Promise<void> {
@@ -287,7 +297,10 @@ export async function probeGitWorktreeReady(rootDir: string): Promise<GitWorktre
 }
 
 export class WorktreeSetupError extends Error {
-  constructor(message: string, public readonly rootDir: string) {
+  constructor(
+    message: string,
+    public readonly rootDir: string,
+  ) {
     super(message);
     this.name = "WorktreeSetupError";
   }
@@ -325,19 +338,26 @@ function parseShortstat(value: string): { insertions?: number; deletions?: numbe
   const deletions = value.match(/(\d+)\s+deletion/)?.[1];
   return {
     insertions: insertions ? Number(insertions) : undefined,
-    deletions: deletions ? Number(deletions) : undefined
+    deletions: deletions ? Number(deletions) : undefined,
   };
 }
 
 function cloneWorktree(worktree: TaskWorktree): TaskWorktree {
   return {
     ...worktree,
-    diffSummary: worktree.diffSummary ? { ...worktree.diffSummary, changedFiles: [...worktree.diffSummary.changedFiles] } : undefined
+    diffSummary: worktree.diffSummary
+      ? { ...worktree.diffSummary, changedFiles: [...worktree.diffSummary.changedFiles] }
+      : undefined,
   };
 }
 
 function slug(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "") || "job";
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, "-")
+      .replace(/^-|-$/g, "") || "job"
+  );
 }
 
 async function listScratchFiles(root: string): Promise<Array<{ absolute: string; relative: string }>> {

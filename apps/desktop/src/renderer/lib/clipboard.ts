@@ -4,14 +4,23 @@ export function nodeInside(container: HTMLElement, node: Node | null): boolean {
 
 export function selectedTextWithin(container: HTMLElement): string {
   const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0 || !nodeInside(container, selection.anchorNode) || !nodeInside(container, selection.focusNode)) {
+  if (
+    !selection ||
+    selection.rangeCount === 0 ||
+    !nodeInside(container, selection.anchorNode) ||
+    !nodeInside(container, selection.focusNode)
+  ) {
     return "";
   }
   return selection.toString().trim();
 }
 
 export function selectionMemoryTitle(text: string): string {
-  const firstLine = text.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "Chat selection";
+  const firstLine =
+    text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean) || "Chat selection";
   const compact = firstLine.replace(/\s+/g, " ");
   return compact.length > 60 ? `${compact.slice(0, 57)}...` : compact;
 }

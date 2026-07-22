@@ -18,7 +18,7 @@ import type {
   MemorySearchResult,
   MemorySnapshot,
   MemoryTransfer,
-  MemoryUpdateInput
+  MemoryUpdateInput,
 } from "@supbot/shared";
 import { clampNumber, nowIso } from "@supbot/shared";
 
@@ -44,7 +44,18 @@ export class MemoryManager {
     return budgetChars ? splitResultsByBudget(results, budgetChars).selected : results;
   }
 
-  recall(memory: MemorySnapshot, query: MemorySearchQuery): { memory: MemorySnapshot; results: MemorySearchResult[]; excludedResults: MemorySearchResult[]; block?: string; budgetChars: number; usedChars: number; injected: boolean } {
+  recall(
+    memory: MemorySnapshot,
+    query: MemorySearchQuery,
+  ): {
+    memory: MemorySnapshot;
+    results: MemorySearchResult[];
+    excludedResults: MemorySearchResult[];
+    block?: string;
+    budgetChars: number;
+    usedChars: number;
+    injected: boolean;
+  } {
     const budgetChars = clampNumber(query.budgetChars ?? 6000, 500, 50_000);
     const replay = this.replayRecall(memory, { ...query, query: query.query || "", budgetChars });
     const results = replay.results;
@@ -56,8 +67,12 @@ export class MemoryManager {
     const ids = new Set(results.map((item) => item.id));
     const next = {
       ...memory,
-      pages: memory.pages.map((page) => ids.has(page.id) ? { ...page, lastAccessedAt: touchedAt, accessCount: page.accessCount + 1 } : page),
-      facts: memory.facts.map((fact) => ids.has(fact.id) ? { ...fact, lastAccessedAt: touchedAt, accessCount: fact.accessCount + 1 } : fact)
+      pages: memory.pages.map((page) =>
+        ids.has(page.id) ? { ...page, lastAccessedAt: touchedAt, accessCount: page.accessCount + 1 } : page,
+      ),
+      facts: memory.facts.map((fact) =>
+        ids.has(fact.id) ? { ...fact, lastAccessedAt: touchedAt, accessCount: fact.accessCount + 1 } : fact,
+      ),
     };
     return {
       memory: next,
@@ -66,7 +81,7 @@ export class MemoryManager {
       block: formatMemoryBlock(results),
       budgetChars,
       usedChars,
-      injected: true
+      injected: true,
     };
   }
 
@@ -90,13 +105,16 @@ export class MemoryManager {
         ? {
             resultIds: previousIds,
             addedIds: currentIds.filter((id) => !previousIds.includes(id)),
-            removedIds: previousIds.filter((id) => !currentIds.includes(id))
+            removedIds: previousIds.filter((id) => !currentIds.includes(id)),
           }
-        : undefined
+        : undefined,
     };
   }
 
-  recordFeedback(memory: MemorySnapshot, input: MemoryRecallFeedbackInput): { memory: MemorySnapshot; feedback: MemoryRecallFeedback } {
+  recordFeedback(
+    memory: MemorySnapshot,
+    input: MemoryRecallFeedbackInput,
+  ): { memory: MemorySnapshot; feedback: MemoryRecallFeedback } {
     const createdAt = this.host.nowIso();
     const feedback: MemoryRecallFeedback = {
       id: this.host.randomId("mem_feedback"),
@@ -105,24 +123,21 @@ export class MemoryManager {
       query: input.query,
       recallId: input.recallId,
       note: input.note,
-      createdAt
+      createdAt,
     };
     return {
       memory: {
         ...memory,
-        recallFeedback: [feedback, ...(memory.recallFeedback || [])].slice(0, 300)
+        recallFeedback: [feedback, ...(memory.recallFeedback || [])].slice(0, 300),
       },
-      feedback
+      feedback,
     };
   }
 
   recordRecall(memory: MemorySnapshot, record: MemoryRecallRecord): MemorySnapshot {
     return {
       ...memory,
-      recallHistory: [
-        record,
-        ...(memory.recallHistory || []).filter((item) => item.id !== record.id)
-      ].slice(0, 100)
+      recallHistory: [record, ...(memory.recallHistory || []).filter((item) => item.id !== record.id)].slice(0, 100),
     };
   }
 
@@ -140,29 +155,34 @@ export class MemoryManager {
       keywords: normalizeKeywords(input.keywords, `${input.title} ${input.content}`),
       createdAt,
       updatedAt: createdAt,
-      accessCount: 0
+      accessCount: 0,
     };
-    const record = input.type === "page"
-      ? { ...base, type: "page" as const }
-      : {
-          ...base,
-          type: "fact" as const,
-          kind: normalizeFactKind(input.kind),
-          confidence: clampNumber(input.confidence ?? 0.7, 0, 1)
-        };
+    const record =
+      input.type === "page"
+        ? { ...base, type: "page" as const }
+        : {
+            ...base,
+            type: "fact" as const,
+            kind: normalizeFactKind(input.kind),
+            confidence: clampNumber(input.confidence ?? 0.7, 0, 1),
+          };
     const chunks = chunkRecord(record, this.host.randomId, createdAt);
     return {
       memory: {
         ...memory,
         pages: record.type === "page" ? [record, ...memory.pages] : memory.pages,
         facts: record.type === "fact" ? [record, ...memory.facts] : memory.facts,
-        chunks: [...chunks, ...memory.chunks]
+        chunks: [...chunks, ...memory.chunks],
       },
-      record
+      record,
     };
   }
 
-  update(memory: MemorySnapshot, id: string, input: MemoryUpdateInput): { memory: MemorySnapshot; record?: MemoryPage | MemoryFact } {
+  update(
+    memory: MemorySnapshot,
+    id: string,
+    input: MemoryUpdateInput,
+  ): { memory: MemorySnapshot; record?: MemoryPage | MemoryFact } {
     const updatedAt = this.host.nowIso();
     let updated: MemoryPage | MemoryFact | undefined;
     const updateBase = <T extends MemoryPage | MemoryFact>(record: T): T => {
@@ -174,8 +194,10 @@ export class MemoryManager {
         scope: input.scope || record.scope,
         conversationId: input.conversationId === undefined ? record.conversationId : input.conversationId,
         subagentName: input.subagentName === undefined ? record.subagentName : input.subagentName,
-        keywords: input.keywords ? normalizeKeywords(input.keywords, `${input.title || record.title} ${input.content || record.content}`) : record.keywords,
-        updatedAt
+        keywords: input.keywords
+          ? normalizeKeywords(input.keywords, `${input.title || record.title} ${input.content || record.content}`)
+          : record.keywords,
+        updatedAt,
       } as T;
       if (next.type === "fact") {
         next.kind = normalizeFactKind(input.kind || next.kind);
@@ -184,10 +206,13 @@ export class MemoryManager {
       updated = next;
       return next;
     };
-    const pages = memory.pages.map((page) => page.id === id ? updateBase(page) : page);
-    const facts = memory.facts.map((fact) => fact.id === id ? updateBase(fact) : fact);
+    const pages = memory.pages.map((page) => (page.id === id ? updateBase(page) : page));
+    const facts = memory.facts.map((fact) => (fact.id === id ? updateBase(fact) : fact));
     const chunks = updated
-      ? [...chunkRecord(updated, this.host.randomId, updatedAt), ...memory.chunks.filter((chunk) => chunk.memoryId !== id)]
+      ? [
+          ...chunkRecord(updated, this.host.randomId, updatedAt),
+          ...memory.chunks.filter((chunk) => chunk.memoryId !== id),
+        ]
       : memory.chunks;
     return { memory: { ...memory, pages, facts, chunks }, record: updated };
   }
@@ -198,11 +223,14 @@ export class MemoryManager {
       pages: memory.pages.filter((page) => page.id !== id),
       facts: memory.facts.filter((fact) => fact.id !== id),
       chunks: memory.chunks.filter((chunk) => chunk.memoryId !== id),
-      links: memory.links.filter((link) => link.sourceId !== id && link.targetId !== id)
+      links: memory.links.filter((link) => link.sourceId !== id && link.targetId !== id),
     };
   }
 
-  createCandidates(memory: MemorySnapshot, input: MemoryCandidateInput): { memory: MemorySnapshot; candidates: MemoryCandidate[] } {
+  createCandidates(
+    memory: MemorySnapshot,
+    input: MemoryCandidateInput,
+  ): { memory: MemorySnapshot; candidates: MemoryCandidate[] } {
     const facts = extractCandidateFacts(input.summary);
     if (!facts.length) {
       return { memory, candidates: [] };
@@ -210,7 +238,10 @@ export class MemoryManager {
     const createdAt = this.host.nowIso();
     const scope: MemoryScope = input.subagentName ? "subagent" : "conversation";
     const candidates = facts
-      .filter((content) => !hasSimilarCandidateOrMemory(memory, input.conversationId, input.source, content, scope, input.subagentName))
+      .filter(
+        (content) =>
+          !hasSimilarCandidateOrMemory(memory, input.conversationId, input.source, content, scope, input.subagentName),
+      )
       .map((content) => ({
         id: this.host.randomId("mem_candidate"),
         scope,
@@ -224,18 +255,21 @@ export class MemoryManager {
         keywords: normalizeKeywords(undefined, content),
         status: "pending" as const,
         createdAt,
-        updatedAt: createdAt
+        updatedAt: createdAt,
       }));
     if (!candidates.length) {
       return { memory, candidates: [] };
     }
     return {
       memory: { ...memory, candidates: [...candidates, ...memory.candidates].slice(0, 100) },
-      candidates
+      candidates,
     };
   }
 
-  approveCandidate(memory: MemorySnapshot, id: string): { memory: MemorySnapshot; record?: MemoryPage | MemoryFact; candidate?: MemoryCandidate } {
+  approveCandidate(
+    memory: MemorySnapshot,
+    id: string,
+  ): { memory: MemorySnapshot; record?: MemoryPage | MemoryFact; candidate?: MemoryCandidate } {
     const candidate = memory.candidates.find((item) => item.id === id);
     if (!candidate || candidate.status !== "pending") {
       return { memory };
@@ -249,16 +283,17 @@ export class MemoryManager {
         content: mergedContent,
         title: mergeTarget.title || candidate.title,
         keywords: [...mergeTarget.keywords, ...candidate.keywords],
-        confidence: mergeTarget.type === "fact" ? Math.max(mergeTarget.confidence, candidate.confidence) : candidate.confidence,
-        kind: candidate.kind
+        confidence:
+          mergeTarget.type === "fact" ? Math.max(mergeTarget.confidence, candidate.confidence) : candidate.confidence,
+        kind: candidate.kind,
       });
       return {
         memory: {
           ...merged.memory,
-          candidates: merged.memory.candidates.map((item) => item.id === id ? approved : item)
+          candidates: merged.memory.candidates.map((item) => (item.id === id ? approved : item)),
         },
         record: merged.record,
-        candidate: approved
+        candidate: approved,
       };
     }
     const result = this.add(memory, {
@@ -271,15 +306,15 @@ export class MemoryManager {
       source: candidate.source,
       kind: candidate.kind,
       confidence: candidate.confidence,
-      keywords: candidate.keywords
+      keywords: candidate.keywords,
     });
     return {
       memory: {
         ...result.memory,
-        candidates: result.memory.candidates.map((item) => item.id === id ? approved : item)
+        candidates: result.memory.candidates.map((item) => (item.id === id ? approved : item)),
       },
       record: result.record.type === "fact" ? result.record : undefined,
-      candidate: approved
+      candidate: approved,
     };
   }
 
@@ -295,18 +330,22 @@ export class MemoryManager {
           }
           denied = { ...candidate, status: "denied", updatedAt: deniedAt };
           return denied;
-        })
+        }),
       },
-      candidate: denied
+      candidate: denied,
     };
   }
 
-  candidateFromCompact(memory: MemorySnapshot, boundary: CompactBoundary, subagentName?: string): { memory: MemorySnapshot; candidates: MemoryCandidate[] } {
+  candidateFromCompact(
+    memory: MemorySnapshot,
+    boundary: CompactBoundary,
+    subagentName?: string,
+  ): { memory: MemorySnapshot; candidates: MemoryCandidate[] } {
     return this.createCandidates(memory, {
       conversationId: boundary.conversationId,
       subagentName,
       source: `compact:${boundary.id}`,
-      summary: boundary.summary
+      summary: boundary.summary,
     });
   }
 
@@ -314,7 +353,7 @@ export class MemoryManager {
     return {
       version: 1,
       exportedAt,
-      memory: cloneMemory(memory)
+      memory: cloneMemory(memory),
     };
   }
 
@@ -332,8 +371,8 @@ export class MemoryManager {
         links: incoming.links.length,
         candidates: incoming.candidates.length,
         recallHistory: incoming.recallHistory.length,
-        recallFeedback: incoming.recallFeedback.length
-      }
+        recallFeedback: incoming.recallFeedback.length,
+      },
     };
   }
 
@@ -361,20 +400,26 @@ export class MemoryManager {
 function formatMemoryBlock(results: MemorySearchResult[]): string {
   return [
     "<memory>",
-    ...results.map((item, index) => [
-      `#${index + 1} [${item.scope}${item.subagentName ? `:@${item.subagentName}` : ""}] ${item.title}`,
-      `Source: ${item.sourceLabel}`,
-      `Why recalled: ${item.reason}`,
-      item.content
-    ].join("\n")),
-    "</memory>"
+    ...results.map((item, index) =>
+      [
+        `#${index + 1} [${item.scope}${item.subagentName ? `:@${item.subagentName}` : ""}] ${item.title}`,
+        `Source: ${item.sourceLabel}`,
+        `Why recalled: ${item.reason}`,
+        item.content,
+      ].join("\n"),
+    ),
+    "</memory>",
   ].join("\n\n");
 }
 
 function scoreRecord(record: MemoryPage | MemoryFact, terms: string[]): number {
   const text = `${record.title} ${record.content} ${record.keywords.join(" ")}`.toLowerCase();
   const termScore = terms.length
-    ? terms.reduce((score, term) => score + (text.includes(term) ? 2 : 0) + record.keywords.filter((keyword) => keyword === term).length, 0)
+    ? terms.reduce(
+        (score, term) =>
+          score + (text.includes(term) ? 2 : 0) + record.keywords.filter((keyword) => keyword === term).length,
+        0,
+      )
     : 1;
   const ageMs = Date.now() - Date.parse(record.updatedAt);
   const recency = Number.isFinite(ageMs) ? Math.max(0.15, 1 - ageMs / (1000 * 60 * 60 * 24 * 90)) : 0.5;
@@ -431,13 +476,11 @@ function rankMemoryResults(
   memory: MemorySnapshot,
   query: MemorySearchQuery,
   limit: number,
-  matchesScope: (record: MemoryPage | MemoryFact, query: MemorySearchQuery) => boolean
+  matchesScope: (record: MemoryPage | MemoryFact, query: MemorySearchQuery) => boolean,
 ): MemorySearchResult[] {
   const terms = tokenize(query.query || "");
-  const records: Array<MemoryPage | MemoryFact> = [
-    ...memory.pages,
-    ...memory.facts
-  ].filter((record) => matchesScope(record, query))
+  const records: Array<MemoryPage | MemoryFact> = [...memory.pages, ...memory.facts]
+    .filter((record) => matchesScope(record, query))
     .filter((record) => !(query.excludeSources || []).includes(record.source))
     .filter((record) => query.includeDisabled || record.status === "active");
 
@@ -469,11 +512,14 @@ function rankMemoryResults(
       matchedKeywords,
       reason: recallReason(matchedKeywords, score, feedback?.kind),
       sourceLabel: sourceLabel(record.source),
-      feedback: feedback?.kind
+      feedback: feedback?.kind,
     }));
 }
 
-function splitResultsByBudget(results: MemorySearchResult[], budgetChars: number): { selected: MemorySearchResult[]; excluded: MemorySearchResult[] } {
+function splitResultsByBudget(
+  results: MemorySearchResult[],
+  budgetChars: number,
+): { selected: MemorySearchResult[]; excluded: MemorySearchResult[] } {
   const selected: MemorySearchResult[] = [];
   const excluded: MemorySearchResult[] = [];
   let used = "<memory>\n</memory>".length;
@@ -486,7 +532,7 @@ function splitResultsByBudget(results: MemorySearchResult[], budgetChars: number
     if (!selected.length && used + nextLength > budgetChars) {
       selected.push({
         ...result,
-        content: result.content.slice(0, Math.max(80, budgetChars - used - 180)).trimEnd()
+        content: result.content.slice(0, Math.max(80, budgetChars - used - 180)).trimEnd(),
       });
       break;
     }
@@ -505,7 +551,7 @@ function formatMemoryEntry(item: MemorySearchResult, index: number): string {
     `#${index + 1} [${item.scope}${item.subagentName ? `:@${item.subagentName}` : ""}] ${item.title}`,
     `Source: ${item.sourceLabel}`,
     `Why recalled: ${item.reason}`,
-    item.content
+    item.content,
   ].join("\n");
 }
 
@@ -519,7 +565,7 @@ function chunkRecord(record: MemoryPage | MemoryFact, randomId: (prefix: string)
     heading: index === 0 ? record.title : `${record.title} (${index + 1})`,
     content,
     keywords: normalizeKeywords(record.keywords, content),
-    createdAt
+    createdAt,
   }));
 }
 
@@ -541,11 +587,18 @@ function normalizeKeywords(input: string[] | undefined, text: string): string[] 
 }
 
 function tokenize(text: string): string[] {
-  return text.toLowerCase().match(/[\p{L}\p{N}_-]{2,}/gu)?.slice(0, 64) || [];
+  return (
+    text
+      .toLowerCase()
+      .match(/[\p{L}\p{N}_-]{2,}/gu)
+      ?.slice(0, 64) || []
+  );
 }
 
 function normalizeFactKind(kind: MemoryFactKind | undefined): MemoryFactKind {
-  return kind === "preference" || kind === "decision" || kind === "task" || kind === "warning" || kind === "fact" ? kind : "fact";
+  return kind === "preference" || kind === "decision" || kind === "task" || kind === "warning" || kind === "fact"
+    ? kind
+    : "fact";
 }
 
 function inferFactKind(text: string): MemoryFactKind {
@@ -566,32 +619,58 @@ function inferFactKind(text: string): MemoryFactKind {
 }
 
 function firstLine(text: string): string {
-  return text.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "";
+  return (
+    text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean) || ""
+  );
 }
 
 function candidateTitle(content: string): string {
   return firstLine(content).slice(0, 80) || "Conversation memory";
 }
 
-function hasSimilarCandidateOrMemory(memory: MemorySnapshot, conversationId: string, source: string, content: string, scope: MemoryScope, subagentName?: string): boolean {
+function hasSimilarCandidateOrMemory(
+  memory: MemorySnapshot,
+  conversationId: string,
+  source: string,
+  content: string,
+  scope: MemoryScope,
+  subagentName?: string,
+): boolean {
   const normalized = normalizeForSimilarity(content);
-  const sameScope = (record: { scope: MemoryScope; conversationId?: string; subagentName?: string }) => record.scope === scope
-    && record.conversationId === conversationId
-    && (scope !== "subagent" || record.subagentName === subagentName);
-  return memory.candidates.some((candidate) => sameScope(candidate)
-      && (candidate.source === source || textSimilarity(normalized, normalizeForSimilarity(candidate.content)) >= 0.82))
-    || [...memory.pages, ...memory.facts].some((record) => sameScope(record)
-      && textSimilarity(normalized, normalizeForSimilarity(record.content)) >= 0.82);
+  const sameScope = (record: { scope: MemoryScope; conversationId?: string; subagentName?: string }) =>
+    record.scope === scope &&
+    record.conversationId === conversationId &&
+    (scope !== "subagent" || record.subagentName === subagentName);
+  return (
+    memory.candidates.some(
+      (candidate) =>
+        sameScope(candidate) &&
+        (candidate.source === source || textSimilarity(normalized, normalizeForSimilarity(candidate.content)) >= 0.82),
+    ) ||
+    [...memory.pages, ...memory.facts].some(
+      (record) => sameScope(record) && textSimilarity(normalized, normalizeForSimilarity(record.content)) >= 0.82,
+    )
+  );
 }
 
 function findMergeTarget(memory: MemorySnapshot, candidate: MemoryCandidate): MemoryPage | MemoryFact | undefined {
   const normalized = normalizeForSimilarity(candidate.content);
   return [...memory.facts, ...memory.pages]
-    .filter((record) => record.status === "active"
-      && record.scope === candidate.scope
-      && record.conversationId === candidate.conversationId
-      && (record.scope !== "subagent" || record.subagentName === candidate.subagentName))
-    .map((record) => ({ record, similarity: textSimilarity(normalized, normalizeForSimilarity(record.content)), keywordOverlap: overlapCount(record.keywords, candidate.keywords) }))
+    .filter(
+      (record) =>
+        record.status === "active" &&
+        record.scope === candidate.scope &&
+        record.conversationId === candidate.conversationId &&
+        (record.scope !== "subagent" || record.subagentName === candidate.subagentName),
+    )
+    .map((record) => ({
+      record,
+      similarity: textSimilarity(normalized, normalizeForSimilarity(record.content)),
+      keywordOverlap: overlapCount(record.keywords, candidate.keywords),
+    }))
     .filter((item) => item.similarity >= 0.72 || item.keywordOverlap >= 3)
     .sort((left, right) => right.similarity - left.similarity || right.keywordOverlap - left.keywordOverlap)[0]?.record;
 }
@@ -606,7 +685,12 @@ function mergeContent(current: string, next: string): string {
 function extractCandidateFacts(summary: string): string[] {
   const cleaned = summary
     .split(/\r?\n/)
-    .map((line) => line.replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").replace(/^(?:user|assistant|system):\s*/i, "").trim())
+    .map((line) =>
+      line
+        .replace(/^\s*(?:[-*]|\d+[.)])\s*/, "")
+        .replace(/^(?:user|assistant|system):\s*/i, "")
+        .trim(),
+    )
     .filter(Boolean)
     .join("\n");
   const pieces = cleaned
@@ -618,7 +702,11 @@ function extractCandidateFacts(summary: string): string[] {
   const unique: string[] = [];
   for (const piece of pieces.length ? pieces : [cleaned]) {
     const content = piece.length > 420 ? `${piece.slice(0, 417).trimEnd()}...` : piece;
-    if (content.length >= 40 && !isTransientMemory(content) && !unique.some((item) => textSimilarity(normalizeForSimilarity(item), normalizeForSimilarity(content)) >= 0.82)) {
+    if (
+      content.length >= 40 &&
+      !isTransientMemory(content) &&
+      !unique.some((item) => textSimilarity(normalizeForSimilarity(item), normalizeForSimilarity(content)) >= 0.82)
+    ) {
       unique.push(content);
     }
     if (unique.length >= 6) {
@@ -642,7 +730,7 @@ function isTransientMemory(text: string): boolean {
     "build failed",
     "failed with",
     "queued locally",
-    "is thinking"
+    "is thinking",
   ].some((marker) => lower.includes(marker));
 }
 
@@ -680,9 +768,12 @@ function cloneMemory(memory: MemorySnapshot): MemorySnapshot {
       ...item,
       resultIds: [...item.resultIds],
       results: item.results.map((result) => ({ ...result, matchedKeywords: [...result.matchedKeywords] })),
-      excludedResults: item.excludedResults?.map((result) => ({ ...result, matchedKeywords: [...result.matchedKeywords] }))
+      excludedResults: item.excludedResults?.map((result) => ({
+        ...result,
+        matchedKeywords: [...result.matchedKeywords],
+      })),
     })),
-    recallFeedback: (memory.recallFeedback || []).map((item) => ({ ...item }))
+    recallFeedback: (memory.recallFeedback || []).map((item) => ({ ...item })),
   };
 }
 
@@ -694,7 +785,7 @@ function normalizeIncomingMemory(memory: MemorySnapshot): MemorySnapshot {
     links: Array.isArray(memory.links) ? memory.links : [],
     candidates: Array.isArray(memory.candidates) ? memory.candidates : [],
     recallHistory: Array.isArray(memory.recallHistory) ? memory.recallHistory : [],
-    recallFeedback: Array.isArray(memory.recallFeedback) ? memory.recallFeedback : []
+    recallFeedback: Array.isArray(memory.recallFeedback) ? memory.recallFeedback : [],
   };
 }
 
@@ -706,7 +797,7 @@ function mergeMemory(current: MemorySnapshot, incoming: MemorySnapshot): MemoryS
     links: mergeById(current.links, incoming.links),
     candidates: mergeById(current.candidates, incoming.candidates),
     recallHistory: mergeById(current.recallHistory || [], incoming.recallHistory || []).slice(0, 100),
-    recallFeedback: mergeById(current.recallFeedback || [], incoming.recallFeedback || []).slice(0, 300)
+    recallFeedback: mergeById(current.recallFeedback || [], incoming.recallFeedback || []).slice(0, 300),
   };
 }
 
