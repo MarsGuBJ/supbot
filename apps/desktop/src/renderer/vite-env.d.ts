@@ -71,6 +71,7 @@ import type {
   ServstationFlowEngineInitiatedExecution,
   ServstationFlowEngineLaunchInput,
   ServstationFlowEngineSnapshot,
+  ServstationJobFileContent,
   ServstationMailAccount,
   ServstationMailAccountDraft,
   ServstationMailConnectionTestResult,
@@ -175,6 +176,7 @@ declare global {
       deleteServstationConversation(id: string): Promise<void>;
       sendServstationPrompt(input: ServstationSendPromptInput): Promise<ServstationSendPromptResult>;
       cancelServstationJob(id: string): Promise<ServstationSessionJob>;
+      fetchServstationJobFile(jobId: string, fileId: string): Promise<ServstationJobFileContent>;
       createServstationScheduledJob(input: ServstationScheduledJobInput): Promise<ServstationScheduledJob>;
       updateServstationScheduledJob(
         id: string,

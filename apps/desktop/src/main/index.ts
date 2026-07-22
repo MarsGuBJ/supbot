@@ -989,6 +989,12 @@ function registerIpc(): void {
   ipcMain.handle("servstationClient:cancelJob", (_event, id: string) =>
     getRuntime().cancelServstationJob(requiredString(id, "servstation job id")),
   );
+  ipcMain.handle("servstationClient:fetchJobFile", (_event, jobId: string, fileId: string) =>
+    getRuntime().fetchServstationJobFile(
+      requiredString(jobId, "servstation job id"),
+      requiredString(fileId, "servstation job file id"),
+    ),
+  );
   ipcMain.handle("servstationClient:createScheduledJob", (_event, input: ServstationScheduledJobInput) =>
     getRuntime().createServstationScheduledJob(validateServstationScheduledJobInput(input)),
   );

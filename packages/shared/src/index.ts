@@ -657,6 +657,14 @@ export interface ServstationProjectResource {
   createdAt: string;
 }
 
+export interface ServstationJobFileContent {
+  fileId: string;
+  fileName?: string;
+  contentType: string;
+  sizeBytes: number;
+  contentBase64: string;
+}
+
 export interface ServstationDeleteProjectResponse {
   deletedProjectId: string;
   deletedResources: number;

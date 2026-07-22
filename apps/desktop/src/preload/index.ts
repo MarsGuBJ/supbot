@@ -119,6 +119,8 @@ const api = {
   sendServstationPrompt: (input: ServstationSendPromptInput) =>
     ipcRenderer.invoke("servstationClient:sendPrompt", input),
   cancelServstationJob: (id: string) => ipcRenderer.invoke("servstationClient:cancelJob", id),
+  fetchServstationJobFile: (jobId: string, fileId: string) =>
+    ipcRenderer.invoke("servstationClient:fetchJobFile", jobId, fileId),
   createServstationScheduledJob: (input: ServstationScheduledJobInput) =>
     ipcRenderer.invoke("servstationClient:createScheduledJob", input),
   updateServstationScheduledJob: (id: string, input: Partial<ServstationScheduledJobInput>) =>

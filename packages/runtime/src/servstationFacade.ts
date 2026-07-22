@@ -16,6 +16,7 @@ import {
   type ServstationFlowEngineLaunchInput,
   type ServstationFlowEnginePendingTask,
   type ServstationFlowEngineSnapshot,
+  type ServstationJobFileContent,
   type ServstationMailAccount,
   type ServstationMailAccountDraft,
   type ServstationMailConnectionTestResult,
@@ -93,6 +94,11 @@ export abstract class ServstationRuntimeFacade extends EventEmitter {
   async cancelServstationJob(jobId: string): Promise<ServstationSessionJob> {
     this.assertLoaded();
     return this.servstationAgentClient.cancelJob(jobId);
+  }
+
+  async fetchServstationJobFile(jobId: string, fileId: string): Promise<ServstationJobFileContent> {
+    this.assertLoaded();
+    return this.servstationAgentClient.fetchJobFile(jobId, fileId);
   }
 
   async createServstationScheduledJob(input: ServstationScheduledJobInput): Promise<ServstationScheduledJob> {

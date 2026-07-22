@@ -586,6 +586,7 @@ const zh: Record<string, string> = {
   "No approval input": "暂无审批输入",
   "File size": "文件大小",
   Download: "下载",
+  "Download failed.": "下载失败。",
   "No file selected": "未选择文件",
   "Select file": "选择文件",
   "Created at": "创建时间",

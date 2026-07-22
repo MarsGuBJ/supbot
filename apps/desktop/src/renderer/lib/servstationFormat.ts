@@ -26,8 +26,42 @@ export interface ServstationChatMessage {
   status?: string;
   jobId?: string;
   attachments?: Array<{ name: string; mimeType?: string; size: number }>;
+  generatedFiles?: ServstationGeneratedFile[];
   createdAt: number;
 }
+
+export interface ServstationGeneratedFile {
+  fileId: string;
+  fileName: string;
+  relativePath?: string;
+  contentType: string;
+  sizeBytes: number;
+  sha256?: string;
+}
+
+const hiddenServstationScriptExtensions = new Set([
+  ".bash",
+  ".bat",
+  ".cjs",
+  ".cmd",
+  ".fish",
+  ".js",
+  ".lua",
+  ".mjs",
+  ".php",
+  ".pl",
+  ".ps1",
+  ".psd1",
+  ".psm1",
+  ".py",
+  ".pyw",
+  ".r",
+  ".rb",
+  ".sh",
+  ".ts",
+  ".tsx",
+  ".zsh",
+]);
 
 export function servstationMessagesFromJobs(jobs: ServstationSessionJob[]): ServstationChatMessage[] {
   return [...jobs].sort(compareServstationJobs).flatMap((job) => {
@@ -46,6 +80,7 @@ export function servstationMessagesFromJobs(jobs: ServstationSessionJob[]): Serv
         text: servstationJobAssistantText(job) || servstationJobProgressText(job) || job.status,
         status: job.status,
         jobId: job.id,
+        generatedFiles: job.status === "completed" ? extractServstationGeneratedFiles(job.result) : undefined,
         createdAt: servstationJobResponseAtMs(job) || createdAt,
       },
     ];
@@ -168,6 +203,92 @@ export function extractServstationMessageAttachments(
   return attachments.length ? attachments : undefined;
 }
 
+export function extractServstationGeneratedFiles(result: unknown): ServstationGeneratedFile[] | undefined {
+  const resultRecord = toRecord(result);
+  const rawFiles = resultRecord?.generatedFiles ?? resultRecord?.generated_files ?? resultRecord?.files;
+  if (!Array.isArray(rawFiles)) {
+    return undefined;
+  }
+  const seen = new Set<string>();
+  const files = rawFiles.map(normalizeServstationGeneratedFile).filter((file): file is ServstationGeneratedFile => {
+    if (!file || seen.has(file.fileId) || isServstationScriptFile(file.fileName || file.relativePath || file.fileId)) {
+      return false;
+    }
+    seen.add(file.fileId);
+    return true;
+  });
+  return files.length ? files : undefined;
+}
+
+function normalizeServstationGeneratedFile(value: unknown): ServstationGeneratedFile | null {
+  if (typeof value === "string") {
+    const fileId = value.trim();
+    if (!fileId) {
+      return null;
+    }
+    return {
+      fileId,
+      fileName: servstationBaseName(fileId),
+      relativePath: fileId,
+      contentType: "application/octet-stream",
+      sizeBytes: 0,
+    };
+  }
+  const record = toRecord(value);
+  const relativePath = firstStringField(record, ["relativePath", "relative_path", "path"]);
+  const fileId = firstStringField(record, ["fileId", "file_id", "id"]) || relativePath;
+  if (!fileId) {
+    return null;
+  }
+  const explicitFileName = firstStringField(record, ["fileName", "file_name", "filename", "name"]);
+  const fileName = servstationBaseName(explicitFileName || relativePath || fileId);
+  if (!fileName) {
+    return null;
+  }
+  const contentType =
+    firstStringField(record, ["contentType", "content_type", "mimeType", "mime_type"]) || "application/octet-stream";
+  const sizeBytes = Math.max(firstNumberField(record, ["sizeBytes", "size_bytes", "size"]) || 0, 0);
+  const sha256 = firstStringField(record, ["sha256", "sha256sum"]);
+  return {
+    fileId,
+    fileName,
+    ...(relativePath ? { relativePath } : {}),
+    contentType,
+    sizeBytes,
+    ...(sha256 ? { sha256 } : {}),
+  };
+}
+
+function firstStringField(record: Record<string, unknown> | undefined, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = stringField(record, key)?.trim();
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function firstNumberField(record: Record<string, unknown> | undefined, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = numberField(record, key);
+    if (value !== undefined) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function servstationBaseName(value: string): string {
+  return value.split(/[\\/]/).pop()?.trim() || value;
+}
+
+function isServstationScriptFile(value: string): boolean {
+  const fileName = servstationBaseName(value);
+  const dotIndex = fileName.lastIndexOf(".");
+  return dotIndex >= 0 && hiddenServstationScriptExtensions.has(fileName.slice(dotIndex).toLowerCase());
+}
+
 export function servstationScheduleLabel(job: ServstationScheduledJob, t: Translator): string {
   if (job.scheduleKind === "once") {
     return `${t("Once")} / ${formatDateTime(job.runAt || job.nextRunAt || job.createdAt)}`;
@@ -238,17 +359,25 @@ export function servstationMessagesFromTranscript(
   if (!transcript.length) {
     return servstationMessagesFromJobs(jobs);
   }
+  const jobsById = new Map(jobs.map((job) => [job.id, job]));
   const representedJobIds = new Set(transcript.map((message) => message.jobId).filter(Boolean));
   const runningJobs = jobs.filter((job) => !servstationJobIsTerminal(job) && !representedJobIds.has(job.id));
   return [
-    ...transcript.map((message) => ({
-      id: message.id,
-      role: message.role,
-      text: message.text,
-      status: message.status,
-      jobId: message.jobId,
-      createdAt: servstationMessageCreatedAtMs(message.createdAt),
-    })),
+    ...transcript.map((message) => {
+      const job = message.jobId ? jobsById.get(message.jobId) : undefined;
+      return {
+        id: message.id,
+        role: message.role,
+        text: message.text,
+        status: message.status,
+        jobId: message.jobId,
+        generatedFiles:
+          message.role === "agent" && job?.status === "completed"
+            ? extractServstationGeneratedFiles(job.result)
+            : undefined,
+        createdAt: servstationMessageCreatedAtMs(message.createdAt),
+      };
+    }),
     ...servstationMessagesFromJobs(runningJobs),
   ].sort((left, right) => left.createdAt - right.createdAt);
 }

@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { Buffer } from "node:buffer";
 import { fetchWithRetry } from "./fetchWithRetry";
 import type {
   Attachment,
@@ -27,6 +28,7 @@ import type {
   ServstationMailAccountDraft,
   ServstationMailConnectionTestResult,
   ServstationInstalledService,
+  ServstationJobFileContent,
   ServstationLocalCapabilityAsset,
   ServstationMessageAttachmentContent,
   ServstationMessageDetail,
@@ -387,6 +389,31 @@ export class ServstationAgentClient {
         signal,
       },
     );
+  }
+
+  async fetchJobFile(jobId: string, fileId: string, signal?: AbortSignal): Promise<ServstationJobFileContent> {
+    const agentInstanceId = await this.ensureConnectedAgent(signal);
+    const response = await this.requestResponse(
+      `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/jobs/${encodeURIComponent(jobId)}/files/${encodeURIComponent(fileId)}/download`,
+      {
+        method: "GET",
+        headers: { Accept: "application/octet-stream" },
+        signal,
+      },
+    );
+    if (!response.ok) {
+      const text = await response.text();
+      const payload = text.trim() ? safeJson(text) : {};
+      throw servstationResponseError(response, text, payload);
+    }
+    const content = Buffer.from(await response.arrayBuffer());
+    return {
+      fileId,
+      fileName: servstationDownloadFileName(response.headers.get("content-disposition")),
+      contentType: response.headers.get("content-type")?.split(";", 1)[0]?.trim() || "application/octet-stream",
+      sizeBytes: content.byteLength,
+      contentBase64: content.toString("base64"),
+    };
   }
 
   async createScheduledJob(
@@ -1285,6 +1312,16 @@ export class ServstationAgentClient {
   }
 
   private async request<T = unknown>(path: string, init: RequestInit): Promise<T> {
+    const response = await this.requestResponse(path, init);
+    const text = await response.text();
+    const payload = text.trim() ? safeJson(text) : {};
+    if (!response.ok) {
+      throw servstationResponseError(response, text, payload);
+    }
+    return payload as T;
+  }
+
+  private async requestResponse(path: string, init: RequestInit): Promise<Response> {
     const config = this.host.getConfig();
     const identity = this.host.getIdentityContext();
     const baseUrl = normalizeBaseUrl(config.baseUrl || identity?.servstationUrl);
@@ -1303,18 +1340,7 @@ export class ServstationAgentClient {
         response = await this.requestOnce(joinUrl(baseUrl, path), init, signal, 0);
       }
     }
-    const text = await response.text();
-    const payload = text.trim() ? safeJson(text) : {};
-    if (!response.ok) {
-      const error = new Error(errorMessage(payload) || text || `HTTP ${response.status}`) as Error & {
-        status?: number;
-        payload?: unknown;
-      };
-      error.status = response.status;
-      error.payload = payload;
-      throw error;
-    }
-    return payload as T;
+    return response;
   }
 
   private async requestOnce(
@@ -1354,6 +1380,34 @@ export class ServstationAgentClient {
       headers.Authorization = `Bearer ${token}`;
     }
     return headers;
+  }
+}
+
+function servstationResponseError(response: Response, text: string, payload: unknown): Error {
+  const error = new Error(errorMessage(payload) || text || `HTTP ${response.status}`) as Error & {
+    status?: number;
+    payload?: unknown;
+  };
+  error.status = response.status;
+  error.payload = payload;
+  return error;
+}
+
+function servstationDownloadFileName(contentDisposition: string | null): string | undefined {
+  if (!contentDisposition) {
+    return undefined;
+  }
+  const encoded = contentDisposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i)?.[1];
+  const regular = contentDisposition.match(/filename\s*=\s*(?:"([^"]+)"|([^;]+))/i);
+  const raw = encoded ? decodeURIComponentSafely(encoded.trim()) : (regular?.[1] || regular?.[2])?.trim();
+  return raw ? raw.split(/[\\/]/).pop()?.trim() || undefined : undefined;
+}
+
+function decodeURIComponentSafely(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
   }
 }
 

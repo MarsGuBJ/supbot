@@ -2625,6 +2625,41 @@ button {
   padding: 18px;
 }
 
+.server-agent-result-files {
+  display: grid;
+  justify-items: start;
+  gap: 3px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.server-agent-result-file.ant-btn {
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  min-height: 26px;
+  padding: 2px 0;
+  text-align: left;
+  white-space: normal;
+}
+
+.server-agent-result-file.ant-btn > span:not(.ant-btn-icon):not(.ant-btn-loading-icon) {
+  min-width: 0;
+}
+
+.server-agent-result-file-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.server-agent-result-file-size {
+  flex: 0 0 auto;
+  margin-left: 7px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .server-agent-composer,
 .attachment-strip {
   display: flex;

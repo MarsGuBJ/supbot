@@ -1,5 +1,6 @@
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
+const { createServer } = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 
@@ -12,6 +13,10 @@ try {
 }
 const appDir = path.resolve("apps", "desktop");
 const port = 9323;
+const servstationPort = 9324;
+const servstationBaseUrl = `http://127.0.0.1:${servstationPort}`;
+const servstationServer = createSmokeServstationServer();
+servstationServer.listen(servstationPort, "127.0.0.1");
 const smokeUserDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "hbclient-smoke-"));
 const smokeMcpServerPath = writeSmokeMcpServer(smokeUserDataDir);
 seedSmokeState(smokeUserDataDir, smokeMcpServerPath);
@@ -36,6 +41,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const smokeDeadline = setTimeout(() => {
   console.error("Electron smoke timed out.", { stderr: stderr.slice(0, 1200) });
   child.kill();
+  servstationServer.close();
   process.exit(1);
 }, 90_000);
 
@@ -831,6 +837,81 @@ async function main() {
   if (!scrollAfterSettling || scrollAfterSettling.scrollTop > 2) {
     throw new Error("Message stream ignored manual scrolling away from the bottom.");
   }
+  const serverAgentConnection = await evaluate(
+    page.webSocketDebuggerUrl,
+    `window.supbot.updateIdentityContext({
+        tenantId: "tenant-serv-smoke",
+        organizationId: "organization-serv-smoke",
+        departmentId: "department-serv-smoke",
+        userId: "user-serv-smoke",
+        roleIds: ["user"],
+        source: "servstation",
+        agentInstanceId: "agent-serv-smoke",
+        servstationUrl: ${JSON.stringify(servstationBaseUrl)}
+      })
+      .then(() => window.supbot.updateServstationA2AConfig({
+        enabled: true,
+        baseUrl: ${JSON.stringify(servstationBaseUrl)},
+        authMode: "identityHeaders",
+        agentInstanceId: "agent-serv-smoke",
+        reverseEnabled: false
+      }))
+      .then(() => window.supbot.connectServstationReverseBridge())
+      .then((config) => ({ connected: config.reverse?.status === "connected" }))
+      .catch((error) => ({ connected: false, error: String(error?.message || error) }))`,
+  );
+  await sleep(250);
+  const serverAgentClick = await evaluate(
+    page.webSocketDebuggerUrl,
+    `(() => {
+      const control = [...document.querySelectorAll(".topbar .ant-segmented-item-label")]
+        .find((el) => el.textContent?.includes("Server Agent") || el.textContent?.includes("服务端 Agent"));
+      control?.click();
+      return { clicked: Boolean(control) };
+    })()`,
+  );
+  await sleep(1200);
+  const serverAgentFiles = await evaluate(
+    page.webSocketDebuggerUrl,
+    `(async () => {
+      const links = [...document.querySelectorAll(".server-agent-result-file")];
+      try {
+        const download = await window.supbot.fetchServstationJobFile("job-serv-smoke", "file-report");
+        return {
+          hasWorkspace: Boolean(document.querySelector(".server-agent-workspace")),
+          names: links.map((link) => link.textContent || ""),
+          hasDownloadIcon: links.every((link) => Boolean(link.querySelector(".anticon-download"))),
+          hasDownloadIpc: typeof window.supbot.fetchServstationJobFile === "function",
+          downloadedFileName: download.fileName,
+          downloadedContent: atob(download.contentBase64)
+        };
+      } catch (error) {
+        return {
+          error: String(error?.message || error),
+          hasWorkspace: Boolean(document.querySelector(".server-agent-workspace")),
+          hasDownloadIpc: typeof window.supbot.fetchServstationJobFile === "function",
+          names: links.map((link) => link.textContent || "")
+        };
+      }
+    })()`,
+  );
+  if (
+    !serverAgentConnection?.connected ||
+    !serverAgentClick?.clicked ||
+    !serverAgentFiles?.hasWorkspace ||
+    !serverAgentFiles.hasDownloadIcon ||
+    !serverAgentFiles.hasDownloadIpc ||
+    serverAgentFiles.names.length !== 2 ||
+    !serverAgentFiles.names.some((name) => name.includes("report.pdf")) ||
+    !serverAgentFiles.names.some((name) => name.includes("data.csv")) ||
+    serverAgentFiles.names.some((name) => name.includes("worker.py")) ||
+    serverAgentFiles.downloadedFileName !== "report.pdf" ||
+    serverAgentFiles.downloadedContent !== "PDF smoke"
+  ) {
+    throw new Error(
+      `Server Agent result files did not render or download correctly: ${JSON.stringify({ serverAgentConnection, serverAgentClick, serverAgentFiles })}`,
+    );
+  }
 }
 
 async function collectDiagnostics(wsUrl) {
@@ -900,8 +981,160 @@ main()
   .finally(() => {
     clearTimeout(smokeDeadline);
     child.kill();
+    servstationServer.close();
     fs.rmSync(smokeUserDataDir, { recursive: true, force: true });
   });
+
+function createSmokeServstationServer() {
+  const now = "2026-01-01T00:00:00.000Z";
+  const conversation = {
+    id: "conversation-serv-smoke",
+    agentInstanceId: "agent-serv-smoke",
+    title: "Smoke generated files",
+    runtimeSessionId: "runtime-serv-smoke",
+    jobCount: 1,
+    lastMessageAt: now,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const messages = [
+    {
+      id: "message-serv-user",
+      role: "user",
+      text: "Create result files",
+      jobId: "job-serv-smoke",
+      createdAt: now,
+    },
+    {
+      id: "message-serv-agent",
+      role: "agent",
+      text: "Generated the requested files.",
+      status: "completed",
+      jobId: "job-serv-smoke",
+      createdAt: now,
+    },
+  ];
+  const job = {
+    id: "job-serv-smoke",
+    agentInstanceId: "agent-serv-smoke",
+    requestId: "request-serv-smoke",
+    clientId: "smoke-client",
+    jobType: "interactive",
+    conversationId: conversation.id,
+    runtimeSessionId: conversation.runtimeSessionId,
+    payload: { prompt: "Create result files" },
+    status: "completed",
+    queuePosition: 0,
+    result: {
+      assistantText: "Generated the requested files.",
+      generatedFiles: [
+        {
+          fileId: "file-report",
+          fileName: "report.pdf",
+          contentType: "application/pdf",
+          sizeBytes: 9,
+        },
+        {
+          file_id: "file-data",
+          file_name: "data.csv",
+          content_type: "text/csv",
+          size_bytes: 12,
+        },
+        {
+          fileId: "file-script",
+          fileName: "worker.py",
+          contentType: "text/x-python",
+          sizeBytes: 18,
+        },
+      ],
+    },
+    createdAt: now,
+    finishedAt: now,
+  };
+  return createServer((request, response) => {
+    const url = new URL(request.url || "/", servstationBaseUrl);
+    const json = (value) => {
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify(value));
+    };
+    if (request.method === "POST" && url.pathname === "/api/v1/agent/agent-serv-smoke/a2a-peers/reverse-connections") {
+      json({
+        peer: { id: "peer-serv-smoke" },
+        streamUrl: "/api/v1/agent/agent-serv-smoke/a2a-peers/peer-serv-smoke/events",
+      });
+      return;
+    }
+    if (
+      request.method === "GET" &&
+      url.pathname === "/api/v1/agent/agent-serv-smoke/a2a-peers/peer-serv-smoke/events"
+    ) {
+      response.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      });
+      response.write('event: heartbeat\ndata: {"status":"ok"}\n\n');
+      return;
+    }
+    if (
+      request.method === "POST" &&
+      url.pathname === "/api/v1/agent/agent-serv-smoke/a2a-peers/peer-serv-smoke/heartbeat"
+    ) {
+      json({ status: "online" });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-serv-smoke/projects") {
+      json({ projects: [] });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-serv-smoke/conversations") {
+      json({ conversations: [conversation] });
+      return;
+    }
+    if (
+      request.method === "GET" &&
+      url.pathname === "/api/v1/agent/agent-serv-smoke/conversations/conversation-serv-smoke"
+    ) {
+      json({ ...conversation, messages });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-serv-smoke/jobs") {
+      json({ jobs: [job] });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-serv-smoke/scheduled-tasks") {
+      json({ tasks: [] });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-serv-smoke/autopilot-runs/current") {
+      json({});
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/v1/services") {
+      json({ services: [] });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/v1/agent/agent-serv-smoke/installed-services") {
+      json({ services: [] });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/v1/capabilities/local") {
+      json({ assets: [] });
+      return;
+    }
+    if (
+      request.method === "GET" &&
+      url.pathname === "/api/v1/agent/agent-serv-smoke/jobs/job-serv-smoke/files/file-report/download"
+    ) {
+      response.setHeader("Content-Type", "application/pdf");
+      response.setHeader("Content-Disposition", 'attachment; filename="report.pdf"');
+      response.end("PDF smoke");
+      return;
+    }
+    response.statusCode = 404;
+    json({ error: "not found", path: url.pathname });
+  });
+}
 
 function writeSmokeMcpServer(userDataDir) {
   const serverPath = path.join(userDataDir, "mock-mcp.cjs");

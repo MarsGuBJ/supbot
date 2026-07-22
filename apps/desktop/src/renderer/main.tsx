@@ -59,6 +59,7 @@ import type {
   ScheduledJobInput,
   ServstationClientSnapshot,
   ServstationConversation,
+  ServstationJobFileContent,
   ServstationLocalCapabilityAsset,
   ServstationProject,
   ServstationProjectResource,
@@ -98,6 +99,7 @@ import {
   servstationMessagesFromTranscript,
   servstationStatusColor,
   type ServstationChatMessage,
+  type ServstationGeneratedFile,
 } from "./lib/servstationFormat";
 import {
   applyCompactBoundary,
@@ -1137,6 +1139,15 @@ function ServerAgentWorkspace({
     setAttachments((items) => [...items, ...picked]);
   };
 
+  const downloadGeneratedFile = async (jobId: string, file: ServstationGeneratedFile) => {
+    try {
+      const content = await window.supbot.fetchServstationJobFile(jobId, file.fileId);
+      downloadServstationJobFile(content, file.fileName);
+    } catch {
+      messageApi.error(t("Download failed."));
+    }
+  };
+
   const saveSchedule = async (input: {
     title?: string;
     prompt: string;
@@ -1302,6 +1313,7 @@ function ServerAgentWorkspace({
                 onPickAttachments={pickRemoteAttachments}
                 onSend={sendRemotePrompt}
                 onCancelRunning={cancelRunningJob}
+                onDownloadGeneratedFile={downloadGeneratedFile}
                 copySelectedText={copySelectedText}
                 t={t}
               />
@@ -1475,6 +1487,7 @@ function ServerAgentMessages({
   onPickAttachments,
   onSend,
   onCancelRunning,
+  onDownloadGeneratedFile,
   copySelectedText,
   t,
 }: {
@@ -1507,6 +1520,7 @@ function ServerAgentMessages({
   onPickAttachments: () => Promise<void>;
   onSend: () => Promise<void>;
   onCancelRunning: () => Promise<void>;
+  onDownloadGeneratedFile: (jobId: string, file: ServstationGeneratedFile) => Promise<void>;
   copySelectedText: (text: string) => Promise<void>;
   t: Translator;
 }) {
@@ -1521,6 +1535,7 @@ function ServerAgentMessages({
   const [selectionAction, setSelectionAction] = useState<"copy" | null>(null);
   const [promptMenu, setPromptMenu] = useState<PromptContextMenu | null>(null);
   const [promptAction, setPromptAction] = useState<"copy" | "paste" | null>(null);
+  const [downloadingFileKeys, setDownloadingFileKeys] = useState<Set<string>>(() => new Set());
   const projectGroups = useMemo(
     () => groupServstationConversations(projects, conversations),
     [conversations, projects],
@@ -1664,6 +1679,23 @@ function ServerAgentMessages({
       }
     },
     [closePromptMenu, copySelectedText, prompt, promptMenu, setPrompt, t],
+  );
+
+  const runGeneratedFileDownload = useCallback(
+    async (jobId: string, file: ServstationGeneratedFile) => {
+      const key = `${jobId}:${file.fileId}`;
+      setDownloadingFileKeys((current) => new Set(current).add(key));
+      try {
+        await onDownloadGeneratedFile(jobId, file);
+      } finally {
+        setDownloadingFileKeys((current) => {
+          const next = new Set(current);
+          next.delete(key);
+          return next;
+        });
+      }
+    },
+    [onDownloadGeneratedFile],
   );
 
   useEffect(() => {
@@ -1916,6 +1948,32 @@ function ServerAgentMessages({
                     ))}
                   </div>
                 ) : null}
+                {item.jobId && item.generatedFiles?.length ? (
+                  <div className="server-agent-result-files">
+                    {item.generatedFiles.map((file) => {
+                      const downloadKey = `${item.jobId}:${file.fileId}`;
+                      return (
+                        <Button
+                          className="server-agent-result-file"
+                          data-testid={`server-agent-result-file-${item.jobId}-${file.fileId}`}
+                          key={downloadKey}
+                          type="link"
+                          size="small"
+                          icon={<DownloadOutlined />}
+                          loading={downloadingFileKeys.has(downloadKey)}
+                          disabled={disabled}
+                          aria-label={`${t("Download")} ${file.fileName}`}
+                          onClick={() => void runGeneratedFileDownload(item.jobId!, file)}
+                        >
+                          <span className="server-agent-result-file-name">{file.fileName}</span>
+                          {file.sizeBytes > 0 ? (
+                            <span className="server-agent-result-file-size">{formatFileSize(file.sizeBytes)}</span>
+                          ) : null}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
             </div>
           ))}
@@ -2020,6 +2078,21 @@ function ServerAgentMessages({
       </section>
     </div>
   );
+}
+
+function downloadServstationJobFile(content: ServstationJobFileContent, fallbackFileName: string): void {
+  const bytes = Uint8Array.from(atob(content.contentBase64), (char) => char.charCodeAt(0));
+  const blob = new Blob([bytes], { type: content.contentType || "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = servstationDownloadBaseName(content.fileName || fallbackFileName);
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function servstationDownloadBaseName(value: string | undefined): string {
+  return value?.split(/[\\/]/).pop()?.trim() || "download";
 }
 
 function ServerAgentProjectGroup({
