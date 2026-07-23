@@ -187,12 +187,23 @@ async function main() {
       const dialog = document.querySelector(".ant-modal-confirm");
       const text = dialog?.textContent || "";
       const visible = Boolean(dialog) && text.includes("HBClient") && /v\\d+\\.\\d+\\.\\d+/.test(text);
+      const dialogIsVisible = () => {
+        const current = document.querySelector(".ant-modal-confirm");
+        if (!current) return false;
+        const wrap = current.closest(".ant-modal-wrap");
+        const style = getComputedStyle(current);
+        const wrapStyle = wrap ? getComputedStyle(wrap) : null;
+        const rect = current.getBoundingClientRect();
+        return style.display !== "none" && style.visibility !== "hidden" && wrapStyle?.display !== "none" && rect.width > 0 && rect.height > 0;
+      };
       dialog?.querySelector(".ant-btn-primary")?.click();
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      for (let attempt = 0; attempt < 40 && dialogIsVisible(); attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
       return {
         triggerFound: Boolean(trigger),
         visible,
-        closed: !document.querySelector(".ant-modal-confirm")
+        closed: !dialogIsVisible()
       };
     })()`,
   );

@@ -1,6 +1,6 @@
 {
   "name": "hbclient",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Local single-user desktop agent.",
   "author": "HBClient contributors",
   "main": "dist/main/index.js",
