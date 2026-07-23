@@ -35,7 +35,7 @@ import {
 } from "../lib/chatFormat";
 import { compareCreatedAt, shouldShowJobRuntimeEvent } from "../lib/snapshotApply";
 import type { DetailPanel } from "../lib/types";
-import { ensureServstationOidcSession } from "../views/ServerAgentWorkspace";
+import { connectServstationAgent } from "../servstationConnection";
 
 export function recentJobProgress(progress: string[]): string[] {
   const result: string[] = [];
@@ -451,7 +451,7 @@ export function RemoteBridgePanel({
   const loginOidc = async () => {
     setSavingA2A(true);
     try {
-      await window.supbot.loginServstationOidc({
+      const result = await window.supbot.loginServstationOidc({
         baseUrl: outbound.baseUrl || identity?.servstationUrl || defaultServstationBaseUrl,
         issuerUrl: oidc?.issuerUrl || defaultServstationIssuerUrl,
         clientId: oidc?.clientId || defaultServstationClientId,
@@ -459,6 +459,9 @@ export function RemoteBridgePanel({
         redirectUri: oidc?.redirectUri || defaultServstationRedirectUri,
         loginHint: outbound.staffAgentAccount || defaultServstationUser,
       });
+      if (result.status === "canceled") {
+        return;
+      }
       messageApi.success(t("Servstation OIDC signed in."));
     } catch (error) {
       messageApi.error((error as Error).message);
@@ -491,8 +494,10 @@ export function RemoteBridgePanel({
   const connectReverse = async () => {
     setSavingA2A(true);
     try {
-      await ensureServstationOidcSession(outbound, identity, outbound.staffAgentAccount);
-      await window.supbot.connectServstationReverseBridge();
+      const connected = await connectServstationAgent(outbound, identity, outbound.staffAgentAccount);
+      if (!connected) {
+        return;
+      }
       messageApi.success(t("Connected to remote staff-agent."));
     } catch (error) {
       messageApi.error((error as Error).message);

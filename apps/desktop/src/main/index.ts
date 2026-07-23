@@ -346,9 +346,7 @@ interface OidcDiscoveryDocument {
   token_endpoint?: string;
 }
 
-interface OidcCodeResult {
-  code: string;
-}
+type OidcCodeResult = { status: "authorized"; code: string } | { status: "canceled" };
 
 interface OidcAutoLogin {
   userId: string;
@@ -422,6 +420,9 @@ async function loginServstationOidc(input: ServstationA2AOidcLoginInput): Promis
   }
 
   const codeResult = await openOidcLoginWindow(authorizationUrl.toString(), redirectUri, state, autoLogin);
+  if (codeResult.status === "canceled") {
+    return codeResult;
+  }
   const tokenResponse = await fetch(discovery.token_endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -460,7 +461,7 @@ async function loginServstationOidc(input: ServstationA2AOidcLoginInput): Promis
     tokens,
     identityContext,
   });
-  return { config, identityContext };
+  return { status: "authenticated", config, identityContext };
 }
 
 async function discoverOidcDocument(issuerUrl: string): Promise<OidcDiscoveryDocument> {
@@ -533,7 +534,7 @@ function openOidcLoginWindow(
           settle(() => reject(new Error("Servstation OIDC redirect did not include an authorization code.")));
           return;
         }
-        settle(() => resolve({ code }));
+        settle(() => resolve({ status: "authorized", code }));
       } catch (error) {
         settle(() => reject(error));
       }
@@ -569,7 +570,7 @@ function openOidcLoginWindow(
       if (!settled) {
         settled = true;
         cleanup();
-        reject(new Error("Servstation OIDC login was canceled."));
+        resolve({ status: "canceled" });
       }
     };
     const cleanup = (): void => {
@@ -774,7 +775,10 @@ async function autoConnectLocalBotstation(): Promise<void> {
   }
   try {
     if (!hasUsableBotstationOidcSession(config)) {
-      await loginServstationOidc({});
+      const login = await loginServstationOidc({});
+      if (login.status === "canceled") {
+        return;
+      }
     }
     await service.connectServstationReverseBridge();
   } catch (error) {
@@ -935,7 +939,9 @@ function registerIpc(): void {
   );
   ipcMain.handle("servstationA2A:loginOidc", async (_event, input?: ServstationA2AOidcLoginInput) => {
     const result = await loginServstationOidc(validateServstationA2AOidcLoginInput(input));
-    void updateManager?.check(false);
+    if (result.status === "authenticated") {
+      void updateManager?.check(false);
+    }
     return result;
   });
   ipcMain.handle("servstationA2A:refreshOidc", async () => {

@@ -19,7 +19,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build:renderer": "vite build",
     "build:main": "esbuild src/main/index.ts src/preload/index.ts --bundle --platform=node --target=node22 --format=cjs --outdir=dist --external:electron --external:@aws-sdk/client-s3",
-    "test": "vitest run src/main/updateManager.test.ts src/renderer/lib/servstationFormat.test.ts src/renderer/servstationAutopilot.test.ts src/renderer/servstationCapabilities.test.ts src/renderer/servstationProjects.test.ts",
+    "test": "vitest run src/main/updateManager.test.ts src/renderer/lib/servstationFormat.test.ts src/renderer/servstationAutopilot.test.ts src/renderer/servstationCapabilities.test.ts src/renderer/servstationConnection.test.ts src/renderer/servstationProjects.test.ts",
     "dev": "npm run build:main && concurrently -k \"vite --host 127.0.0.1\" \"cross-env HBCLIENT_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "start": "electron .",
     "prepare:default-skills": "node ../../scripts/prepare-bundled-skills.cjs",

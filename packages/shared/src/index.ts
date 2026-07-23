@@ -1081,10 +1081,15 @@ export interface ServstationA2AOidcLoginInput {
   loginHint?: string;
 }
 
-export interface ServstationA2AOidcLoginResult {
-  config: ServstationA2AConfig;
-  identityContext?: IdentityContext;
-}
+export type ServstationA2AOidcLoginResult =
+  | {
+      status: "authenticated";
+      config: ServstationA2AConfig;
+      identityContext?: IdentityContext;
+    }
+  | {
+      status: "canceled";
+    };
 
 export interface RemoteBridgeCallerMetadata {
   requestId?: string;

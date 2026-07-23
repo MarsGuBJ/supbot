@@ -1,15 +1,8 @@
 import { useEffect, useState } from "react";
 import { ApiOutlined, CheckCircleOutlined } from "@ant-design/icons";
 import { Button, Form, Input, Modal, Select, message } from "antd";
-import {
-  defaultServstationBaseUrl,
-  defaultServstationClientId,
-  defaultServstationIssuerUrl,
-  defaultServstationRedirectUri,
-  defaultServstationScope,
-  defaultServstationUser,
-  type RuntimeSnapshot,
-} from "@supbot/shared";
+import type { RuntimeSnapshot } from "@supbot/shared";
+import { connectServstationAgent } from "../servstationConnection";
 import type { Translator } from "../lib/types";
 
 export function ServerAgentConnectionButton({
@@ -41,8 +34,10 @@ export function ServerAgentConnectionButton({
       if (isConnected) {
         await window.supbot.disconnectServstationReverseBridge();
       } else {
-        await ensureServstationOidcSession(config, identity, config.staffAgentAccount);
-        await window.supbot.connectServstationReverseBridge();
+        const connected = await connectServstationAgent(config, identity, config.staffAgentAccount);
+        if (!connected) {
+          return;
+        }
       }
       await refresh();
     } catch (error) {
@@ -68,44 +63,6 @@ export function ServerAgentConnectionButton({
       </Button>
     </section>
   );
-}
-
-export function hasUsableServstationOidcSession(config: RuntimeSnapshot["servstationA2A"]["config"]): boolean {
-  if (config.oidc?.refreshTokenSaved) {
-    return true;
-  }
-  if (!config.oidc?.accessTokenExpiresAt) {
-    return false;
-  }
-  return new Date(config.oidc.accessTokenExpiresAt).getTime() > Date.now() + 60_000;
-}
-
-export async function ensureServstationOidcSession(
-  config: RuntimeSnapshot["servstationA2A"]["config"],
-  identity: RuntimeSnapshot["identityContext"],
-  loginHint?: string,
-): Promise<void> {
-  if (config.authMode !== "oidc") {
-    return;
-  }
-  const login = () =>
-    window.supbot.loginServstationOidc({
-      baseUrl: config.baseUrl || identity?.servstationUrl || defaultServstationBaseUrl,
-      issuerUrl: config.oidc?.issuerUrl || defaultServstationIssuerUrl,
-      clientId: config.oidc?.clientId || defaultServstationClientId,
-      scope: config.oidc?.scope || defaultServstationScope,
-      redirectUri: config.oidc?.redirectUri || defaultServstationRedirectUri,
-      loginHint: loginHint || defaultServstationUser,
-    });
-  if (!hasUsableServstationOidcSession(config)) {
-    await login();
-    return;
-  }
-  try {
-    await window.supbot.refreshServstationOidc();
-  } catch {
-    await login();
-  }
 }
 
 export function RemoteScheduleModal({

@@ -113,11 +113,12 @@ import {
   clearPendingPermission,
 } from "./lib/snapshotApply";
 import type { DetailPanel, PromptContextMenu, SelectionContextMenu, Translator, WorkspaceView } from "./lib/types";
+import { connectServstationAgent } from "./servstationConnection";
 import { ConfigWorkspace } from "./views/ConfigWorkspace";
 import { MarketWorkspace } from "./views/MarketWorkspace";
 import { ServerAgentFlowWorkspace, ServerAgentFlows } from "./views/ServerAgentFlows";
 import { ServerAgentMailWorkspace } from "./views/ServerAgentMailWorkspace";
-import { RemoteScheduleModal, ensureServstationOidcSession } from "./views/ServerAgentWorkspace";
+import { RemoteScheduleModal } from "./views/ServerAgentWorkspace";
 
 const theme = {
   token: {
@@ -951,12 +952,14 @@ function ServerAgentWorkspace({
   const connectRemote = async () => {
     setConnecting(true);
     try {
-      await ensureServstationOidcSession(
+      const connected = await connectServstationAgent(
         snapshot.servstationA2A.config,
         snapshot.identityContext,
         snapshot.servstationA2A.config.staffAgentAccount,
       );
-      await window.supbot.connectServstationReverseBridge();
+      if (!connected) {
+        return;
+      }
       await refreshRuntime();
       await loadRemote(activeConversationId || undefined);
       messageApi.success(t("Connected to remote staff-agent."));
