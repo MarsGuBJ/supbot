@@ -263,7 +263,7 @@ declare global {
       getMcpLogs(id: string): Promise<McpLogRecord[]>;
       listMcpPresets(): Promise<McpServerPreset[]>;
       exportMcpConfig(): Promise<McpConfigTransfer>;
-      importMcpConfig(input: McpConfigTransfer): Promise<McpImportResult>;
+      importMcpConfig(input: unknown): Promise<McpImportResult>;
       diagnoseMcpServer(input: McpServerInput): Promise<McpDiagnosticResult>;
       createScheduledJob(input: ScheduledJobInput): Promise<ScheduledJob>;
       updateScheduledJob(id: string, input: Partial<ScheduledJobInput>): Promise<ScheduledJob>;

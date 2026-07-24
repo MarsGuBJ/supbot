@@ -2958,6 +2958,53 @@ describe("SupbotRuntime", () => {
     expect(runtime.snapshot().mcpServers.some((item) => item.id === result.servers[0].id)).toBe(true);
   });
 
+  test("imports standard MCP server maps", async () => {
+    const runtime = await createRuntime();
+    const claudeResult = await runtime.importMcpConfig({
+      mcpServers: {
+        filesystem: {
+          command: "npx",
+          args: ["-y", "@modelcontextprotocol/server-filesystem", "D:\\workspace"],
+          cwd: "D:\\workspace",
+          env: { MCP_ROOT: "D:\\workspace" },
+          disabled: true,
+        },
+      },
+    });
+
+    expect(claudeResult).toMatchObject({ imported: 1, skipped: 0 });
+    expect(claudeResult.servers[0]).toMatchObject({
+      name: "filesystem",
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "D:\\workspace"],
+      cwd: "D:\\workspace",
+      env: { MCP_ROOT: "D:\\workspace" },
+      enabled: false,
+      autoConnect: false,
+    });
+
+    const vscodeResult = await runtime.importMcpConfig({
+      servers: {
+        github: {
+          type: "stdio",
+          command: "node",
+          args: ["github-mcp.cjs"],
+        },
+      },
+    });
+
+    expect(vscodeResult).toMatchObject({ imported: 1, skipped: 0 });
+    expect(vscodeResult.servers[0]).toMatchObject({
+      name: "github",
+      command: "node",
+      args: ["github-mcp.cjs"],
+      enabled: true,
+      autoConnect: false,
+    });
+
+    await expect(runtime.importMcpConfig({ mcpServers: [] })).rejects.toThrow("Invalid MCP config transfer");
+  });
+
   test("diagnoses MCP servers without registering tools", async () => {
     const runtime = await createRuntime();
     const serverPath = await writeMockMcpServer();

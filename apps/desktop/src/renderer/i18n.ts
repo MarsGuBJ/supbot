@@ -470,7 +470,7 @@ const zh: Record<string, string> = {
   "Not injected": "未注入",
   PID: "PID",
   Page: "页面",
-  "Paste exported MCP JSON here": "在此粘贴导出的 MCP JSON",
+  "Paste MCP JSON here": "在此粘贴 MCP JSON",
   "Paste exported memory JSON here": "在此粘贴导出的记忆 JSON",
   "Paste memory JSON first.": "请先粘贴记忆 JSON。",
   Pause: "暂停",

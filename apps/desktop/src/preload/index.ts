@@ -10,7 +10,6 @@ import type {
   MemoryReplayRecallInput,
   MemorySearchQuery,
   MemoryUpdateInput,
-  McpConfigTransfer,
   McpServerInput,
   McpServerUpdate,
   ModelConfigUpdate,
@@ -228,7 +227,7 @@ const api = {
   getMcpLogs: (id: string) => ipcRenderer.invoke("mcp:getLogs", id),
   listMcpPresets: () => ipcRenderer.invoke("mcp:listPresets"),
   exportMcpConfig: () => ipcRenderer.invoke("mcp:export"),
-  importMcpConfig: (input: McpConfigTransfer) => ipcRenderer.invoke("mcp:import", input),
+  importMcpConfig: (input: unknown) => ipcRenderer.invoke("mcp:import", input),
   diagnoseMcpServer: (input: McpServerInput) => ipcRenderer.invoke("mcp:diagnoseServer", input),
   createScheduledJob: (input: ScheduledJobInput) => ipcRenderer.invoke("schedule:create", input),
   updateScheduledJob: (id: string, input: Partial<ScheduledJobInput>) =>

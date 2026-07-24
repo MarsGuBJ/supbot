@@ -1380,7 +1380,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     return this.mcpManager.exportConfig(this.state.permissionRules);
   }
 
-  async importMcpConfig(input: McpConfigTransfer): Promise<McpImportResult> {
+  async importMcpConfig(input: unknown): Promise<McpImportResult> {
     this.assertLoaded();
     const result = this.mcpManager.importConfig(input);
     this.state.mcpServers = [...result.servers, ...this.state.mcpServers];

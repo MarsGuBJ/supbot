@@ -1267,9 +1267,7 @@ function registerIpc(): void {
   ipcMain.handle("mcp:getLogs", (_event, id: string) => getRuntime().getMcpLogs(requiredString(id, "MCP server id")));
   ipcMain.handle("mcp:listPresets", () => getRuntime().listMcpPresets());
   ipcMain.handle("mcp:export", () => getRuntime().exportMcpConfig());
-  ipcMain.handle("mcp:import", (_event, input: McpConfigTransfer) =>
-    getRuntime().importMcpConfig(validateMcpConfigTransfer(input)),
-  );
+  ipcMain.handle("mcp:import", (_event, input: unknown) => getRuntime().importMcpConfig(input as McpConfigTransfer));
   ipcMain.handle("mcp:diagnoseServer", (_event, input: McpServerInput) =>
     getRuntime().diagnoseMcpServer(validateMcpServerInput(input)),
   );
@@ -1878,14 +1876,6 @@ function validateMcpServerUpdate(input: McpServerUpdate): McpServerUpdate {
     enabled: (value) => optionalBoolean(value, "MCP enabled"),
     autoConnect: (value) => optionalBoolean(value, "MCP auto-connect"),
   }) as McpServerUpdate;
-}
-
-function validateMcpConfigTransfer(input: McpConfigTransfer): McpConfigTransfer {
-  const value = object(input, "MCP config transfer");
-  if (value.version !== 1 || !Array.isArray(value.servers) || !Array.isArray(value.permissionRules)) {
-    throw new Error("Invalid MCP config transfer.");
-  }
-  return input;
 }
 
 function validateScheduledJobInput(input: ScheduledJobInput): ScheduledJobInput {

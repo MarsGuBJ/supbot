@@ -156,8 +156,8 @@ export class McpManager implements ToolProvider {
     };
   }
 
-  importConfig(transfer: McpConfigTransfer | { servers?: unknown[] }): McpImportResult {
-    const items = Array.isArray(transfer.servers) ? transfer.servers : [];
+  importConfig(transfer: unknown): McpImportResult {
+    const items = mcpImportItems(transfer);
     const now = this.host.nowIso();
     const imported: McpServerConfig[] = [];
     let skipped = 0;
@@ -961,6 +961,48 @@ function transferServerToInput(item: unknown): McpServerInput | undefined {
     enabled: value.enabled !== false,
     autoConnect: false,
   };
+}
+
+function mcpImportItems(transfer: unknown): unknown[] {
+  if (!isRecord(transfer)) {
+    throw invalidMcpConfigTransfer();
+  }
+  if (Array.isArray(transfer.servers)) {
+    if (
+      (transfer.version !== undefined && transfer.version !== 1) ||
+      (transfer.permissionRules !== undefined && !Array.isArray(transfer.permissionRules))
+    ) {
+      throw invalidMcpConfigTransfer();
+    }
+    return transfer.servers;
+  }
+  const serverMap = isRecord(transfer.mcpServers)
+    ? transfer.mcpServers
+    : isRecord(transfer.servers)
+      ? transfer.servers
+      : undefined;
+  if (!serverMap) {
+    throw invalidMcpConfigTransfer();
+  }
+  return Object.entries(serverMap).map(([name, item]) => {
+    if (!isRecord(item)) {
+      return item;
+    }
+    return {
+      ...item,
+      name,
+      enabled: typeof item.disabled === "boolean" ? !item.disabled : item.enabled,
+      autoConnect: false,
+    };
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function invalidMcpConfigTransfer(): Error {
+  return new Error("Invalid MCP config transfer. Expected an HBClient export or an MCP servers object.");
 }
 
 function importEnvPlaceholders(env: Record<string, unknown> | undefined): Record<string, string> | undefined {

@@ -707,10 +707,13 @@ async function main() {
         const presets = await window.supbot.listMcpPresets();
         const exported = await window.supbot.exportMcpConfig();
         const imported = await window.supbot.importMcpConfig({
-          version: 1,
-          exportedAt: new Date().toISOString(),
-          servers: [{ name: "Smoke Imported MCP", command: "node", args: ["mock-mcp.cjs"], enabled: false, autoConnect: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
-          permissionRules: []
+          mcpServers: {
+            "Smoke Imported MCP": {
+              command: "node",
+              args: ["mock-mcp.cjs"],
+              disabled: true
+            }
+          }
         });
         const diagnostic = await window.supbot.diagnoseMcpServer({ name: "Smoke Bad Diagnostic", command: "definitely-not-a-real-mcp-command", enabled: true, requestTimeoutMs: 1000 });
         const diagnosticShape = {

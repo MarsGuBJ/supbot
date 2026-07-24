@@ -17,7 +17,6 @@ import {
   message,
 } from "antd";
 import type {
-  McpConfigTransfer,
   McpDiagnosticResult,
   McpLogRecord,
   McpServerInput,
@@ -133,7 +132,7 @@ export function McpServersCard({
   };
   const importConfig = async () => {
     try {
-      const parsed = JSON.parse(transferText) as McpConfigTransfer;
+      const parsed: unknown = JSON.parse(transferText);
       const result = await window.supbot.importMcpConfig(parsed);
       messageApi.success(t("Imported {count} MCP servers.", { count: result.imported }));
       setTransferOpen(false);
@@ -482,7 +481,7 @@ export function McpServersCard({
           rows={14}
           value={transferText}
           onChange={(event) => setTransferText(event.target.value)}
-          placeholder={t("Paste exported MCP JSON here")}
+          placeholder={t("Paste MCP JSON here")}
         />
       </Modal>
       <Modal
