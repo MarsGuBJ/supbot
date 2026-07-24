@@ -3,6 +3,7 @@
   "version": "0.1.5",
   "description": "Local single-user desktop agent.",
   "author": "HBClient contributors",
+  "desktopName": "hbclient.desktop",
   "main": "dist/main/index.js",
   "bin": {
     "hbclient": "bin/hbclient.js"
@@ -24,7 +25,8 @@
     "start": "electron .",
     "prepare:default-skills": "node ../../scripts/prepare-bundled-skills.cjs",
     "dist:win": "npm run prepare:default-skills && electron-builder --win nsis",
-    "dist:linux": "electron-builder --linux AppImage deb"
+    "dist:linux": "npm run prepare:default-skills && electron-builder --linux AppImage --x64",
+    "dist:linux:deb": "npm run prepare:default-skills && electron-builder --linux deb --x64"
   },
   "dependencies": {
     "@ant-design/icons": "^5.5.1",
@@ -59,6 +61,7 @@
     "files": [
       "dist/**/*",
       "build/icon.ico",
+      "build/icon.png",
       "package.json"
     ],
     "extraResources": [
@@ -107,7 +110,9 @@
         "AppImage",
         "deb"
       ],
-      "category": "Utility"
+      "category": "Utility",
+      "icon": "build/icon.png",
+      "syncDesktopName": true
     }
   }
 }

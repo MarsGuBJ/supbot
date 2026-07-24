@@ -14,6 +14,8 @@ interface HBClientUpdateManagerOptions {
   emitState: (state: HBClientUpdateState) => void;
 }
 
+type HBClientUpdatePlatform = "win32-x64" | "linux-x64";
+
 export class HBClientUpdateManager {
   private state: HBClientUpdateState = {
     status: "idle",
@@ -170,7 +172,7 @@ export class HBClientUpdateManager {
       const context = await this.options.getFeedContext(attempt > 0);
       const configuredUrl =
         process.env.HBCLIENT_UPDATE_FEED_URL?.trim() ||
-        `${context.baseUrl.replace(/\/$/, "")}/api/v1/hbclient/updates/stable/win32-x64`;
+        `${context.baseUrl.replace(/\/$/, "")}/api/v1/hbclient/updates/stable/${requireUpdatePlatform()}`;
       const feedUrl = requireHttpsUpdateFeedUrl(configuredUrl);
       autoUpdater.setFeedURL({ provider: "generic", url: feedUrl, useMultipleRangeRequest: false });
       autoUpdater.requestHeaders = context.accessToken ? { Authorization: `Bearer ${context.accessToken}` } : {};
@@ -187,17 +189,57 @@ export class HBClientUpdateManager {
   }
 
   private isEnabled(): boolean {
-    return (
-      process.platform === "win32" &&
-      process.arch === "x64" &&
-      (app.isPackaged || process.env.HBCLIENT_ENABLE_DEV_UPDATES === "1")
-    );
+    return isUpdateRuntimeSupported({
+      platform: process.platform,
+      arch: process.arch,
+      isPackaged: app.isPackaged,
+      appImagePath: process.env.APPIMAGE,
+      enableDevUpdates: process.env.HBCLIENT_ENABLE_DEV_UPDATES === "1",
+    });
   }
 
   private setState(patch: Partial<HBClientUpdateState>): void {
     this.state = { ...this.state, ...patch, currentVersion: app.getVersion() };
     this.options.emitState(this.getState());
   }
+}
+
+export function updatePlatform(platform: NodeJS.Platform, arch: string): HBClientUpdatePlatform | undefined {
+  if (arch !== "x64") {
+    return undefined;
+  }
+  if (platform === "win32" || platform === "linux") {
+    return `${platform}-${arch}`;
+  }
+  return undefined;
+}
+
+export function isUpdateRuntimeSupported(options: {
+  platform: NodeJS.Platform;
+  arch: string;
+  isPackaged: boolean;
+  appImagePath?: string;
+  enableDevUpdates: boolean;
+}): boolean {
+  const platform = updatePlatform(options.platform, options.arch);
+  if (!platform) {
+    return false;
+  }
+  if (options.enableDevUpdates) {
+    return true;
+  }
+  if (!options.isPackaged) {
+    return false;
+  }
+  return platform === "win32-x64" || Boolean(options.appImagePath);
+}
+
+function requireUpdatePlatform(): HBClientUpdatePlatform {
+  const platform = updatePlatform(process.platform, process.arch);
+  if (!platform) {
+    throw new Error(`HBClient updates are not supported on ${process.platform}-${process.arch}.`);
+  }
+  return platform;
 }
 
 export function requireHttpsUpdateFeedUrl(value: string): string {

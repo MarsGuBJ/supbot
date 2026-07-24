@@ -21,13 +21,16 @@ Windows installer:
 npm run dist:win
 ```
 
-Linux npm package:
+Linux x64 AppImage (supports in-app differential updates):
 
 ```powershell
-npm run pack:linux
+npm run dist:linux
+npm run verify:linux-release
 ```
 
-The desktop package exposes the `supbot` bin after global npm installation.
+An optional Debian package can be built with `npm run dist:linux:deb`, but the
+`.deb` package is not self-updating. Use the AppImage for the managed update
+channel.
 
 ## Local tool commands
 
@@ -64,3 +67,10 @@ The first production target is a local, single-user Windows desktop app. Use
 `npm run verify:release` before publishing a Windows installer and follow
 [docs/production-windows.md](docs/production-windows.md) for the release,
 upgrade, rollback, data, and security checklist.
+
+## Linux production release
+
+Use `npm run verify:release:linux` on Linux x64 and follow
+[docs/production-linux.md](docs/production-linux.md). The generated AppImage,
+`latest-linux.yml`, and the AppImage's embedded block map form one release set;
+publish them from the same build.

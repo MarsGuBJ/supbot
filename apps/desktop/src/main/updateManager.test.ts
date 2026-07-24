@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const updaterMock = vi.hoisted(() => {
   const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
@@ -38,7 +38,7 @@ vi.mock("electron", () => ({
 
 vi.mock("electron-updater", () => ({ autoUpdater: updaterMock }));
 
-import { HBClientUpdateManager } from "./updateManager";
+import { HBClientUpdateManager, isUpdateRuntimeSupported, updatePlatform } from "./updateManager";
 
 describe("HBClientUpdateManager", () => {
   beforeEach(() => {
@@ -50,6 +50,11 @@ describe("HBClientUpdateManager", () => {
     updaterMock.disableDifferentialDownload = true;
     updaterMock.requestHeaders = {};
     delete process.env.HBCLIENT_UPDATE_FEED_URL;
+    process.env.HBCLIENT_ENABLE_DEV_UPDATES = "1";
+  });
+
+  afterEach(() => {
+    delete process.env.HBCLIENT_ENABLE_DEV_UPDATES;
   });
 
   it("checks, downloads, reports progress, and installs an available release", async () => {
@@ -79,7 +84,7 @@ describe("HBClientUpdateManager", () => {
     });
     expect(updaterMock.setFeedURL).toHaveBeenCalledWith({
       provider: "generic",
-      url: "https://botstation.example/api/v1/hbclient/updates/stable/win32-x64",
+      url: `https://botstation.example/api/v1/hbclient/updates/stable/${updatePlatform(process.platform, process.arch)}`,
       useMultipleRangeRequest: false,
     });
     expect(updaterMock.requestHeaders).toEqual({ Authorization: "Bearer token-1" });
@@ -162,5 +167,40 @@ describe("HBClientUpdateManager", () => {
     await expect(manager.check(false)).resolves.toMatchObject({ status: "idle", error: undefined });
     await expect(manager.check(true)).rejects.toThrow("offline");
     expect(manager.getState()).toMatchObject({ status: "error", error: "offline" });
+  });
+
+  it("uses a distinct Linux x64 update channel", () => {
+    expect(updatePlatform("win32", "x64")).toBe("win32-x64");
+    expect(updatePlatform("linux", "x64")).toBe("linux-x64");
+    expect(updatePlatform("linux", "arm64")).toBeUndefined();
+    expect(updatePlatform("darwin", "x64")).toBeUndefined();
+  });
+
+  it("enables packaged Linux updates only for AppImage installs", () => {
+    expect(
+      isUpdateRuntimeSupported({
+        platform: "linux",
+        arch: "x64",
+        isPackaged: true,
+        appImagePath: "/home/user/Applications/HBClient.AppImage",
+        enableDevUpdates: false,
+      }),
+    ).toBe(true);
+    expect(
+      isUpdateRuntimeSupported({
+        platform: "linux",
+        arch: "x64",
+        isPackaged: true,
+        enableDevUpdates: false,
+      }),
+    ).toBe(false);
+    expect(
+      isUpdateRuntimeSupported({
+        platform: "win32",
+        arch: "x64",
+        isPackaged: true,
+        enableDevUpdates: false,
+      }),
+    ).toBe(true);
   });
 });

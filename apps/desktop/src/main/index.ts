@@ -80,7 +80,7 @@ const defaultBotstationPassword = "dev-user";
 const allowedDevServerOrigin = "http://127.0.0.1:5173";
 const productionCsp =
   "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'none'";
-const appIconPath = join(__dirname, "../../build/icon.ico");
+const appIconPath = join(__dirname, `../../build/icon.${process.platform === "linux" ? "png" : "ico"}`);
 let productionCspInstalled = false;
 
 app.setName(appDisplayName);
