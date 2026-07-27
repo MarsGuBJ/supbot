@@ -192,7 +192,7 @@ function App() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [sending, setSending] = useState(false);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
-  const [rightCollapsed, setRightCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(true);
   const [subagentOpen, setSubagentOpen] = useState(false);
   const [editingSubagent, setEditingSubagent] = useState<SubagentConfig | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
