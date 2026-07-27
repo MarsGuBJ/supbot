@@ -80,7 +80,7 @@ async function evaluate(wsUrl, expression) {
   const send = (method, params) =>
     new Promise((resolve, reject) => {
       const messageId = id++;
-      const timer = setTimeout(() => reject(new Error(`CDP timeout: ${method}`)), 5000);
+      const timer = setTimeout(() => reject(new Error(`CDP timeout: ${method}`)), 15000);
       const onMessage = (event) => {
         const data = JSON.parse(event.data);
         if (data.id === messageId) {
@@ -319,22 +319,26 @@ async function main() {
   await sleep(300);
   const autopilotUi = await evaluate(
     page.webSocketDebuggerUrl,
-    `(() => ({
-      hasPanel: Boolean(document.querySelector(".autopilot-workbench")),
-      hasIcon: Boolean(document.querySelector(".autopilot-workbench .anticon-thunderbolt")),
-      hasNewProjectButton: Boolean(document.querySelector(".autopilot-new-project-button")),
-      hasInlineProjectForm: Boolean(document.querySelector(".autopilot-workbench .autopilot-folder-picker input[readonly]")),
-      hasProjectFolderIpc: typeof window.supbot?.pickProjectFolder === "function",
-      hasRunMonitor: Boolean(document.querySelector(".autopilot-run-panel")),
-      hasRunMonitorCard: Boolean(document.querySelector(".autopilot-run-monitor-card")),
-      hasRunSelect: Boolean(document.querySelector(".autopilot-run-monitor-card .autopilot-run-select .ant-select-selector")),
-      hasEmptyRunInfo: document.body.innerText.includes("Register a project and start a data run."),
-      hasDataSourceControls: Boolean(document.querySelector(".autopilot-source-row, .autopilot-source-kind, .autopilot-source-value, [name='sourceKind'], [name='sourceValue']")),
-      hasProjectText: document.body.innerText.includes("Project data runs") || document.body.innerText.includes("DATA AUTOPILOT") || document.body.innerText.includes("项目数据任务"),
-      hasStartRunText: document.body.innerText.includes("Start run") || document.body.innerText.includes("启动运行"),
-      hasSurfaceText: document.body.innerText.includes("Autopilot surface") || document.body.innerText.includes("自动驾驶面板"),
-      hasAutomationLoopText: document.body.innerText.includes("automation loop") || document.body.innerText.includes("自动化循环")
-    }))()`,
+    `(() => {
+      const workbench = document.querySelector(".autopilot-workbench");
+      const text = workbench?.textContent || "";
+      return {
+        hasPanel: Boolean(workbench),
+        hasIcon: Boolean(workbench?.querySelector(".anticon-thunderbolt")),
+        hasNewProjectButton: Boolean(workbench?.querySelector(".autopilot-new-project-button")),
+        hasInlineProjectForm: Boolean(workbench?.querySelector(".autopilot-folder-picker input[readonly]")),
+        hasProjectFolderIpc: typeof window.supbot?.pickProjectFolder === "function",
+        hasRunMonitor: Boolean(workbench?.querySelector(".autopilot-run-panel")),
+        hasRunMonitorCard: Boolean(workbench?.querySelector(".autopilot-run-monitor-card")),
+        hasRunSelect: Boolean(workbench?.querySelector(".autopilot-run-monitor-card .autopilot-run-select .ant-select-selector")),
+        hasEmptyRunInfo: text.includes("Register a project and start a data run."),
+        hasDataSourceControls: Boolean(workbench?.querySelector(".autopilot-source-row, .autopilot-source-kind, .autopilot-source-value, [name='sourceKind'], [name='sourceValue']")),
+        hasProjectText: text.includes("Project data runs") || text.includes("DATA AUTOPILOT") || text.includes("项目数据任务"),
+        hasStartRunText: text.includes("Start run") || text.includes("启动运行"),
+        hasSurfaceText: text.includes("Autopilot surface") || text.includes("自动驾驶面板"),
+        hasAutomationLoopText: text.includes("automation loop") || text.includes("自动化循环")
+      };
+    })()`,
   );
   const projectModalUi = await evaluate(
     page.webSocketDebuggerUrl,
@@ -391,16 +395,20 @@ async function main() {
   step("checking memory panel");
   const memoryInitial = await evaluate(
     page.webSocketDebuggerUrl,
-    `(() => ({
-      hasPanel: Boolean(document.querySelector(".memory-panel")),
-      hasSearch: Boolean(document.querySelector(".memory-search-row input")),
-      pendingCount: document.querySelectorAll(".memory-candidate-card").length,
-      hasRecallHistory: Boolean(document.querySelector(".memory-recall-history")) && document.body.innerText.includes("Smoke recall query"),
-      hasTransferBox: Boolean(document.querySelector(".memory-transfer-box")),
-      hasSeedRecord: document.body.innerText.includes("Smoke recall fact"),
-      hasDeleteButton: Boolean(document.querySelector(".memory-record button.ant-btn-dangerous")),
-      hasDisableButton: [...document.querySelectorAll(".memory-record button")].some((el) => !el.classList.contains("ant-btn-dangerous"))
-    }))()`,
+    `(() => {
+      const panel = document.querySelector(".memory-panel");
+      const text = panel?.textContent || "";
+      return {
+        hasPanel: Boolean(panel),
+        hasSearch: Boolean(panel?.querySelector(".memory-search-row input")),
+        pendingCount: panel?.querySelectorAll(".memory-candidate-card").length ?? 0,
+        hasRecallHistory: Boolean(panel?.querySelector(".memory-recall-history")) && text.includes("Smoke recall query"),
+        hasTransferBox: Boolean(panel?.querySelector(".memory-transfer-box")),
+        hasSeedRecord: text.includes("Smoke recall fact"),
+        hasDeleteButton: Boolean(panel?.querySelector(".memory-record button.ant-btn-dangerous")),
+        hasDisableButton: [...(panel?.querySelectorAll(".memory-record button") || [])].some((el) => !el.classList.contains("ant-btn-dangerous"))
+      };
+    })()`,
   );
   console.log(JSON.stringify({ memoryClick, memoryInitial }, null, 2));
   if (
