@@ -67,6 +67,7 @@ import {
   defaultServstationUser,
 } from "@supbot/shared";
 import { HBClientUpdateManager } from "./updateManager";
+import { removeOidcLoginWindowListeners } from "./oidcLoginWindowLifecycle";
 
 let mainWindow: BrowserWindow | null = null;
 let runtime: SupbotRuntime | null = null;
@@ -574,11 +575,13 @@ function openOidcLoginWindow(
       }
     };
     const cleanup = (): void => {
-      authWindow.webContents.off("will-redirect", onWillRedirect);
-      authWindow.webContents.off("will-navigate", onWillNavigate);
-      authWindow.webContents.off("did-navigate", onDidNavigate);
-      authWindow.webContents.off("did-finish-load", onDidFinishLoad);
-      authWindow.off("closed", onClosed);
+      removeOidcLoginWindowListeners(authWindow, {
+        onWillRedirect,
+        onWillNavigate,
+        onDidNavigate,
+        onDidFinishLoad,
+        onClosed,
+      });
     };
     authWindow.webContents.on("will-redirect", onWillRedirect);
     authWindow.webContents.on("will-navigate", onWillNavigate);
