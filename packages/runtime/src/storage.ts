@@ -618,6 +618,7 @@ function normalizeProject(project: Project): Project | undefined {
     rootPath: project.rootPath,
     metadataPath: typeof project.metadataPath === "string" ? project.metadataPath : "",
     status: project.status === "archived" || project.status === "error" ? project.status : "active",
+    pinnedAt: typeof project.pinnedAt === "string" && project.pinnedAt ? project.pinnedAt : undefined,
     createdAt: typeof project.createdAt === "string" ? project.createdAt : now,
     updatedAt: typeof project.updatedAt === "string" ? project.updatedAt : now,
     lastRunAt: typeof project.lastRunAt === "string" ? project.lastRunAt : undefined,

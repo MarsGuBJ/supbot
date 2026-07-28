@@ -1847,6 +1847,85 @@ describe("SupbotRuntime", () => {
     expect(reused.rootPath).toBe(project.rootPath);
   });
 
+  test("persists project pinning and orders pinned projects first", async () => {
+    const { runtime, dataDir, rootDir } = await createRuntimeWithPaths();
+    const first = await runtime.createProjectFromName({ name: "First Project" });
+    const second = await runtime.createProjectFromName({ name: "Second Project" });
+
+    expect(runtime.snapshot().projects.map((project) => project.id)).toEqual([second.id, first.id]);
+    const pinned = await runtime.updateProject(first.id, { pinned: true });
+    expect(pinned.pinnedAt).toBeTruthy();
+    expect(JSON.parse(await readFile(first.metadataPath, "utf8")).pinnedAt).toBe(pinned.pinnedAt);
+    expect(runtime.snapshot().projects.map((project) => project.id)).toEqual([first.id, second.id]);
+    await runtime.shutdown();
+
+    const reloaded = new SupbotRuntime(new JsonFileStorage(dataDir), { rootDir });
+    await reloaded.init();
+    expect(reloaded.snapshot().projects.map((project) => project.id)).toEqual([first.id, second.id]);
+    expect(reloaded.snapshot().projects[0].pinnedAt).toBe(pinned.pinnedAt);
+
+    await reloaded.updateProject(first.id, { pinned: false });
+    expect(reloaded.snapshot().projects.map((project) => project.id)).toEqual([second.id, first.id]);
+    expect(reloaded.snapshot().projects.find((project) => project.id === first.id)?.pinnedAt).toBeUndefined();
+    await reloaded.shutdown();
+  });
+
+  test("removes project runtime data while preserving the project folder", async () => {
+    const { runtime, dataDir } = await createRuntimeWithPaths();
+    const projectDir = await mkdtemp(join(tmpdir(), "supbot-remove-project-"));
+    tempDirs.push(projectDir);
+    const markerPath = join(projectDir, "keep-me.txt");
+    await writeFile(markerPath, "preserved\n", "utf8");
+    const project = await runtime.createProjectFromFolder({ rootPath: projectDir, name: "Removable Project" });
+    const otherProject = await runtime.createProjectFromName({ name: "Other Project" });
+    const unfiled = await runtime.createConversation("Unfiled conversation");
+    const projectConversation = await runtime.createConversation({
+      title: "Project conversation",
+      projectId: project.id,
+    });
+    const transcriptStore = new TranscriptStore(dataDir);
+    await transcriptStore.append(projectConversation.id, {
+      type: "message",
+      message: {
+        id: "msg_remove_project",
+        conversationId: projectConversation.id,
+        role: "user",
+        text: "Project history",
+        createdAt: new Date().toISOString(),
+      },
+    });
+    await runtime.createScheduledJob({
+      projectId: project.id,
+      title: "Future project job",
+      prompt: "Run later",
+      scheduleKind: "once",
+      runAt: new Date(Date.now() + 60_000).toISOString(),
+      enabled: true,
+    });
+    const run = await runtime.startDataRun({ projectId: project.id, goal: "Prepare a project report" });
+
+    await runtime.removeProject(project.id);
+    await waitForCondition("removed project activity cleanup", () => runtime.snapshot().status === "ready");
+
+    const snapshot = runtime.snapshot();
+    expect(snapshot.projects.map((item) => item.id)).toEqual([otherProject.id]);
+    expect(snapshot.conversations.map((item) => item.id)).toEqual([unfiled.id]);
+    expect(snapshot.activeConversationId).toBe(unfiled.id);
+    expect(snapshot.scheduledJobs.some((job) => job.projectId === project.id)).toBe(false);
+    expect(snapshot.autopilotRuns.some((item) => item.id === run.id)).toBe(false);
+    expect(snapshot.autopilotTasks.some((item) => item.projectId === project.id)).toBe(false);
+    expect(snapshot.autopilotEvents.some((item) => item.projectId === project.id)).toBe(false);
+    expect(snapshot.autopilotCheckpoints.some((item) => item.projectId === project.id)).toBe(false);
+    expect(snapshot.dataArtifacts.some((item) => item.projectId === project.id)).toBe(false);
+    expect(await transcriptStore.load(projectConversation.id)).toEqual([]);
+    expect(await readFile(markerPath, "utf8")).toBe("preserved\n");
+    expect(await stat(project.metadataPath)).toBeTruthy();
+
+    const registeredAgain = await runtime.createProjectFromFolder({ rootPath: projectDir });
+    expect(registeredAgain.id).toBe(project.id);
+    expect(runtime.snapshot().conversations.some((item) => item.id === projectConversation.id)).toBe(false);
+  });
+
   test("avoids occupied project folders and rejects invalid project names", async () => {
     const { runtime, dataDir } = await createRuntimeWithPaths();
     await mkdir(join(dataDir, "projects", "occupied"), { recursive: true });
@@ -1954,8 +2033,17 @@ describe("SupbotRuntime", () => {
     const projectDir = await mkdtemp(join(tmpdir(), "supbot-archived-project-"));
     tempDirs.push(projectDir);
     const project = await runtime.createProjectFromFolder({ rootPath: projectDir, name: "Archived Project" });
+    const renamed = await runtime.updateProject(project.id, { name: "Renamed Project" });
+    expect(renamed.name).toBe("Renamed Project");
+    expect(await readFile(project.metadataPath, "utf8")).toContain("Renamed Project");
+
     await runtime.updateProject(project.id, { status: "archived" });
     await expect(runtime.createConversation({ projectId: project.id })).rejects.toThrow("Project is archived");
+
+    await runtime.updateProject(project.id, { status: "active" });
+    await expect(runtime.createConversation({ projectId: project.id })).resolves.toMatchObject({
+      projectId: project.id,
+    });
   });
 
   test("loads legacy unfiled conversations and continues them without a project", async () => {

@@ -243,7 +243,11 @@ function App() {
   };
 
   const applySnapshot = useCallback((next: RuntimeSnapshot) => {
-    const selectedId = activeConversationIdRef.current || next.activeConversationId || next.conversations[0]?.id || "";
+    const requestedId = activeConversationIdRef.current;
+    const selectedId =
+      (requestedId && next.conversations.some((conversation) => conversation.id === requestedId)
+        ? requestedId
+        : next.activeConversationId || next.conversations[0]?.id) || "";
     activeConversationIdRef.current = selectedId;
     setSnapshot((current) => mergeRuntimeSnapshot(current, next, selectedId));
     setActiveConversationId(selectedId);

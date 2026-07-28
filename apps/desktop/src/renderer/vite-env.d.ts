@@ -134,6 +134,7 @@ declare global {
       createProjectFromFolder(input: ProjectCreateInput): Promise<Project>;
       createProjectFromName(input: ProjectCreateFromNameInput): Promise<Project>;
       listProjects(): Promise<Project[]>;
+      removeProject(id: string): Promise<void>;
       pickProjectFolder(): Promise<string>;
       openProject(id: string): Promise<Project>;
       updateProject(id: string, input: ProjectUpdateInput): Promise<Project>;

@@ -1624,6 +1624,7 @@ export interface Project {
   rootPath: string;
   metadataPath: string;
   status: ProjectStatus;
+  pinnedAt?: string;
   createdAt: string;
   updatedAt: string;
   lastRunAt?: string;
@@ -1642,6 +1643,7 @@ export interface ProjectCreateFromNameInput {
 export interface ProjectUpdateInput {
   name?: string;
   status?: ProjectStatus;
+  pinned?: boolean;
 }
 
 export type DataSourceKind = "localFiles" | "folderScan" | "httpApi" | "webUrl" | "mcpTool" | "shellCommand";

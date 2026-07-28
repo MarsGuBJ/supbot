@@ -30,6 +30,7 @@ export class ProjectManager {
       rootPath,
       metadataPath,
       status: current?.status || "active",
+      pinnedAt: current?.pinnedAt,
       createdAt: current?.createdAt || now,
       updatedAt: now,
       lastRunAt: current?.lastRunAt,
@@ -42,11 +43,13 @@ export class ProjectManager {
   }
 
   async update(project: Project, input: ProjectUpdateInput): Promise<Project> {
+    const now = this.host.nowIso();
     const next: Project = {
       ...project,
       name: input.name?.trim() || project.name,
       status: input.status || project.status,
-      updatedAt: this.host.nowIso(),
+      pinnedAt: input.pinned === undefined ? project.pinnedAt : input.pinned ? now : undefined,
+      updatedAt: now,
     };
     await this.writeProjectMetadata(next);
     return next;

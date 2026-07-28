@@ -74,6 +74,7 @@ const api = {
   createProjectFromFolder: (input: ProjectCreateInput) => ipcRenderer.invoke("project:createFromFolder", input),
   createProjectFromName: (input: ProjectCreateFromNameInput) => ipcRenderer.invoke("project:createFromName", input),
   listProjects: () => ipcRenderer.invoke("project:list"),
+  removeProject: (id: string) => ipcRenderer.invoke("project:remove", id),
   pickProjectFolder: () => ipcRenderer.invoke("project:pickFolder"),
   openProject: (id: string) => ipcRenderer.invoke("project:open", id),
   updateProject: (id: string, input: ProjectUpdateInput) => ipcRenderer.invoke("project:update", id, input),

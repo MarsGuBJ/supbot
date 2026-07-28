@@ -875,6 +875,9 @@ function registerIpc(): void {
     getRuntime().createProjectFromName(validateProjectCreateFromNameInput(input)),
   );
   ipcMain.handle("project:list", () => getRuntime().listProjects());
+  ipcMain.handle("project:remove", (_event, id: string) =>
+    getRuntime().removeProject(requiredString(id, "project id")),
+  );
   ipcMain.handle("project:pickFolder", async () => {
     const result = await dialog.showOpenDialog(mainWindow!, {
       properties: ["openDirectory", "createDirectory"],
@@ -1351,6 +1354,7 @@ function validateProjectUpdateInput(input: ProjectUpdateInput): ProjectUpdateInp
   return {
     name: optionalString(value.name, "project name"),
     status: optionalEnum(value.status, ["active", "archived", "error"], "project status"),
+    pinned: optionalBoolean(value.pinned, "project pinned"),
   };
 }
 

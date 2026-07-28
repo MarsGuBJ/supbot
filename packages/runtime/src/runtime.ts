@@ -368,7 +368,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       })),
       jobs: this.state.jobs,
       scheduledJobs: this.state.scheduledJobs,
-      projects: this.state.projects,
+      projects: orderedProjects(this.state.projects),
       autopilotRuns: this.state.autopilotRuns,
       autopilotTasks: this.state.autopilotTasks,
       autopilotEvents: this.state.autopilotEvents,
@@ -416,40 +416,12 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
 
   async deleteConversation(id: string): Promise<void> {
     this.assertLoaded();
-    const jobsToDelete = this.state.jobs.filter((item) => item.conversationId === id);
-    const jobIds = new Set(jobsToDelete.map((item) => item.id));
-    const belongsToDeletedJob = (jobId?: string): boolean => {
-      if (!jobId) {
-        return false;
-      }
-      if (jobIds.has(jobId)) {
-        return true;
-      }
-      return [...jobIds].some((rootJobId) => jobId.startsWith(`${rootJobId}:`));
-    };
-    const belongsToDeletedConversation = (item: { conversationId?: string; jobId?: string }): boolean =>
-      item.conversationId === id || belongsToDeletedJob(item.jobId);
-
-    for (const job of jobsToDelete) {
-      this.runningJobs.get(job.id)?.controller.abort();
-      this.resolveJobPermissions(job.id, "denied");
-    }
-
-    this.state.conversations = this.state.conversations.filter((item) => item.id !== id);
-    this.state.jobs = this.state.jobs.filter((item) => !belongsToDeletedConversation(item));
-    this.state.pendingToolPermissions = this.state.pendingToolPermissions.filter(
-      (item) => !belongsToDeletedConversation(item),
+    const conversationIds = new Set([id]);
+    const jobIds = new Set(
+      this.state.jobs.filter((item) => conversationIds.has(item.conversationId)).map((item) => item.id),
     );
-    this.state.agentLoopTraces = this.state.agentLoopTraces.filter((item) => !belongsToDeletedConversation(item));
-    this.state.querySessions = this.state.querySessions.filter((item) => !belongsToDeletedConversation(item));
-    this.state.runtimeEvents = this.state.runtimeEvents.filter((item) => !belongsToDeletedConversation(item));
-    this.state.worktrees = this.state.worktrees.filter((item) => !belongsToDeletedConversation(item));
-    this.state.compactBoundaries = this.state.compactBoundaries.filter((item) => item.conversationId !== id);
-    if (this.activeConversationId === id) {
-      this.activeConversationId = this.state.conversations[0]?.id;
-    }
+    this.removeConversationRecords(conversationIds, jobIds);
     await new TranscriptStore(this.storage.getDataDir()).delete(id).catch(() => undefined);
-    this.worktreeManager.setWorktrees(this.state.worktrees);
     await this.persistAndBroadcast();
   }
 
@@ -493,7 +465,46 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
 
   listProjects(): Project[] {
     this.assertLoaded();
-    return [...this.state.projects];
+    return orderedProjects(this.state.projects);
+  }
+
+  async removeProject(id: string): Promise<void> {
+    this.assertLoaded();
+    this.requireProject(id);
+
+    const conversationIds = new Set(
+      this.state.conversations
+        .filter((conversation) => conversation.projectId === id)
+        .map((conversation) => conversation.id),
+    );
+    const runIds = new Set(this.state.autopilotRuns.filter((run) => run.projectId === id).map((run) => run.id));
+    const executionIds = new Set([
+      ...this.state.jobs
+        .filter((job) => job.projectId === id || conversationIds.has(job.conversationId))
+        .map((job) => job.id),
+      ...runIds,
+    ]);
+    const relatedConversationIds = new Set([...conversationIds, ...[...runIds].map((runId) => `autopilot_${runId}`)]);
+
+    for (const runId of runIds) {
+      this.runningAutopilotRuns.get(runId)?.controller.abort();
+    }
+    this.removeConversationRecords(relatedConversationIds, executionIds);
+    this.state.projects = this.state.projects.filter((project) => project.id !== id);
+    this.state.scheduledJobs = this.state.scheduledJobs.filter((job) => job.projectId !== id);
+    this.state.autopilotRuns = this.state.autopilotRuns.filter((run) => run.projectId !== id);
+    this.state.autopilotTasks = this.state.autopilotTasks.filter((task) => task.projectId !== id);
+    this.state.autopilotEvents = this.state.autopilotEvents.filter((event) => event.projectId !== id);
+    this.state.autopilotCheckpoints = this.state.autopilotCheckpoints.filter(
+      (checkpoint) => checkpoint.projectId !== id,
+    );
+    this.state.dataArtifacts = this.state.dataArtifacts.filter((artifact) => artifact.projectId !== id);
+
+    const transcriptStore = new TranscriptStore(this.storage.getDataDir());
+    await Promise.all(
+      [...conversationIds].map((conversationId) => transcriptStore.delete(conversationId).catch(() => undefined)),
+    );
+    await this.persistAndBroadcast();
   }
 
   openProject(id: string): Project {
@@ -1851,6 +1862,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     }
     const controller = new AbortController();
     this.runningJobs.set(jobId, { controller });
+    const jobStillExists = () => Boolean(this.findJob(jobId) && this.findConversation(job.conversationId));
     this.updateJob(jobId, "running", "Preparing model request");
     await this.persistAndBroadcast();
 
@@ -1878,6 +1890,9 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       this.appendMessage(conversation.id, assistantSeed);
       this.emitTyped({ type: "message", conversationId: conversation.id, message: assistantSeed });
       const localTool = await this.executeLocalTool(job, controller.signal);
+      if (!jobStillExists()) {
+        return;
+      }
       if (localTool) {
         const trace = this.state.agentLoopTraces.find((item) => item.jobId === jobId);
         const finalMessage: ChatMessage = {
@@ -1919,15 +1934,24 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         signal: controller.signal,
         requestPermission: (permission) => this.requestToolPermission(permission),
         onSession: (session) => {
+          if (!jobStillExists()) {
+            return;
+          }
           this.upsertQuerySession(session);
           this.schedulePersistAndBroadcast();
         },
         onRuntimeEvent: (event) => {
+          if (!jobStillExists()) {
+            return;
+          }
           this.addRuntimeEvent(event);
           this.schedulePersistAndBroadcast();
           this.emitTyped({ type: "query_event", event });
         },
         onMessageDelta: (delta) => {
+          if (!jobStillExists()) {
+            return;
+          }
           this.appendAssistantDelta(conversation.id, assistantSeed.id, delta);
           this.emitTyped({
             type: "message_delta",
@@ -1937,16 +1961,25 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
           });
         },
         onTrace: (trace) => {
+          if (!jobStillExists()) {
+            return;
+          }
           this.upsertTrace(trace);
           this.schedulePersistAndBroadcast();
         },
         onToolProgress: (toolCall) => {
+          if (!jobStillExists()) {
+            return;
+          }
           this.upsertToolCall(jobId, toolCall);
           this.updateJob(jobId, this.findJob(jobId)?.status || "running", `${toolCall.toolName}: ${toolCall.status}`);
           this.schedulePersistAndBroadcast();
           this.emitTyped({ type: "tool_progress", toolCall });
         },
         onCompact: (boundary) => {
+          if (!jobStillExists()) {
+            return;
+          }
           this.upsertCompactBoundary(boundary);
           this.schedulePersistAndBroadcast();
           this.emitTyped({ type: "compact", boundary });
@@ -1966,6 +1999,9 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         },
       });
       const response = await engine.submitTurn();
+      if (!jobStillExists()) {
+        return;
+      }
       const finalMessage: ChatMessage = {
         ...assistantSeed,
         text: response.text,
@@ -1993,6 +2029,9 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       await this.persistAndBroadcast();
       this.emitTyped({ type: "message", conversationId: conversation.id, message: finalMessage });
     } catch (error) {
+      if (!jobStillExists()) {
+        return;
+      }
       const status: JobStatus = controller.signal.aborted ? "canceled" : "failed";
       const message = controller.signal.aborted ? "Canceled by user" : (error as Error).message;
       this.updateAssistantMessageForJob(job.conversationId, jobId, status, message);
@@ -2093,7 +2132,10 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         await this.persistAndBroadcast();
       }
     } catch (error) {
-      const current = this.requireAutopilotRun(runId);
+      const current = this.state.autopilotRuns.find((item) => item.id === runId);
+      if (!current) {
+        return;
+      }
       if (controller.signal.aborted && (current.status === "paused" || current.status === "canceled")) {
         return;
       }
@@ -2295,6 +2337,13 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
 
       try {
         const result = await this.runAutopilotTaskEngine(project, activeRun, currentTask, signal);
+        if (
+          signal.aborted ||
+          !this.state.autopilotRuns.some((item) => item.id === run.id) ||
+          !this.state.autopilotTasks.some((item) => item.id === currentTask.id)
+        ) {
+          return;
+        }
         const artifacts = await this.artifactsFromGeneratedFiles(
           project,
           activeRun,
@@ -2374,6 +2423,9 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     task: AutopilotTask,
     signal: AbortSignal,
   ): Promise<{ text: string; generatedFiles: GeneratedFile[] }> {
+    const autopilotStillExists = () =>
+      this.state.autopilotRuns.some((item) => item.id === run.id) &&
+      this.state.autopilotTasks.some((item) => item.id === task.id);
     const staff = this.resolveStaffSubagent(task.staffAgent);
     const modelProvider = this.ensureActiveModelProvider();
     const query = new QueryEngine({
@@ -2409,10 +2461,16 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       maxTurns: 8,
       requestPermission: (permission) => this.requestToolPermission(permission),
       onSession: async (session) => {
+        if (!autopilotStillExists()) {
+          return;
+        }
         this.upsertQuerySession(session);
         await this.persistAndBroadcast();
       },
       onRuntimeEvent: async (event) => {
+        if (!autopilotStillExists()) {
+          return;
+        }
         this.addRuntimeEvent(event);
         await this.addAutopilotEvent(run, "info", event.message, { taskId: task.id, runtimeEvent: event });
         await this.persistAndBroadcast();
@@ -2420,15 +2478,24 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       },
       onMessageDelta: () => undefined,
       onTrace: async (trace) => {
+        if (!autopilotStillExists()) {
+          return;
+        }
         this.upsertTrace(trace);
         await this.persistAndBroadcast();
       },
       onToolProgress: async (toolCall) => {
+        if (!autopilotStillExists()) {
+          return;
+        }
         this.upsertToolCall(toolCall.jobId, toolCall);
         await this.persistAndBroadcast();
         this.emitTyped({ type: "tool_progress", toolCall });
       },
       onCompact: async (boundary) => {
+        if (!autopilotStillExists()) {
+          return;
+        }
         this.upsertCompactBoundary(boundary);
         await this.persistAndBroadcast();
         this.emitTyped({ type: "compact", boundary });
@@ -2449,6 +2516,44 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     });
     const result = await query.submitTurn();
     return { text: result.text, generatedFiles: result.generatedFiles };
+  }
+
+  private removeConversationRecords(conversationIds: Set<string>, executionIds: Set<string>): void {
+    const belongsToRemovedExecution = (jobId?: string): boolean => {
+      if (!jobId) {
+        return false;
+      }
+      for (const executionId of executionIds) {
+        if (jobId === executionId || jobId.startsWith(`${executionId}:`)) {
+          return true;
+        }
+      }
+      return false;
+    };
+    const belongsToRemovedConversation = (item: { conversationId?: string; jobId?: string }): boolean =>
+      Boolean(item.conversationId && conversationIds.has(item.conversationId)) || belongsToRemovedExecution(item.jobId);
+
+    for (const executionId of executionIds) {
+      this.runningJobs.get(executionId)?.controller.abort();
+      this.resolveJobPermissions(executionId, "denied");
+    }
+
+    this.state.conversations = this.state.conversations.filter((item) => !conversationIds.has(item.id));
+    this.state.jobs = this.state.jobs.filter((item) => !belongsToRemovedConversation(item));
+    this.state.pendingToolPermissions = this.state.pendingToolPermissions.filter(
+      (item) => !belongsToRemovedConversation(item),
+    );
+    this.state.agentLoopTraces = this.state.agentLoopTraces.filter((item) => !belongsToRemovedConversation(item));
+    this.state.querySessions = this.state.querySessions.filter((item) => !belongsToRemovedConversation(item));
+    this.state.runtimeEvents = this.state.runtimeEvents.filter((item) => !belongsToRemovedConversation(item));
+    this.state.worktrees = this.state.worktrees.filter((item) => !belongsToRemovedConversation(item));
+    this.state.compactBoundaries = this.state.compactBoundaries.filter(
+      (item) => !conversationIds.has(item.conversationId),
+    );
+    if (this.activeConversationId && conversationIds.has(this.activeConversationId)) {
+      this.activeConversationId = this.state.conversations[0]?.id;
+    }
+    this.worktreeManager.setWorktrees(this.state.worktrees);
   }
 
   private appendMessage(conversationId: string, message: ChatMessage): void {
@@ -4340,6 +4445,24 @@ export function resolveMentionedSubagent(prompt: string, subagents: SubagentConf
 function titleFromPrompt(prompt: string): string {
   const clean = prompt.trim().replace(/\s+/g, " ");
   return clean ? clean.slice(0, 60) : "New conversation";
+}
+
+function orderedProjects(projects: Project[]): Project[] {
+  return projects
+    .map((project, index) => ({ project, index }))
+    .sort((left, right) => {
+      if (left.project.pinnedAt && right.project.pinnedAt) {
+        return right.project.pinnedAt.localeCompare(left.project.pinnedAt) || left.index - right.index;
+      }
+      if (left.project.pinnedAt) {
+        return -1;
+      }
+      if (right.project.pinnedAt) {
+        return 1;
+      }
+      return left.index - right.index;
+    })
+    .map(({ project }) => project);
 }
 
 function safeProjectSlug(value: string): string {

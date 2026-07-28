@@ -315,6 +315,84 @@ async function main() {
   ) {
     throw new Error(`Renderer IPC security checks failed: ${JSON.stringify(securityIpc)}`);
   }
+  const smokeProject = await evaluate(
+    page.webSocketDebuggerUrl,
+    `window.supbot.createProjectFromName({ name: "Smoke project actions" }).then((project) => ({ id: project.id, name: project.name, rootPath: project.rootPath }))`,
+  );
+  await sleep(400);
+  const projectActionsUi = await evaluate(
+    page.webSocketDebuggerUrl,
+    `(async () => {
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const projectId = ${JSON.stringify(smokeProject?.id)};
+      const actionButtons = [...document.querySelectorAll('[data-testid^="project-actions-"]')];
+      const actionButton = document.querySelector('[data-testid="project-actions-' + projectId + '"]');
+      actionButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      await sleep(180);
+      const visibleDropdown = () => [...document.querySelectorAll(".ant-dropdown")]
+        .filter((element) => !element.classList.contains("ant-dropdown-hidden") && getComputedStyle(element).display !== "none")
+        .at(-1);
+      const firstDropdown = visibleDropdown();
+      const firstText = firstDropdown?.textContent || "";
+      const editItem = [...(firstDropdown?.querySelectorAll(".ant-dropdown-menu-item") || [])]
+        .find((element) => element.textContent?.includes("编辑项目") || element.textContent?.includes("Edit project"));
+      editItem?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      await sleep(180);
+      const editModal = [...document.querySelectorAll(".ant-modal")].at(-1);
+      const editInputs = [...(editModal?.querySelectorAll("input") || [])];
+      const editState = {
+        hasModal: Boolean(editModal),
+        name: editInputs[0]?.value || "",
+        hasReadOnlyFolder: Boolean(editInputs[1]?.readOnly && editInputs[1]?.value)
+      };
+      editModal?.querySelector(".ant-modal-close")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      await sleep(180);
+      actionButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      await sleep(180);
+      const secondDropdown = visibleDropdown();
+      const removeItem = [...(secondDropdown?.querySelectorAll(".ant-dropdown-menu-item") || [])]
+        .find((element) => element.textContent?.includes("移除") || element.textContent?.includes("Remove"));
+      removeItem?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      await sleep(180);
+      const confirmModal = document.querySelector(".ant-modal-confirm");
+      const confirmText = confirmModal?.textContent || "";
+      confirmModal?.querySelector(".ant-modal-confirm-btns .ant-btn-primary")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      await sleep(450);
+      const snapshot = await window.supbot.snapshot();
+      return {
+        hasMenu: Boolean(actionButton),
+        actionButtonCount: actionButtons.length,
+        hasPin: firstText.includes("置顶项目") || firstText.includes("Pin project"),
+        hasOpen: firstText.includes("在资源管理器中打开") || firstText.includes("Open in File Explorer"),
+        hasEdit: firstText.includes("编辑项目") || firstText.includes("Edit project"),
+        hasArchive: firstText.includes("归档项目") || firstText.includes("Archive project"),
+        hasRemove: firstText.includes("移除") || firstText.includes("Remove"),
+        editState,
+        confirmPreservesFiles: confirmText.includes("不会删除项目文件夹") || confirmText.includes("will not be deleted"),
+        removed: !snapshot.projects.some((project) => project.id === projectId),
+        menuRemoved: !document.querySelector('[data-testid="project-actions-' + projectId + '"]')
+      };
+    })()`,
+  );
+  console.log(JSON.stringify({ projectActionsUi }, null, 2));
+  if (
+    !projectActionsUi?.hasMenu ||
+    projectActionsUi.actionButtonCount !== 1 ||
+    !projectActionsUi.hasPin ||
+    !projectActionsUi.hasOpen ||
+    !projectActionsUi.hasEdit ||
+    !projectActionsUi.hasArchive ||
+    !projectActionsUi.hasRemove ||
+    !projectActionsUi.editState?.hasModal ||
+    projectActionsUi.editState.name !== "Smoke project actions" ||
+    !projectActionsUi.editState.hasReadOnlyFolder ||
+    !projectActionsUi.confirmPreservesFiles ||
+    !projectActionsUi.removed ||
+    !projectActionsUi.menuRemoved
+  ) {
+    throw new Error(`Project actions menu did not work correctly: ${JSON.stringify(projectActionsUi)}`);
+  }
   const rightPanelTasks = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => {
