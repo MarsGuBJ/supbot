@@ -86,6 +86,8 @@ const zh: Record<string, string> = {
   "Project deleted.": "项目已删除。",
   "Resource deleted.": "资源已删除。",
   "Leave blank to create an unfiled conversation": "不填则创建未归档对话",
+  "Leave blank to use the folder name": "留空则使用文件夹名称",
+  "Optional: choose a project folder": "可选：选择项目文件夹",
   "Create project and start conversation": "创建项目并新建对话",
   "Create unfiled conversation": "创建未归档对话",
   "New project conversation": "新建项目对话",

@@ -110,6 +110,119 @@ describe("ToolExecutor project boundaries", () => {
     expect(result.toolResultText).toContain("MCP project path rejected");
   });
 
+  test("auto-allows project file and shell tools without a permission prompt", async () => {
+    const { context } = await setup();
+    let requested = false;
+    const { result, records } = await execute(
+      definition("WriteFile", "dangerous"),
+      context,
+      {
+        path: "outputs/file.txt",
+        content: "project content",
+      },
+      {
+        permissionMode: "default",
+        requestPermission: async () => {
+          requested = true;
+          return "denied";
+        },
+      },
+    );
+    expect(result.record.status).toBe("completed");
+    expect(records.some((record) => record.status === "pending_permission")).toBe(false);
+    expect(requested).toBe(false);
+
+    const shell = await execute(
+      definition("Shell", "dangerous"),
+      context,
+      { command: "Write-Output project" },
+      {
+        permissionMode: "default",
+        requestPermission: async () => {
+          requested = true;
+          return "denied";
+        },
+      },
+    );
+    expect(shell.result.record.status).toBe("completed");
+    expect(requested).toBe(false);
+
+    const mcp = await execute(
+      definition("mcp.files.write", "dangerous"),
+      context,
+      { path: "outputs/file.txt" },
+      {
+        permissionMode: "default",
+        requestPermission: async () => {
+          requested = true;
+          return "denied";
+        },
+      },
+    );
+    expect(mcp.result.record.status).toBe("completed");
+    expect(requested).toBe(false);
+  });
+
+  test("project auto-approval does not override plan mode", async () => {
+    const { context } = await setup();
+    const { result } = await execute(
+      definition("WriteFile", "dangerous"),
+      context,
+      { path: "outputs/file.txt", content: "blocked" },
+      { permissionMode: "plan" },
+    );
+    expect(result.record.status).toBe("denied");
+    expect(result.record.error).toContain("plan mode");
+  });
+
+  test("keeps external MCP operations on the normal permission path", async () => {
+    const { context } = await setup();
+    const externalMcp = {
+      ...definition("mcp.mail.send", "dangerous"),
+      parameters: {
+        type: "object",
+        properties: { recipient: { type: "string" } },
+        required: ["recipient"],
+      },
+    } satisfies ToolDefinition;
+    const { result, records } = await execute(
+      externalMcp,
+      context,
+      { recipient: "user@example.com" },
+      {
+        permissionMode: "default",
+        requestPermission: async () => "denied",
+      },
+    );
+    expect(records.some((record) => record.status === "pending_permission")).toBe(true);
+    expect(result.record.status).toBe("denied");
+  });
+
+  test("explicit project permission rules still take precedence", async () => {
+    const { context } = await setup();
+    const { records } = await execute(
+      definition("WriteFile", "dangerous"),
+      context,
+      {
+        path: "outputs/file.txt",
+        content: "project content",
+      },
+      {
+        permissionMode: "default",
+        permissionRules: [
+          {
+            id: "ask-project-writes",
+            toolName: "WriteFile",
+            behavior: "ask",
+            scope: "session",
+            createdAt: "2026-07-22T00:00:00.000Z",
+          },
+        ],
+      },
+    );
+    expect(records.some((record) => record.status === "pending_permission")).toBe(true);
+  });
+
   test("read-only workspace blocks dangerous tools before execution", async () => {
     const { context } = await setup();
     const readOnly = { ...context, workspaceMode: "readOnly" as const };
@@ -123,11 +236,17 @@ describe("ToolExecutor project boundaries", () => {
 
   test("permission timeout records a denial and invokes the timeout hook", async () => {
     const { context } = await setup();
+    const nonProjectContext = {
+      ...context,
+      projectRoot: undefined,
+      allowedWriteRoots: [],
+      host: { ...context.host, projectRoot: undefined, allowedWriteRoots: [] },
+    };
     let timeoutPermission = false;
     const { result } = await execute(
       definition("WriteFile", "dangerous"),
-      context,
-      { path: "outputs/file.txt", content: "blocked" },
+      nonProjectContext,
+      { path: "file.txt", content: "blocked" },
       {
         permissionMode: "default",
         permissionTimeoutMs: 5,

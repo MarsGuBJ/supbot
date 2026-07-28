@@ -1720,6 +1720,18 @@ button {
   cursor: pointer;
 }
 
+.project-folder-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  gap: 8px;
+}
+
+.project-folder-picker .ant-input {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .autopilot-project-list {
   display: grid;
   gap: 8px;

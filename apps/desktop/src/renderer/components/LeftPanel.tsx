@@ -36,19 +36,51 @@ export function LeftPanel({
 }) {
   const [newConversationOpen, setNewConversationOpen] = useState(false);
   const [projectName, setProjectName] = useState("");
+  const [projectFolder, setProjectFolder] = useState("");
   const [creatingConversation, setCreatingConversation] = useState(false);
+  const [pickingProjectFolder, setPickingProjectFolder] = useState(false);
+
+  const resetNewConversationForm = () => {
+    setProjectName("");
+    setProjectFolder("");
+  };
+
+  const pickProjectFolder = async () => {
+    setPickingProjectFolder(true);
+    try {
+      const folder = await window.supbot.pickProjectFolder();
+      if (folder) {
+        setProjectFolder(folder);
+      }
+    } catch (error) {
+      message.error((error as Error).message);
+    } finally {
+      setPickingProjectFolder(false);
+    }
+  };
+
   const createConversation = async () => {
+    if (creatingConversation || pickingProjectFolder) {
+      return;
+    }
     setCreatingConversation(true);
     try {
       const name = projectName.trim();
-      if (!name) {
+      const rootPath = projectFolder.trim();
+      if (rootPath) {
+        const project = await window.supbot.createProjectFromFolder({
+          rootPath,
+          name: name || undefined,
+        });
+        await startNewConversation(project.id);
+      } else if (!name) {
         await startNewConversation(null);
       } else {
         const project = await window.supbot.createProjectFromName({ name });
         await startNewConversation(project.id);
       }
       setNewConversationOpen(false);
-      setProjectName("");
+      resetNewConversationForm();
     } catch (error) {
       message.error((error as Error).message);
     } finally {
@@ -93,25 +125,53 @@ export function LeftPanel({
         open={newConversationOpen}
         title={t("New conversation")}
         width={420}
-        okText={t(projectName.trim() ? "Create project and start conversation" : "Create unfiled conversation")}
+        okText={t(
+          projectName.trim() || projectFolder.trim()
+            ? "Create project and start conversation"
+            : "Create unfiled conversation",
+        )}
         confirmLoading={creatingConversation}
         onOk={() => void createConversation()}
         onCancel={() => {
-          if (!creatingConversation) {
+          if (!creatingConversation && !pickingProjectFolder) {
             setNewConversationOpen(false);
-            setProjectName("");
+            resetNewConversationForm();
           }
         }}
       >
         <Form layout="vertical" onFinish={() => void createConversation()}>
-          <Form.Item label={t("Project name")} style={{ marginBottom: 0 }}>
+          <Form.Item label={t("Project name")}>
             <Input
               autoFocus
               maxLength={80}
               value={projectName}
-              placeholder={t("Leave blank to create an unfiled conversation")}
+              placeholder={t(
+                projectFolder.trim()
+                  ? "Leave blank to use the folder name"
+                  : "Leave blank to create an unfiled conversation",
+              )}
               onChange={(event) => setProjectName(event.target.value)}
             />
+          </Form.Item>
+          <Form.Item label={t("Project folder")} style={{ marginBottom: 0 }}>
+            <div className="project-folder-picker">
+              <Input
+                value={projectFolder}
+                allowClear
+                readOnly
+                placeholder={t("Optional: choose a project folder")}
+                onChange={(event) => setProjectFolder(event.target.value)}
+              />
+              <Tooltip title={t("Choose project folder")}>
+                <Button
+                  icon={<FolderOpenOutlined />}
+                  aria-label={t("Choose project folder")}
+                  loading={pickingProjectFolder}
+                  disabled={creatingConversation}
+                  onClick={() => void pickProjectFolder()}
+                />
+              </Tooltip>
+            </div>
           </Form.Item>
         </Form>
       </Modal>

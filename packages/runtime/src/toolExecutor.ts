@@ -101,7 +101,10 @@ export class ToolExecutor {
     }
 
     const decision = this.policy.decide({
-      mode: input.permissionMode,
+      mode:
+        input.permissionMode !== "plan" && shouldBypassProjectPermission(tool, parsedInput.value, input.context)
+          ? "bypassPermissions"
+          : input.permissionMode,
       rules: input.permissionRules,
       jobId: input.jobId,
       conversationId: input.conversationId,
@@ -247,10 +250,35 @@ function validateProjectBoundary(
   return undefined;
 }
 
-// Defense-in-depth heuristics only: these string checks can be bypassed
-// (environment variables, subshells, aliases) and are NOT a security boundary.
-// The real boundary is the permission prompt/policy above; shell commands
-// always execute with the full privileges of the desktop user.
+function shouldBypassProjectPermission(tool: ToolDefinition, input: unknown, context: ToolExecutionContext): boolean {
+  const projectRoot = context.projectRoot || context.host.projectRoot;
+  if (!projectRoot) {
+    return false;
+  }
+  if (tool.name === "ReadFile" || tool.name === "WriteFile" || tool.name === "Shell") {
+    return true;
+  }
+  if (!tool.name.startsWith("mcp.")) {
+    return false;
+  }
+  const projectPathArguments = collectPathLikeValues(input).filter((item) =>
+    /output|dest|target|write|save|path|file|folder|directory/i.test(item.key),
+  );
+  if (!projectPathArguments.length) {
+    return false;
+  }
+  return projectPathArguments.every((item) => {
+    if (!isPathLike(item.value) || /^[a-z]+:\/\//i.test(item.value)) {
+      return false;
+    }
+    const target = isAbsolute(item.value) ? resolve(item.value) : resolve(projectRoot, item.value);
+    return pathIsInside(projectRoot, target);
+  });
+}
+
+// Shell checks block direct path escapes from a user-trusted project folder.
+// Shell still runs with the desktop user's privileges, so these heuristics are
+// not an operating-system sandbox.
 function validateProjectShellCommand(
   command: string,
   projectRoot: string,

@@ -1880,6 +1880,45 @@ describe("SupbotRuntime", () => {
     await waitForJob(runtime, followup.job.id);
   });
 
+  test("runs project writes and shell commands without permission prompts while blocking escapes", async () => {
+    const runtime = await createRuntime();
+    const projectDir = await mkdtemp(join(tmpdir(), "supbot-trusted-project-"));
+    tempDirs.push(projectDir);
+    const outsideDir = await mkdtemp(join(tmpdir(), "supbot-trusted-outside-"));
+    tempDirs.push(outsideDir);
+    const project = await runtime.createProjectFromFolder({ rootPath: projectDir, name: "Trusted Project" });
+
+    const write = await runtime.sendPrompt({
+      projectId: project.id,
+      prompt: "/write notes.txt\nproject content",
+    });
+    await waitForJob(runtime, write.job.id);
+    expect(runtime.snapshot().pendingToolPermissions).toHaveLength(0);
+    expect(await readFile(join(projectDir, "notes.txt"), "utf8")).toBe("project content");
+
+    const shellCommand = process.platform === "win32" ? "Get-Location" : "pwd";
+    const shell = await runtime.sendPrompt({
+      conversationId: write.conversation.id,
+      prompt: `/shell ${shellCommand}`,
+    });
+    await waitForJob(runtime, shell.job.id);
+    expect(runtime.snapshot().pendingToolPermissions).toHaveLength(0);
+    const shellAssistant = runtime
+      .snapshot()
+      .conversations.find((item) => item.id === shell.conversation.id)
+      ?.messages.find((message) => message.jobId === shell.job.id);
+    expect(shellAssistant?.text).toContain(projectDir);
+
+    const outsideFile = join(outsideDir, "outside.txt");
+    const outside = await runtime.sendPrompt({
+      conversationId: write.conversation.id,
+      prompt: `/write "${outsideFile}"\nblocked`,
+    });
+    await waitForJob(runtime, outside.job.id);
+    expect(runtime.snapshot().pendingToolPermissions).toHaveLength(0);
+    await expect(readFile(outsideFile, "utf8")).rejects.toThrow();
+  });
+
   test("reads project-relative files and blocks project reads outside the root", async () => {
     const runtime = await createRuntime();
     const projectDir = await mkdtemp(join(tmpdir(), "supbot-read-project-"));

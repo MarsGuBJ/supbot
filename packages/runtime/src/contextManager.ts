@@ -154,8 +154,8 @@ function toolUseGuidance(): string {
   return [
     "Tool calling rules:",
     "- Tool arguments must be exactly one complete JSON object matching the tool schema. Do not send raw text, markdown fences, comments, placeholders, or partial JSON.",
-    "- WriteFile paths must be relative workspace paths unless the user explicitly provided an allowed project path. Never use placeholder paths such as /path/to/file.",
-    "- WriteFile cannot save directly outside the workspace. To place a final artifact on the Desktop or another external location, create scripts/assets in the workspace, then use Shell to generate or copy the final file to the requested location.",
+    "- In a project conversation, the project folder is the workspace: use relative paths to read and write files anywhere inside that folder.",
+    "- Without a project folder, WriteFile paths must stay inside the current workspace. Never use placeholder paths such as /path/to/file or save directly outside the workspace.",
     "- For large artifacts, prefer a short script plus Shell execution over embedding a large generated file in WriteFile content.",
     "- On Windows, Shell runs PowerShell.",
   ].join("\n");
