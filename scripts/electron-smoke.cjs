@@ -73,6 +73,28 @@ function waitForWebSocketOpen(ws, label) {
   });
 }
 
+function closeWebSocket(ws, label) {
+  if (ws.readyState === WebSocket.CLOSED) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      ws.removeEventListener("close", onClose);
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out closing WebSocket for ${label}`));
+    }, 5000);
+    const onClose = () => {
+      cleanup();
+      resolve();
+    };
+    ws.addEventListener("close", onClose);
+    ws.close();
+  });
+}
+
 async function evaluate(wsUrl, expression) {
   const ws = new WebSocket(wsUrl);
   await waitForWebSocketOpen(ws, "evaluate");
@@ -1010,7 +1032,7 @@ async function collectDiagnostics(wsUrl) {
     expression: "window.__supbotSmoke",
     returnByValue: true,
   });
-  ws.close();
+  await closeWebSocket(ws, "diagnostics");
   return {
     events: events.slice(0, 10),
     state: state.result?.result?.value,
