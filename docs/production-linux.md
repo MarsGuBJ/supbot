@@ -15,6 +15,8 @@ npm ci
 npm run verify:release:linux
 ```
 
+`verify:release:linux` blocks on `npm run audit:production`, which audits only dependencies shipped with the application. Run `npm run audit:all` separately for every release to review development and build-tool advisories. Current Electron Builder transitive dependencies still use legacy `brace-expansion` major versions for which npm cannot apply a compatible patched version. Keep those advisories under review and remove this exception when the upstream build chain provides a compatible fix; do not use `npm audit fix --force` when it proposes a breaking downgrade or major-version substitution.
+
 From Windows, keep the Windows `node_modules` directory untouched by building
 in an isolated WSL directory:
 

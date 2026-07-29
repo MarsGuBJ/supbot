@@ -11,11 +11,14 @@ npm install
 npm run verify:release
 ```
 
-`verify:release` runs the npm security audit against the official registry, builds and tests the workspace, runs the Electron smoke checks, and creates the Windows NSIS installer.
+`verify:release` audits production dependencies against the official registry, builds and tests the workspace, runs the Electron smoke checks, and creates the Windows NSIS installer. The production audit is the blocking release gate because development-only dependencies are not packaged with the application.
+
+Run `npm run audit:all` separately for every release to review development and build-tool advisories. Current Electron Builder transitive dependencies still use legacy `brace-expansion` major versions for which npm cannot apply a compatible patched version. Keep those advisories under review and remove this exception as soon as the upstream build chain provides a compatible fix; never use `npm audit fix --force` when it proposes a breaking downgrade or major-version substitution.
 
 Before publishing a build:
 
-- Confirm `npm audit --registry=https://registry.npmjs.org` reports no unreviewed production-blocking advisories.
+- Confirm `npm run audit:production` reports no production dependency advisories.
+- Run `npm run audit:all` and record any remaining development-only advisories in the release notes.
 - Confirm the Electron smoke output has no Electron security warning.
 - Confirm the configured Botstation base URL, OIDC issuer, and update feed all use valid HTTPS certificates. The updater rejects non-HTTPS feeds.
 - Install the generated NSIS package on a clean Windows user profile and verify first launch.
