@@ -1,6 +1,6 @@
 {
   "name": "hbclient",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Local single-user desktop agent.",
   "author": "HBClient contributors",
   "desktopName": "hbclient.desktop",
