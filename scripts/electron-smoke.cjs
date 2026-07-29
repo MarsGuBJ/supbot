@@ -115,7 +115,7 @@ async function evaluate(wsUrl, expression) {
       ws.send(JSON.stringify({ id: messageId, method, params }));
     });
   const result = await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
-  ws.close();
+  await closeWebSocket(ws, "evaluate");
   if (result.exceptionDetails) {
     throw new Error(result.exceptionDetails.text || "Runtime evaluation failed.");
   }
