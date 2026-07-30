@@ -52,7 +52,7 @@ export async function fetchWithRetry(
   throw new Error("HTTP request retry loop ended unexpectedly.");
 }
 
-export async function readResponseTextLimited(response: Response, maxBytes: number): Promise<string> {
+export async function readResponseBytesLimited(response: Response, maxBytes: number): Promise<Uint8Array> {
   const limit = Math.max(1, Math.round(maxBytes));
   const declaredLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > limit) {
@@ -60,7 +60,7 @@ export async function readResponseTextLimited(response: Response, maxBytes: numb
     throw new Error(`HTTP response exceeded the ${limit} byte limit.`);
   }
   if (!response.body) {
-    return "";
+    return new Uint8Array();
   }
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -87,7 +87,11 @@ export async function readResponseTextLimited(response: Response, maxBytes: numb
     combined.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return new TextDecoder().decode(combined);
+  return combined;
+}
+
+export async function readResponseTextLimited(response: Response, maxBytes: number): Promise<string> {
+  return new TextDecoder().decode(await readResponseBytesLimited(response, maxBytes));
 }
 
 function withIdleTimeout(response: Response, idleTimeoutMs: number): Response {

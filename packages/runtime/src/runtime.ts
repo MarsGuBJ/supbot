@@ -127,6 +127,8 @@ import {
 } from "@supbot/shared";
 import { AutopilotOrchestrator } from "./autopilotOrchestrator";
 import { calculateAutopilotMetrics, summarizeAutopilotQuality } from "./autopilotMetrics";
+import type { InstallResolution as PromptInstallResolution } from "./installResolver";
+import { PromptInstallProvider } from "./promptInstallProvider";
 import {
   extractReviewViolations,
   formatAutopilotApprovalHistory,
@@ -331,6 +333,9 @@ export class SupbotRuntime extends EventEmitter {
     });
     this.toolRegistry.addProvider(this.mcpManager);
     this.toolRegistry.addProvider(this.servstationA2AProvider);
+    this.toolRegistry.addProvider(new PromptInstallProvider({
+      installResolution: (resolution) => this.installResolution(resolution)
+    }));
   }
 
   async init(): Promise<RuntimeSnapshot> {
@@ -1927,6 +1932,18 @@ export class SupbotRuntime extends EventEmitter {
     if (deployment.mcpServer && !confirmMcpInstall) {
       throw new Error(`Installing MCP product ${product.name} requires explicit command confirmation.`);
     }
+    return this.installToolMarketPackageAndPersist(product, deployment);
+  }
+
+  async installResolution(resolution: PromptInstallResolution): Promise<ToolMarketCatalogItem> {
+    this.assertLoaded();
+    return this.installToolMarketPackageAndPersist(resolution.product, resolution.deployment);
+  }
+
+  private async installToolMarketPackageAndPersist(
+    product: ToolMarketProduct,
+    deployment: ToolMarketLocalDeployment
+  ): Promise<ToolMarketCatalogItem> {
     const installPath = await this.installToolMarketPackage(product, deployment);
     const capability: CapabilityDefinition = {
       ...(deployment.capability || product.capability),
