@@ -43,6 +43,36 @@ function step(name) {
   console.error(`[smoke] ${name}`);
 }
 
+async function waitForDevToolsPages(timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(`Electron exited before DevTools became ready. ${stderr.slice(0, 1200)}`);
+    }
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/json/list`);
+      if (!response.ok) {
+        throw new Error(`DevTools returned HTTP ${response.status}.`);
+      }
+      const pages = await response.json();
+      if (Array.isArray(pages) && pages.length > 0) {
+        return pages;
+      }
+      lastError = new Error("DevTools did not expose any pages yet.");
+    } catch (error) {
+      lastError = error;
+    }
+
+    await sleep(100);
+  }
+
+  const detail = lastError instanceof Error ? ` ${lastError.message}` : "";
+  throw new Error(`Electron DevTools did not become ready within ${timeoutMs}ms.${detail}`);
+}
+
 function waitForWebSocketOpen(ws, label) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -119,9 +149,8 @@ async function waitForMessageStreamAtBottom(wsUrl) {
 
 async function main() {
   step("waiting for Electron");
-  await sleep(5000);
-  step("fetching DevTools pages");
-  const pages = await fetch(`http://127.0.0.1:${port}/json/list`).then((response) => response.json());
+  const pages = await waitForDevToolsPages();
+  step("fetched DevTools pages");
   const page = pages.find((item) => item.type === "page") || pages[0];
   if (!page) {
     throw new Error("No Electron page exposed through DevTools.");
@@ -693,8 +722,12 @@ async function main() {
     })()`
   );
   console.log(JSON.stringify({ scrollAfterRefresh, scrollAfterSettling }, null, 2));
-  if (!scrollAfterSettling || scrollAfterSettling.distanceFromBottom > 2) {
-    throw new Error("Message stream ignored manual scrolling away from the bottom.");
+  if (
+    !scrollAfterSettling
+    || scrollAfterSettling.scrollTop > 2
+    || scrollAfterSettling.distanceFromBottom <= 16
+  ) {
+    throw new Error("Message stream did not preserve manual scrolling away from the bottom.");
   }
 }
 
