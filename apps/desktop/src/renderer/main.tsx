@@ -786,10 +786,12 @@ function App() {
       </main>
       <Modal
         open={configOpen}
+        title={<span className="config-modal-accessible-title">{t("Config")}</span>}
         footer={null}
         width="min(1180px, calc(100vw - 32px))"
         className="config-modal"
         wrapClassName="config-modal-wrap"
+        maskClosable={false}
         destroyOnHidden
         onCancel={() => setConfigOpen(false)}
       >

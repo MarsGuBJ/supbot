@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { GlobalOutlined, InfoCircleOutlined, RightOutlined, SettingOutlined } from "@ant-design/icons";
 import { Button, Popover, Segmented, Tag } from "antd";
 import type { RuntimeSnapshot } from "@supbot/shared";
@@ -22,8 +22,18 @@ export function SettingsMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const configItemRef = useRef<HTMLButtonElement>(null);
   const modelSummary = formatModelSummary(snapshot.modelConfig);
   const statusLabel = t(runtimeStatusTranslationKey(snapshot.status));
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => configItemRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [open]);
 
   const closeMenu = () => {
     setOpen(false);
@@ -31,12 +41,14 @@ export function SettingsMenu({
   };
 
   const content = (
-    <div className="settings-menu">
+    <div id="settings-menu-dialog" className="settings-menu" role="dialog" aria-label={t("Settings")}>
       <button
+        ref={configItemRef}
         className="settings-menu-item"
         type="button"
         data-testid="settings-config"
         onClick={() => {
+          triggerRef.current?.focus();
           closeMenu();
           openConfig();
         }}
@@ -68,6 +80,7 @@ export function SettingsMenu({
         type="button"
         data-testid="settings-status"
         aria-expanded={statusOpen}
+        aria-controls="settings-status-detail"
         onClick={() => setStatusOpen((value) => !value)}
       >
         <span>
@@ -77,7 +90,7 @@ export function SettingsMenu({
         <RightOutlined className={statusOpen ? "is-expanded" : ""} />
       </button>
       {statusOpen ? (
-        <div className="settings-status-detail" data-testid="settings-status-detail">
+        <div id="settings-status-detail" className="settings-status-detail" data-testid="settings-status-detail">
           <div>
             <span>{t("Model")}</span>
             <strong className="mono">{modelSummary}</strong>
@@ -104,10 +117,14 @@ export function SettingsMenu({
       destroyOnHidden
     >
       <Button
+        ref={triggerRef}
         className="settings-menu-trigger"
         type="text"
         icon={<SettingOutlined />}
         aria-label={t("Settings")}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls="settings-menu-dialog"
         data-testid="settings-menu-trigger"
       >
         {collapsed ? null : t("Settings")}

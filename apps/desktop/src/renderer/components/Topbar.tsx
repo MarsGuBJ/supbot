@@ -102,6 +102,7 @@ export function Topbar({
             <Tooltip title={translate(language, "Toggle left panel")}>
               <Button
                 icon={leftCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+                aria-label={translate(language, "Toggle left panel")}
                 data-testid="toggle-left-panel"
                 onClick={() => setLeftCollapsed((value) => !value)}
               />
@@ -109,6 +110,7 @@ export function Topbar({
             <Tooltip title={translate(language, "Toggle right panel")}>
               <Button
                 icon={rightCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+                aria-label={translate(language, "Toggle right panel")}
                 data-testid="toggle-right-panel"
                 onClick={() => setRightCollapsed((value) => !value)}
               />
