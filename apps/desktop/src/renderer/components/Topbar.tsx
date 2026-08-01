@@ -6,6 +6,8 @@ import { translate, type Language } from "../i18n";
 import type { WorkspaceView } from "../lib/types";
 import { ServerAgentConnectionButton } from "../views/ServerAgentWorkspace";
 
+const SHOW_SERVER_AGENT_ENTRY_POINTS = false;
+
 export function Topbar({
   snapshot,
   view,
@@ -61,18 +63,20 @@ export function Topbar({
         onChange={(value) => setView(value as WorkspaceView)}
         options={[
           { label: translate(language, "Chat"), value: "chat" },
-          { label: translate(language, "Server Agent"), value: "server" },
+          ...(SHOW_SERVER_AGENT_ENTRY_POINTS ? [{ label: translate(language, "Server Agent"), value: "server" }] : []),
           { label: translate(language, "Config"), value: "config" },
         ]}
       />
       <div className="topbar-actions">
         <HBClientUpdateButton state={updateState} language={language} startUpdate={startUpdate} />
-        <ServerAgentConnectionButton
-          snapshot={snapshot}
-          refresh={refresh}
-          t={(key, vars) => translate(language, key, vars)}
-          compact
-        />
+        {SHOW_SERVER_AGENT_ENTRY_POINTS ? (
+          <ServerAgentConnectionButton
+            snapshot={snapshot}
+            refresh={refresh}
+            t={(key, vars) => translate(language, key, vars)}
+            compact
+          />
+        ) : null}
         <Segmented
           size="small"
           value={language}
