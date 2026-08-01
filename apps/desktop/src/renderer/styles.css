@@ -596,8 +596,8 @@ button {
 }
 
 .chat-banner {
-  min-height: 64px;
-  padding: 12px 18px;
+  min-height: 48px;
+  padding: 4px 18px;
   border-bottom: 1px solid var(--line);
   background: rgba(247, 241, 235, 0.82);
 }

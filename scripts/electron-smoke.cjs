@@ -190,6 +190,7 @@ async function main() {
         documentScrollHeight: document.documentElement.scrollHeight,
         viewport: window.innerHeight,
         chat: rectFor(".chat-panel"),
+        chatBanner: rectFor(".chat-banner"),
         composer: rectFor(".composer"),
         leftScroll: rectFor(".panel-scroll"),
         messageStream: rectFor(".message-stream"),
@@ -1145,6 +1146,7 @@ async function main() {
         documentScrollHeight: document.documentElement.scrollHeight,
         viewport: window.innerHeight,
         chat: rectFor(".chat-panel"),
+        chatBanner: rectFor(".chat-banner"),
         composer: rectFor(".composer"),
         leftScroll: rectFor(".panel-scroll"),
         messageStream: rectFor(".message-stream"),
@@ -1158,6 +1160,9 @@ async function main() {
     finalLayoutMetrics.documentScrollHeight > finalLayoutMetrics.viewport + 2
   ) {
     throw new Error("Window-level scrolling is still enabled.");
+  }
+  if (!finalLayoutMetrics.chatBanner || Math.abs(finalLayoutMetrics.chatBanner.height - 48) > 0.5) {
+    throw new Error(`Chat banner height is not 48px: ${JSON.stringify(finalLayoutMetrics.chatBanner)}`);
   }
   if (
     !finalLayoutMetrics.chat ||
