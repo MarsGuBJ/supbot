@@ -66,7 +66,7 @@ button {
 
 .workspace-shell {
   display: grid;
-  grid-template-rows: 72px minmax(0, 1fr);
+  grid-template-rows: 48px minmax(0, 1fr);
   overflow: hidden;
 }
 

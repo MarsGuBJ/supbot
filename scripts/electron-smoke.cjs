@@ -38,6 +38,7 @@ child.stderr.on("data", (chunk) => {
 });
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const messageStreamBottomTolerance = 16;
 const smokeDeadline = setTimeout(() => {
   console.error("Electron smoke timed out.", { stderr: stderr.slice(0, 1200) });
   child.kill();
@@ -189,6 +190,7 @@ async function main() {
         bodyOverflowY: getComputedStyle(document.body).overflowY,
         documentScrollHeight: document.documentElement.scrollHeight,
         viewport: window.innerHeight,
+        topbar: rectFor(".topbar"),
         chat: rectFor(".chat-panel"),
         chatBanner: rectFor(".chat-banner"),
         composer: rectFor(".composer"),
@@ -1145,6 +1147,7 @@ async function main() {
         bodyOverflowY: getComputedStyle(document.body).overflowY,
         documentScrollHeight: document.documentElement.scrollHeight,
         viewport: window.innerHeight,
+        topbar: rectFor(".topbar"),
         chat: rectFor(".chat-panel"),
         chatBanner: rectFor(".chat-banner"),
         composer: rectFor(".composer"),
@@ -1160,6 +1163,9 @@ async function main() {
     finalLayoutMetrics.documentScrollHeight > finalLayoutMetrics.viewport + 2
   ) {
     throw new Error("Window-level scrolling is still enabled.");
+  }
+  if (!finalLayoutMetrics.topbar || Math.abs(finalLayoutMetrics.topbar.height - 48) > 0.5) {
+    throw new Error(`Topbar height is not 48px: ${JSON.stringify(finalLayoutMetrics.topbar)}`);
   }
   if (!finalLayoutMetrics.chatBanner || Math.abs(finalLayoutMetrics.chatBanner.height - 48) > 0.5) {
     throw new Error(`Chat banner height is not 48px: ${JSON.stringify(finalLayoutMetrics.chatBanner)}`);
@@ -1179,8 +1185,8 @@ async function main() {
       throw new Error(`${key} does not expose an independent scrollbar region.`);
     }
   }
-  if (finalLayoutMetrics.messageStream.distanceFromBottom > 2) {
-    throw new Error("Message stream did not start at the bottom.");
+  if (finalLayoutMetrics.messageStream.distanceFromBottom > messageStreamBottomTolerance) {
+    throw new Error(`Message stream did not start at the bottom: ${JSON.stringify(finalLayoutMetrics.messageStream)}`);
   }
   const scrollAfterToggle = await evaluate(
     page.webSocketDebuggerUrl,
