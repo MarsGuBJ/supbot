@@ -51,6 +51,7 @@ import { formatDateTime } from "@supbot/shared";
 import { McpServersCard } from "../components/McpServersCard";
 import { MemoryPanel } from "../components/MemoryPanel";
 import { truncateText } from "../lib/chatFormat";
+import { SHOW_MEMORY_TABS } from "../lib/uiVisibility";
 
 export const hiddenSlashCommandCapabilityIds = new Set(["tool.file", "tool.shell"]);
 
@@ -93,6 +94,8 @@ export function ConfigWorkspace({
   t: (key: string, vars?: Record<string, string | number>) => string;
   openSubagent: (subagent: SubagentConfig | null) => void;
 }) {
+  const activeTab = SHOW_MEMORY_TABS || focusTab !== "memory" ? focusTab : "model";
+
   return (
     <section className="config-panel">
       <div className="config-header">
@@ -108,7 +111,7 @@ export function ConfigWorkspace({
         </Button>
       </div>
       <Tabs
-        activeKey={focusTab}
+        activeKey={activeTab}
         onChange={setFocusTab}
         items={[
           {
@@ -133,11 +136,15 @@ export function ConfigWorkspace({
             children: <CapabilitiesCard snapshot={snapshot} refresh={refresh} t={t} />,
           },
           { key: "storage", label: t("Storage"), children: <StorageCard userDataPath={userDataPath} t={t} /> },
-          {
-            key: "memory",
-            label: t("Memory"),
-            children: <MemorySettingsCard snapshot={snapshot} refresh={refresh} t={t} />,
-          },
+          ...(SHOW_MEMORY_TABS
+            ? [
+                {
+                  key: "memory",
+                  label: t("Memory"),
+                  children: <MemorySettingsCard snapshot={snapshot} refresh={refresh} t={t} />,
+                },
+              ]
+            : []),
           {
             key: "subagents",
             label: t("Subagents"),

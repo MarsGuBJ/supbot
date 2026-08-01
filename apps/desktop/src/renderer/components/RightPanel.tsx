@@ -35,6 +35,7 @@ import {
 } from "../lib/chatFormat";
 import { compareCreatedAt, shouldShowJobRuntimeEvent } from "../lib/snapshotApply";
 import type { DetailPanel } from "../lib/types";
+import { SHOW_MEMORY_TABS } from "../lib/uiVisibility";
 import { connectServstationAgent } from "../servstationConnection";
 
 export function recentJobProgress(progress: string[]): string[] {
@@ -67,19 +68,30 @@ export function RightPanel({
   t: (key: string, vars?: Record<string, string | number>) => string;
   openSchedule: () => void;
 }) {
+  const activePanel = SHOW_MEMORY_TABS ? panel || "memory" : panel === "memory" || !panel ? "schedule" : panel;
+
   return (
     <aside className={`activity-panel ${collapsed ? "is-collapsed" : ""}`}>
       <Tabs
-        activeKey={panel || "memory"}
+        activeKey={activePanel}
         onChange={(key) => setPanel(key as DetailPanel)}
         items={[
-          {
-            key: "memory",
-            label: t("Memory"),
-            children: (
-              <MemoryPanel snapshot={snapshot} activeConversationId={activeConversationId} refresh={refresh} t={t} />
-            ),
-          },
+          ...(SHOW_MEMORY_TABS
+            ? [
+                {
+                  key: "memory",
+                  label: t("Memory"),
+                  children: (
+                    <MemoryPanel
+                      snapshot={snapshot}
+                      activeConversationId={activeConversationId}
+                      refresh={refresh}
+                      t={t}
+                    />
+                  ),
+                },
+              ]
+            : []),
           {
             key: "schedule",
             label: t("Schedule"),
