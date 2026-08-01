@@ -177,12 +177,16 @@ async function main() {
         return {
           bottom: rect.bottom,
           clientHeight: el.clientHeight,
+          clientWidth: el.clientWidth,
           height: rect.height,
+          overflowX: style.overflowX,
           overflowY: style.overflowY,
           position: style.position,
           distanceFromBottom: el.scrollHeight - el.scrollTop - el.clientHeight,
           scrollTop: el.scrollTop,
           scrollHeight: el.scrollHeight,
+          scrollWidth: el.scrollWidth,
+          width: rect.width,
           top: rect.top
         };
       };
@@ -323,6 +327,15 @@ async function main() {
   }
   if (!versionDialog?.triggerFound || !versionDialog.visible || !versionDialog.closed) {
     throw new Error(`HBClient version dialog did not complete its open/close flow: ${JSON.stringify(versionDialog)}`);
+  }
+  if (
+    !layoutMetrics.messageStream ||
+    layoutMetrics.messageStream.overflowX !== "hidden" ||
+    layoutMetrics.messageStream.scrollWidth > layoutMetrics.messageStream.clientWidth + 1
+  ) {
+    throw new Error(
+      `Populated message stream exposes horizontal scrolling: ${JSON.stringify(layoutMetrics.messageStream)}`,
+    );
   }
   const securityWarning = diagnostics.events.find((event) => {
     const text = `${event.args || ""} ${event.text || ""}`;
@@ -1123,6 +1136,26 @@ async function main() {
   if (!configClose?.closeFound || !configClose.modalClosed || !configClose.chatVisible) {
     throw new Error(`Could not close configuration and return to chat: ${JSON.stringify(configClose)}`);
   }
+  const emptyConversation = await evaluate(
+    page.webSocketDebuggerUrl,
+    `(async () => {
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const trigger = [...document.querySelectorAll(".project-history-add")]
+        .find((element) => !element.disabled);
+      trigger?.click();
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        await sleep(50);
+        if (document.querySelector(".chat-empty")) break;
+      }
+      return {
+        clicked: Boolean(trigger),
+        emptyVisible: Boolean(document.querySelector(".chat-empty"))
+      };
+    })()`,
+  );
+  if (!emptyConversation?.clicked || !emptyConversation.emptyVisible) {
+    throw new Error(`Could not render an empty conversation: ${JSON.stringify(emptyConversation)}`);
+  }
   const finalLayoutMetrics = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => {
@@ -1134,12 +1167,16 @@ async function main() {
         return {
           bottom: rect.bottom,
           clientHeight: el.clientHeight,
+          clientWidth: el.clientWidth,
           height: rect.height,
+          overflowX: style.overflowX,
           overflowY: style.overflowY,
           position: style.position,
           distanceFromBottom: el.scrollHeight - el.scrollTop - el.clientHeight,
           scrollTop: el.scrollTop,
           scrollHeight: el.scrollHeight,
+          scrollWidth: el.scrollWidth,
+          width: rect.width,
           top: rect.top
         };
       };
@@ -1184,6 +1221,14 @@ async function main() {
     if (!finalLayoutMetrics[key] || finalLayoutMetrics[key].overflowY !== "auto") {
       throw new Error(`${key} does not expose an independent scrollbar region.`);
     }
+  }
+  if (
+    finalLayoutMetrics.messageStream.overflowX !== "hidden" ||
+    finalLayoutMetrics.messageStream.scrollWidth > finalLayoutMetrics.messageStream.clientWidth + 1
+  ) {
+    throw new Error(
+      `Empty message stream exposes horizontal scrolling: ${JSON.stringify(finalLayoutMetrics.messageStream)}`,
+    );
   }
   if (finalLayoutMetrics.messageStream.distanceFromBottom > messageStreamBottomTolerance) {
     throw new Error(`Message stream did not start at the bottom: ${JSON.stringify(finalLayoutMetrics.messageStream)}`);

@@ -704,13 +704,15 @@ button {
 
 .message-stream {
   min-height: 0;
-  overflow: auto;
-  padding: 22px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 22px 0;
   overscroll-behavior: contain;
 }
 
 .message-stack {
   min-height: 100%;
+  padding: 0 22px;
 }
 
 .history-page-status {
