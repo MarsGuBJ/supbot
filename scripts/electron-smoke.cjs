@@ -203,6 +203,10 @@ async function main() {
     `(() => {
       const topbar = document.querySelector(".topbar");
       const topbarText = topbar?.innerText || "";
+      const versionButton = topbar?.querySelector("[data-testid='hybot-version']");
+      const versionIcon = versionButton?.querySelector(".anticon");
+      const versionButtonRect = versionButton?.getBoundingClientRect();
+      const versionIconRect = versionIcon?.getBoundingClientRect();
       return {
         hasTopbar: Boolean(topbar),
         hasHyBot: topbarText.includes("HyBot"),
@@ -211,7 +215,13 @@ async function main() {
         hasSegmentedControl: Boolean(topbar?.querySelector(".ant-segmented")),
         hasRuntimeStatus: Boolean(topbar?.querySelector(".runtime-pill")),
         hasLeftToggle: Boolean(topbar?.querySelector("[data-testid='toggle-left-panel']")),
-        hasRightToggle: Boolean(topbar?.querySelector("[data-testid='toggle-right-panel']"))
+        hasRightToggle: Boolean(topbar?.querySelector("[data-testid='toggle-right-panel']")),
+        versionButtonSize: versionButtonRect
+          ? { width: versionButtonRect.width, height: versionButtonRect.height }
+          : null,
+        versionIconSize: versionIconRect
+          ? { width: versionIconRect.width, height: versionIconRect.height }
+          : null
       };
     })()`,
   );
@@ -298,7 +308,13 @@ async function main() {
     topbarBranding.hasSegmentedControl ||
     topbarBranding.hasRuntimeStatus ||
     !topbarBranding.hasLeftToggle ||
-    !topbarBranding.hasRightToggle
+    !topbarBranding.hasRightToggle ||
+    !topbarBranding.versionButtonSize ||
+    !topbarBranding.versionIconSize ||
+    Math.abs(topbarBranding.versionButtonSize.width - 21) > 0.5 ||
+    Math.abs(topbarBranding.versionButtonSize.height - 21) > 0.5 ||
+    Math.abs(topbarBranding.versionIconSize.width - 9) > 0.5 ||
+    Math.abs(topbarBranding.versionIconSize.height - 9) > 0.5
   ) {
     throw new Error(`Electron renderer did not render the expected HyBot topbar: ${JSON.stringify(topbarBranding)}`);
   }
