@@ -15,6 +15,8 @@ import {
 import { Button, Dropdown, Form, Input, Modal, Popconfirm, Tooltip, message } from "antd";
 import type { Conversation, Project, ProjectUpdateInput, RuntimeSnapshot } from "@supbot/shared";
 import { conversationTitle, formatDateTime } from "@supbot/shared";
+import type { Language } from "../i18n";
+import { SettingsMenu } from "./SettingsMenu";
 
 export const projectConversationPreviewLimit = 5;
 
@@ -27,6 +29,9 @@ export function LeftPanel({
   collapsed,
   refresh,
   startNewConversation,
+  language,
+  setLanguage,
+  openConfig,
   t,
 }: {
   snapshot: RuntimeSnapshot;
@@ -37,6 +42,9 @@ export function LeftPanel({
   collapsed: boolean;
   refresh: () => void;
   startNewConversation: (projectId?: string | null) => Promise<void>;
+  language: Language;
+  setLanguage: (language: Language) => void;
+  openConfig: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
   const [newConversationOpen, setNewConversationOpen] = useState(false);
@@ -245,6 +253,16 @@ export function LeftPanel({
             />
           </section>
         </div>
+        <footer className="side-panel-footer">
+          <SettingsMenu
+            snapshot={snapshot}
+            language={language}
+            setLanguage={setLanguage}
+            openConfig={openConfig}
+            collapsed={collapsed}
+            t={t}
+          />
+        </footer>
       </aside>
       <Modal
         open={newConversationOpen}

@@ -6,6 +6,7 @@ import { translate, type Language } from "../i18n";
 import type { WorkspaceView } from "../lib/types";
 import { ServerAgentConnectionButton } from "../views/ServerAgentWorkspace";
 
+const SHOW_TOPBAR_LEGACY_CONTROLS = false;
 const SHOW_SERVER_AGENT_ENTRY_POINTS = false;
 
 export function Topbar({
@@ -44,32 +45,31 @@ export function Topbar({
           <button
             className="brand-mark brand-mark-button small"
             type="button"
+            data-testid="hybot-version"
             aria-label={language === "zh" ? "查看 HBClient 版本信息" : "View HBClient version information"}
             onClick={() => void showVersionInfo()}
           >
             <RobotOutlined />
           </button>
         </Tooltip>
-        <div>
-          <div className="eyebrow">{translate(language, "LOCAL AGENT CONSOLE")}</div>
-          <div className="agent-title">{snapshot.agentName}</div>
-          <div className="muted mono">
-            {snapshot.modelConfig.providerName} / {snapshot.modelConfig.model}
-          </div>
-        </div>
+        <div className="agent-title">HyBot</div>
       </div>
-      <Segmented
-        value={view}
-        onChange={(value) => setView(value as WorkspaceView)}
-        options={[
-          { label: translate(language, "Chat"), value: "chat" },
-          ...(SHOW_SERVER_AGENT_ENTRY_POINTS ? [{ label: translate(language, "Server Agent"), value: "server" }] : []),
-          { label: translate(language, "Config"), value: "config" },
-        ]}
-      />
+      {SHOW_TOPBAR_LEGACY_CONTROLS ? (
+        <Segmented
+          value={view}
+          onChange={(value) => setView(value as WorkspaceView)}
+          options={[
+            { label: translate(language, "Chat"), value: "chat" },
+            ...(SHOW_SERVER_AGENT_ENTRY_POINTS
+              ? [{ label: translate(language, "Server Agent"), value: "server" }]
+              : []),
+            { label: translate(language, "Config"), value: "config" },
+          ]}
+        />
+      ) : null}
       <div className="topbar-actions">
         <HBClientUpdateButton state={updateState} language={language} startUpdate={startUpdate} />
-        {SHOW_SERVER_AGENT_ENTRY_POINTS ? (
+        {SHOW_TOPBAR_LEGACY_CONTROLS && SHOW_SERVER_AGENT_ENTRY_POINTS ? (
           <ServerAgentConnectionButton
             snapshot={snapshot}
             refresh={refresh}
@@ -77,30 +77,39 @@ export function Topbar({
             compact
           />
         ) : null}
-        <Segmented
-          size="small"
-          value={language}
-          onChange={(value) => setLanguage(value as Language)}
-          options={[
-            { label: "中文", value: "zh" },
-            { label: "EN", value: "en" },
-          ]}
-        />
-        <div className={`runtime-pill is-${snapshot.status}`}>
-          <span className="status-dot" />
-          {snapshot.status === "running" ? translate(language, "Running") : translate(language, "Ready")}
-        </div>
+        {SHOW_TOPBAR_LEGACY_CONTROLS ? (
+          <>
+            <Segmented
+              size="small"
+              value={language}
+              onChange={(value) => setLanguage(value as Language)}
+              options={[
+                { label: "中文", value: "zh" },
+                { label: "EN", value: "en" },
+              ]}
+            />
+            <div className={`runtime-pill is-${snapshot.status}`}>
+              <span className="status-dot" />
+              {translate(
+                language,
+                snapshot.status === "running" ? "Running" : snapshot.status === "error" ? "Error" : "Ready",
+              )}
+            </div>
+          </>
+        ) : null}
         {view === "chat" ? (
           <>
             <Tooltip title={translate(language, "Toggle left panel")}>
               <Button
                 icon={leftCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+                data-testid="toggle-left-panel"
                 onClick={() => setLeftCollapsed((value) => !value)}
               />
             </Tooltip>
             <Tooltip title={translate(language, "Toggle right panel")}>
               <Button
                 icon={rightCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+                data-testid="toggle-right-panel"
                 onClick={() => setRightCollapsed((value) => !value)}
               />
             </Tooltip>

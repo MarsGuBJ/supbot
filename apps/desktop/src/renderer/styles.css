@@ -72,7 +72,7 @@ button {
 
 .topbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 16px;
   padding: 0 18px;
@@ -138,7 +138,6 @@ button {
   min-width: 32px;
 }
 
-.topbar-actions,
 .panel-heading,
 .activity-head,
 .chat-banner {
@@ -318,6 +317,140 @@ button {
   min-height: 0;
   overflow: auto;
   padding: 14px;
+}
+
+.side-panel-footer {
+  flex: none;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+  background: rgba(254, 253, 252, 0.94);
+}
+
+.settings-menu-trigger {
+  width: 100%;
+  min-height: 40px;
+  justify-content: flex-start;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.settings-menu-trigger:hover,
+.settings-menu-trigger:focus-visible {
+  color: #b8650a !important;
+  background: rgba(212, 117, 10, 0.08) !important;
+}
+
+.side-panel.is-collapsed .side-panel-footer {
+  padding: 6px;
+}
+
+.side-panel.is-collapsed .settings-menu-trigger {
+  width: 40px;
+  min-width: 40px;
+  padding: 0;
+  justify-content: center;
+}
+
+.settings-menu-overlay {
+  width: min(300px, calc(100vw - 24px));
+}
+
+.settings-menu-overlay .ant-popover-inner {
+  padding: 8px;
+}
+
+.settings-menu {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-menu-item {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.settings-menu-item:hover,
+.settings-menu-item:focus-visible {
+  background: rgba(212, 117, 10, 0.08);
+  color: #b8650a;
+  outline: none;
+}
+
+.settings-menu-item > span:first-child,
+.settings-menu-language > span:first-child {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-weight: 700;
+}
+
+.settings-menu-item > .anticon:last-child {
+  color: var(--dim);
+  font-size: 11px;
+  transition: transform 140ms ease;
+}
+
+.settings-menu-item > .anticon.is-expanded {
+  transform: rotate(90deg);
+}
+
+.settings-menu-language {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-status-detail {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 4px 4px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+}
+
+.settings-status-detail > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.settings-status-detail span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.settings-status-detail strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.settings-status-detail .ant-tag {
+  flex: none;
+  margin: 0;
 }
 
 .panel-section,
@@ -1972,6 +2105,34 @@ button {
   overscroll-behavior: contain;
   padding: 22px;
   border: 0;
+}
+
+.config-modal-wrap .ant-modal {
+  top: 5vh;
+  padding-bottom: 0;
+}
+
+.config-modal .ant-modal-content {
+  padding: 0;
+  overflow: hidden;
+}
+
+.config-modal .ant-modal-close {
+  top: 16px;
+  inset-inline-end: 16px;
+}
+
+.config-modal .ant-modal-body {
+  height: min(88vh, 880px);
+  overflow: hidden;
+}
+
+.config-modal .config-panel {
+  height: 100%;
+}
+
+.config-modal .config-header {
+  padding-right: 42px;
 }
 
 .market-panel {

@@ -201,6 +201,7 @@ function App() {
   const [transcriptLoading, setTranscriptLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [focusConfigTab, setFocusConfigTab] = useState("model");
+  const [configOpen, setConfigOpen] = useState(false);
   const [userDataPath, setUserDataPath] = useState("");
   const [updateState, setUpdateState] = useState<HBClientUpdateState>({ status: "idle", currentVersion: "" });
   const [messageApi, contextHolder] = message.useMessage();
@@ -237,10 +238,10 @@ function App() {
     element.scrollTo({ top, behavior });
   }, []);
 
-  const setLanguage = (next: Language) => {
+  const setLanguage = useCallback((next: Language) => {
     setLanguageState(next);
     saveLanguage(next);
-  };
+  }, []);
 
   const applySnapshot = useCallback((next: RuntimeSnapshot) => {
     const requestedId = activeConversationIdRef.current;
@@ -499,10 +500,10 @@ function App() {
     await refresh();
   };
 
-  const openConfig = (tab = "model") => {
+  const openConfig = useCallback((tab = "model") => {
     setFocusConfigTab(tab);
-    setView("config");
-  };
+    setConfigOpen(true);
+  }, []);
 
   const runSlashAction = async (text: string): Promise<boolean> => {
     const command = resolveSlashCommand(text);
@@ -707,6 +708,9 @@ function App() {
               collapsed={leftCollapsed}
               refresh={refresh}
               startNewConversation={startNewConversation}
+              language={language}
+              setLanguage={setLanguage}
+              openConfig={() => openConfig("model")}
               t={t}
             />
             <ChatPanel
@@ -771,17 +775,37 @@ function App() {
             refresh={refresh}
             snapshot={snapshot}
             openMarketConfig={() => {
-              setFocusConfigTab("market");
-              setView("config");
+              openConfig("market");
             }}
             openMcpConfig={() => {
-              setFocusConfigTab("mcp");
-              setView("config");
+              openConfig("mcp");
             }}
             t={t}
           />
         )}
       </main>
+      <Modal
+        open={configOpen}
+        footer={null}
+        width="min(1180px, calc(100vw - 32px))"
+        className="config-modal"
+        wrapClassName="config-modal-wrap"
+        destroyOnHidden
+        onCancel={() => setConfigOpen(false)}
+      >
+        <ConfigWorkspace
+          snapshot={snapshot}
+          userDataPath={userDataPath}
+          focusTab={focusConfigTab}
+          setFocusTab={setFocusConfigTab}
+          refresh={refresh}
+          t={t}
+          openSubagent={(subagent) => {
+            setEditingSubagent(subagent);
+            setSubagentOpen(true);
+          }}
+        />
+      </Modal>
       <SubagentModal
         open={subagentOpen}
         subagent={editingSubagent}
