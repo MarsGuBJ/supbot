@@ -11,6 +11,8 @@ import type {
   GeneratedFile,
   HBClientUpdateState,
   IdentityContext,
+  LeasingRequestInput,
+  LeasingResponse,
   MemoryAddInput,
   MemoryFact,
   MemoryImportInput,
@@ -157,6 +159,7 @@ declare global {
       listRemoteBridgeAudit(): Promise<RemoteBridgeAuditRecord[]>;
       getIdentityContext(): Promise<IdentityContext | undefined>;
       updateIdentityContext(input: IdentityContext): Promise<IdentityContext>;
+      requestLeasing(input: LeasingRequestInput): Promise<LeasingResponse>;
       getServstationA2AConfig(): Promise<ServstationA2AConfig>;
       updateServstationA2AConfig(input: ServstationA2AConfigUpdate): Promise<ServstationA2AConfig>;
       loginServstationOidc(input?: ServstationA2AOidcLoginInput): Promise<ServstationA2AOidcLoginResult>;

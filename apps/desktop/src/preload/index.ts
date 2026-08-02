@@ -4,6 +4,7 @@ import type {
   CapabilityUpdateInput,
   CreateConversationInput,
   IdentityContext,
+  LeasingRequestInput,
   MemoryAddInput,
   MemoryImportInput,
   MemoryRecallFeedbackInput,
@@ -96,6 +97,7 @@ const api = {
   listRemoteBridgeAudit: () => ipcRenderer.invoke("remoteBridge:listAudit"),
   getIdentityContext: () => ipcRenderer.invoke("identity:get"),
   updateIdentityContext: (input: IdentityContext) => ipcRenderer.invoke("identity:update", input),
+  requestLeasing: (input: LeasingRequestInput) => ipcRenderer.invoke("leasing:request", input),
   getServstationA2AConfig: () => ipcRenderer.invoke("servstationA2A:getConfig"),
   updateServstationA2AConfig: (input: ServstationA2AConfigUpdate) =>
     ipcRenderer.invoke("servstationA2A:updateConfig", input),

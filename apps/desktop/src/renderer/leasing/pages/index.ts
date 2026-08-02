@@ -1,0 +1,11 @@
+export { default as ContractsAssetsPage } from "./ContractsAssetsPage";
+export { default as CreditApplicationsPage } from "./CreditApplicationsPage";
+export { default as CustomersPage } from "./CustomersPage";
+export { default as DashboardPage } from "./DashboardPage";
+export { default as GroupCreditPage } from "./GroupCreditPage";
+export { default as PartnerManagementPage } from "./PartnerManagementPage";
+export { default as PostLeasePage } from "./PostLeasePage";
+export { default as PricingWorkspacePage } from "./PricingWorkspacePage";
+export { default as ProjectsPage } from "./ProjectsPage";
+export { default as ReceivablesPaymentsPage } from "./ReceivablesPaymentsPage";
+export { default as RiskRatingPage } from "./RiskRatingPage";

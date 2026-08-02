@@ -93,6 +93,7 @@ import { RightPanel } from "./components/RightPanel";
 import { Topbar } from "./components/Topbar";
 import { readClipboardText, selectedTextWithin, selectionMemoryTitle, writeClipboardText } from "./lib/clipboard";
 import { formatFileSize } from "./lib/flowSchema";
+import { canReadLeasing } from "./leasing/permissions";
 import {
   servstationConversationTitle,
   servstationJobIsTerminal,
@@ -115,6 +116,7 @@ import {
 import type { DetailPanel, PromptContextMenu, SelectionContextMenu, Translator, WorkspaceView } from "./lib/types";
 import { connectServstationAgent } from "./servstationConnection";
 import { ConfigWorkspace } from "./views/ConfigWorkspace";
+import { LeasingWorkspace } from "./views/LeasingWorkspace";
 import { MarketWorkspace } from "./views/MarketWorkspace";
 import { ServerAgentFlowWorkspace, ServerAgentFlows } from "./views/ServerAgentFlows";
 import { ServerAgentMailWorkspace } from "./views/ServerAgentMailWorkspace";
@@ -357,6 +359,12 @@ function App() {
       }
     });
   }, [applySnapshot, refresh]);
+
+  useEffect(() => {
+    if (view === "leasing" && snapshot && !canReadLeasing(snapshot.identityContext)) {
+      setView("chat");
+    }
+  }, [snapshot?.identityContext, view]);
 
   useEffect(() => {
     activeConversationIdRef.current = activeConversationId;
@@ -752,6 +760,8 @@ function App() {
             copySelectedText={copySelectedText}
             t={t}
           />
+        ) : view === "leasing" ? (
+          <LeasingWorkspace snapshot={snapshot} t={t} />
         ) : view === "config" ? (
           <ConfigWorkspace
             snapshot={snapshot}

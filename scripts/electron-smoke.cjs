@@ -988,7 +988,7 @@ async function main() {
         organizationId: "organization-serv-smoke",
         departmentId: "department-serv-smoke",
         userId: "user-serv-smoke",
-        roleIds: ["user"],
+        roleIds: ["leasing-reader", "leasing-operator"],
         source: "servstation",
         agentInstanceId: "agent-serv-smoke",
         servstationUrl: ${JSON.stringify(servstationBaseUrl)}
@@ -1005,6 +1005,98 @@ async function main() {
       .catch((error) => ({ connected: false, error: String(error?.message || error) }))`,
   );
   await sleep(250);
+  const leasingClick = await evaluate(
+    page.webSocketDebuggerUrl,
+    `(() => {
+      const control = [...document.querySelectorAll(".topbar .ant-segmented-item-label")]
+        .find((el) => el.textContent?.includes("融租") || el.textContent?.includes("Leasing"));
+      control?.click();
+      return { clicked: Boolean(control) };
+    })()`,
+  );
+  await sleep(1200);
+  const leasingUi = await evaluate(
+    page.webSocketDebuggerUrl,
+    `(() => {
+      const shell = document.querySelector(".leasing-workspace");
+      const sidebar = shell?.querySelector(".leasing-sidebar");
+      const content = shell?.querySelector(".leasing-content");
+      const groups = [...(shell?.querySelectorAll(".leasing-nav-group-label") || [])].map((item) => item.textContent || "");
+      const items = [...(shell?.querySelectorAll(".leasing-nav-item") || [])].map((item) => item.textContent || "");
+      const sidebarRect = sidebar?.getBoundingClientRect();
+      const contentRect = content?.getBoundingClientRect();
+      return {
+        hasWorkspace: Boolean(shell),
+        hasRequestIpc: typeof window.supbot?.requestLeasing === "function",
+        groups,
+        items,
+        hasDashboard: Boolean(content?.textContent?.includes("融资租赁运营台")),
+        hasManagement: groups.some((label) => label.includes("管理")),
+        columnsSeparated: Boolean(sidebarRect && contentRect && sidebarRect.right <= contentRect.left + 1),
+        fitsViewport: Boolean(contentRect && contentRect.right <= window.innerWidth + 1 && contentRect.bottom <= window.innerHeight + 1)
+      };
+    })()`,
+  );
+  if (
+    !leasingClick?.clicked ||
+    !leasingUi?.hasWorkspace ||
+    !leasingUi.hasRequestIpc ||
+    leasingUi.groups.length !== 2 ||
+    leasingUi.items.length !== 11 ||
+    !leasingUi.hasDashboard ||
+    leasingUi.hasManagement ||
+    !leasingUi.columnsSeparated ||
+    !leasingUi.fitsViewport
+  ) {
+    throw new Error(`Leasing workspace did not render correctly: ${JSON.stringify({ leasingClick, leasingUi })}`);
+  }
+  const leasingPages = await evaluate(
+    page.webSocketDebuggerUrl,
+    `(async () => {
+      const targets = [
+        ["风险评级", "规则与信用评级"],
+        ["业务驾驶舱", "融资租赁运营台"],
+        ["客户管理", "客户管理"],
+        ["合作方管理", "合作方管理"],
+        ["租赁项目", "租赁项目"],
+        ["产品与定价", "产品与定价"],
+        ["授信申请", "授信申请"],
+        ["集团与额度", "集团尽调与额度"],
+        ["合同与资产", "合同与资产"],
+        ["应收与收款", "应收与收款"],
+        ["租后管理", "租后、催收与资产处置"],
+      ];
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const results = [];
+      for (const [label, expectedHeading] of targets) {
+        const button = [...document.querySelectorAll(".leasing-nav-item")]
+          .find((item) => item.textContent?.trim() === label);
+        button?.click();
+        let heading = "";
+        for (let attempt = 0; attempt < 50; attempt += 1) {
+          heading = document.querySelector(".leasing-content .page-header h1")?.textContent?.trim() || "";
+          if (heading === expectedHeading && !document.querySelector(".leasing-route-loading")) break;
+          await sleep(60);
+        }
+        await sleep(80);
+        results.push({
+          label,
+          heading,
+          matched: heading === expectedHeading,
+          clicked: Boolean(button),
+          hasError: Boolean(document.querySelector(".leasing-content .error-state, .leasing-content .inline-alert.danger")),
+        });
+      }
+      return results;
+    })()`,
+  );
+  if (
+    !Array.isArray(leasingPages) ||
+    leasingPages.length !== 11 ||
+    leasingPages.some((item) => !item.clicked || !item.matched || item.hasError)
+  ) {
+    throw new Error(`Leasing pages did not complete their load and empty states: ${JSON.stringify(leasingPages)}`);
+  }
   const serverAgentClick = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => {
@@ -1195,6 +1287,36 @@ function createSmokeServstationServer() {
     createdAt: now,
     finishedAt: now,
   };
+  const leasingEmptyListPaths = new Set([
+    "/api/v1/leasing/customers",
+    "/api/v1/leasing/projects",
+    "/api/v1/leasing/partners",
+    "/api/v1/leasing/commission-agreements",
+    "/api/v1/leasing/pricing/products",
+    "/api/v1/leasing/pricing/quotes",
+    "/api/v1/leasing/credit-applications",
+    "/api/v1/leasing/credit-facilities",
+    "/api/v1/leasing/customer-groups",
+    "/api/v1/leasing/limit-ledger",
+    "/api/v1/leasing/risk-imports",
+    "/api/v1/leasing/contracts",
+    "/api/v1/leasing/assets",
+    "/api/v1/leasing/disbursements",
+    "/api/v1/leasing/deposit-accounts",
+    "/api/v1/leasing/receivables",
+    "/api/v1/leasing/payments",
+    "/api/v1/leasing/accounting-entries",
+    "/api/v1/leasing/settlements",
+    "/api/v1/leasing/postlease/inspections",
+    "/api/v1/leasing/postlease/risk-warnings",
+    "/api/v1/leasing/postlease/risk-classifications",
+    "/api/v1/leasing/postlease/overdue-aging",
+    "/api/v1/leasing/collection/actions",
+    "/api/v1/leasing/postlease/restructures",
+    "/api/v1/leasing/postlease/legal-cases",
+    "/api/v1/leasing/postlease/asset-dispositions",
+    "/api/v1/leasing/postlease/write-offs",
+  ]);
   return createServer((request, response) => {
     const url = new URL(request.url || "/", servstationBaseUrl);
     const json = (value) => {
@@ -1264,6 +1386,42 @@ function createSmokeServstationServer() {
     }
     if (request.method === "GET" && url.pathname === "/api/v1/capabilities/local") {
       json({ assets: [] });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/v1/leasing/dashboard") {
+      json({
+        counts: { customers: 12, projects: 7, creditApplications: 3, contracts: 5, assets: 9, openReceivables: 2 },
+        projectAmounts: { requestedTotal: "12000000.00" },
+        creditAmounts: { requestedLimitTotal: "8000000.00" },
+        portfolioAmounts: {
+          contractPrincipalTotal: "6500000.00",
+          receivableOutstanding: "900000.00",
+          cashCollectedTotal: "3400000.00",
+        },
+      });
+      return;
+    }
+    if (
+      request.method === "GET" &&
+      (url.pathname === "/api/v1/leasing/rating/models" || url.pathname === "/api/v1/leasing/rating/batches")
+    ) {
+      json({ success: true, data: [] });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/v1/leasing/asset-compliance-summary") {
+      json({
+        total: 0,
+        pendingAcceptance: 0,
+        missingRegistration: 0,
+        missingInsurance: 0,
+        insuranceExpiring: 0,
+        valuationDue: 0,
+        residualAtRisk: 0,
+      });
+      return;
+    }
+    if (request.method === "GET" && leasingEmptyListPaths.has(url.pathname)) {
+      json({ items: [], total: 0 });
       return;
     }
     if (

@@ -1,0 +1,204 @@
+.leasing-workspace {
+  --leasing-shell-line: #dce2e5;
+  --leasing-shell-muted: #68727d;
+  --leasing-shell-accent: #b8650a;
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #f6f8f8;
+}
+
+.leasing-workspace .leasing-sidebar {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--leasing-shell-line);
+  background: #fff;
+}
+
+.leasing-workspace .leasing-sidebar-brand {
+  display: flex;
+  min-height: 72px;
+  align-items: center;
+  gap: 11px;
+  padding: 14px 18px;
+  border-bottom: 1px solid #edf0f1;
+}
+
+.leasing-workspace .leasing-sidebar-brand > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.leasing-workspace .leasing-sidebar-brand strong {
+  overflow: hidden;
+  color: #20272d;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.leasing-workspace .leasing-sidebar-brand span:not(.leasing-brand-mark) {
+  overflow: hidden;
+  color: var(--leasing-shell-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.leasing-workspace .leasing-brand-mark {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  place-items: center;
+  border: 1px solid #f1d1aa;
+  border-radius: 7px;
+  background: #fff7ed;
+  color: var(--leasing-shell-accent);
+  font-size: 17px;
+}
+
+.leasing-workspace .leasing-nav {
+  min-height: 0;
+  padding: 10px;
+  overflow-y: auto;
+}
+
+.leasing-workspace .leasing-nav-group + .leasing-nav-group {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #edf0f1;
+}
+
+.leasing-workspace .leasing-nav-group-label {
+  padding: 0 10px 6px;
+  color: #89919a;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.leasing-workspace .leasing-nav-item {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  width: 100%;
+  min-height: 38px;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #505b65;
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.leasing-workspace .leasing-nav-item:hover {
+  background: #f6f7f7;
+  color: #20272d;
+}
+
+.leasing-workspace .leasing-nav-item.is-active {
+  background: #fff0df;
+  color: #9d570a;
+  font-weight: 650;
+}
+
+.leasing-workspace .leasing-nav-item:focus-visible {
+  outline: 2px solid #d4750a;
+  outline-offset: -2px;
+}
+
+.leasing-workspace .leasing-nav-item > svg {
+  justify-self: center;
+  font-size: 16px;
+}
+
+.leasing-workspace .leasing-nav-item > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.leasing-workspace .leasing-content {
+  min-width: 0;
+  min-height: 0;
+  padding: 24px clamp(18px, 2.4vw, 34px) 32px;
+  overflow: auto;
+}
+
+.leasing-workspace .leasing-route-loading {
+  display: flex;
+  min-height: 220px;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  color: var(--leasing-shell-muted);
+  font-size: 14px;
+}
+
+.leasing-workspace .leasing-route-loading svg {
+  width: 18px;
+  height: 18px;
+  animation: leasing-route-spin 900ms linear infinite;
+}
+
+.leasing-workspace.leasing-access-denied {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  place-items: center;
+  padding: 24px;
+}
+
+.leasing-workspace .leasing-access-card {
+  display: grid;
+  max-width: 460px;
+  justify-items: center;
+  gap: 10px;
+  color: #4d5964;
+  text-align: center;
+}
+
+.leasing-workspace .leasing-access-card > svg {
+  color: var(--leasing-shell-accent);
+  font-size: 30px;
+}
+
+.leasing-workspace .leasing-access-card h1,
+.leasing-workspace .leasing-access-card p {
+  margin: 0;
+}
+
+.leasing-workspace .leasing-access-card h1 {
+  color: #20272d;
+  font-size: 20px;
+}
+
+@media (max-width: 880px) {
+  .leasing-workspace {
+    grid-template-columns: 190px minmax(0, 1fr);
+  }
+
+  .leasing-workspace .leasing-sidebar-brand {
+    padding-inline: 12px;
+  }
+
+  .leasing-workspace .leasing-content {
+    padding-inline: 16px;
+  }
+}
+
+@keyframes leasing-route-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -28,7 +28,8 @@ export const defaultToolMarketApiUrl = "https://i-shu.com";
 export const defaultServstationBaseUrl = "http://101.227.67.76:8800";
 export const defaultServstationIssuerUrl = "http://101.227.67.76:8092";
 export const defaultServstationClientId = "botstation-agent-client-web";
-export const defaultServstationScope = "openid profile email";
+export const defaultLeasingScopes = ["leasing.read", "leasing.command"] as const;
+export const defaultServstationScope = `openid profile email ${defaultLeasingScopes.join(" ")}`;
 export const defaultServstationRedirectUri = "http://localhost:8800/oauth2/callback";
 export const defaultServstationUser = "dev-user";
 
@@ -504,6 +505,55 @@ export interface ServstationA2AConfigUpdate {
   oidcRedirectUri?: string;
   reverseEnabled?: boolean;
   reverseClientInstanceId?: string;
+}
+
+export type LeasingRequestMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+export interface LeasingBinaryRequestBody {
+  encoding: "base64";
+  data: string;
+}
+
+export interface LeasingMultipartField {
+  name: string;
+  value: string;
+}
+
+export interface LeasingMultipartFile {
+  fieldName: string;
+  fileName: string;
+  contentType?: string;
+  contentBase64: string;
+}
+
+export interface LeasingMultipartRequestBody {
+  encoding: "multipart";
+  fields?: LeasingMultipartField[];
+  files: LeasingMultipartFile[];
+}
+
+export type LeasingRequestBody = string | LeasingBinaryRequestBody | LeasingMultipartRequestBody;
+
+export interface LeasingRequestInput {
+  /** Path relative to the leasing API root, for example `/dashboard`. */
+  path: string;
+  method?: LeasingRequestMethod;
+  headers?: Record<string, string>;
+  body?: LeasingRequestBody;
+}
+
+export type LeasingResponseBody =
+  | { encoding: "empty" }
+  | { encoding: "json"; data: unknown }
+  | { encoding: "text"; data: string }
+  | { encoding: "base64"; data: string };
+
+export interface LeasingResponse {
+  ok: boolean;
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  body: LeasingResponseBody;
 }
 
 export interface ServstationServiceSkillSpec {

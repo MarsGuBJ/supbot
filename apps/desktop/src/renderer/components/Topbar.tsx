@@ -3,6 +3,7 @@ import { DownloadOutlined, MenuFoldOutlined, MenuUnfoldOutlined, RobotOutlined, 
 import { Badge, Button, Segmented, Tooltip } from "antd";
 import type { HBClientUpdateState, RuntimeSnapshot } from "@supbot/shared";
 import { translate, type Language } from "../i18n";
+import { canReadLeasing } from "../leasing/permissions";
 import type { WorkspaceView } from "../lib/types";
 import { ServerAgentConnectionButton } from "../views/ServerAgentWorkspace";
 
@@ -62,6 +63,9 @@ export function Topbar({
         options={[
           { label: translate(language, "Chat"), value: "chat" },
           { label: translate(language, "Server Agent"), value: "server" },
+          ...(canReadLeasing(snapshot.identityContext)
+            ? [{ label: translate(language, "Leasing"), value: "leasing" }]
+            : []),
           { label: translate(language, "Config"), value: "config" },
         ]}
       />
