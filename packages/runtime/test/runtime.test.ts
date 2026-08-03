@@ -487,7 +487,7 @@ describe("model client helpers", () => {
         runSubagent: async () => ({ text: "unused" }),
       },
       permissionMode: "bypassPermissions",
-      permissionRules: [],
+      getPermissionRules: () => [],
       maxTurns: 1,
       requestPermission: async () => "approved",
       onEvent: () => undefined,
@@ -2517,6 +2517,93 @@ describe("SupbotRuntime", () => {
       expect(trace?.toolCalls[0].status).toBe("completed");
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  test("applies a newly added wildcard allow rule to the active job", async () => {
+    const runtime = await createRuntime();
+    const firstCommand = process.platform === "win32" ? "Write-Output live-rule-first" : "printf live-rule-first";
+    const secondCommand = process.platform === "win32" ? "Write-Output live-rule-second" : "printf live-rule-second";
+    const mock = await withMockModel(runtime, (body, call) => {
+      if (call === 1) {
+        return {
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_shell_live_rule_first",
+                    type: "function",
+                    function: { name: "Shell", arguments: JSON.stringify({ command: firstCommand }) },
+                  },
+                ],
+              },
+            },
+          ],
+        };
+      }
+      if (call === 2) {
+        const parsed = JSON.parse(body);
+        expect(
+          parsed.messages.some(
+            (message: { role: string; content: string }) =>
+              message.role === "tool" && message.content.includes("live-rule-first"),
+          ),
+        ).toBe(true);
+        return {
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_shell_live_rule_second",
+                    type: "function",
+                    function: { name: "Shell", arguments: JSON.stringify({ command: secondCommand }) },
+                  },
+                ],
+              },
+            },
+          ],
+        };
+      }
+      const parsed = JSON.parse(body);
+      expect(
+        parsed.messages.some(
+          (message: { role: string; content: string }) =>
+            message.role === "tool" && message.content.includes("live-rule-second"),
+        ),
+      ).toBe(true);
+      return { choices: [{ message: { content: "Live wildcard rule applied." } }] };
+    });
+    let jobId = "";
+    try {
+      const result = await runtime.sendPrompt({ prompt: "apply a wildcard rule while this job is waiting" });
+      jobId = result.job.id;
+      await waitForCondition("pending shell permission", () => runtime.snapshot().pendingToolPermissions.length === 1);
+
+      await runtime.addPermissionRule({ toolName: "*", behavior: "allow" });
+
+      expect(runtime.snapshot().pendingToolPermissions).toHaveLength(0);
+      await waitForCondition("second tool decision", () => {
+        const job = runtime.snapshot().jobs.find((item) => item.id === jobId);
+        return runtime.snapshot().pendingToolPermissions.length > 0 || job?.status === "completed";
+      });
+      expect(runtime.snapshot().pendingToolPermissions).toHaveLength(0);
+      await waitForJob(runtime, jobId);
+      expect(runtime.snapshot().agentLoopTraces.find((item) => item.jobId === jobId)?.toolCalls).toMatchObject([
+        { toolName: "Shell", status: "completed" },
+        { toolName: "Shell", status: "completed" },
+      ]);
+      expect(mock.calls()).toBe(3);
+    } finally {
+      const job = runtime.snapshot().jobs.find((item) => item.id === jobId);
+      if (job && !["completed", "failed", "canceled"].includes(job.status)) {
+        await runtime.cancelJob(job.id);
+        await waitForJob(runtime, job.id);
+      }
+      await mock.close();
     }
   });
 

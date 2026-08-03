@@ -29,7 +29,7 @@ export interface QueryLoopInput {
   registry: ToolRegistry;
   toolContext: ToolExecutionContext;
   permissionMode: PermissionMode;
-  permissionRules: PermissionRule[];
+  getPermissionRules(): PermissionRule[];
   maxTurns?: number;
   permissionTimeoutMs?: number;
   requestPermission(permission: PendingToolPermission): Promise<"approved" | "denied">;
@@ -176,7 +176,7 @@ async function executeOne(
     registry: input.registry,
     context: input.toolContext,
     permissionMode: input.permissionMode,
-    permissionRules: input.permissionRules,
+    permissionRules: input.getPermissionRules(),
     permissionTimeoutMs: input.permissionTimeoutMs,
     requestPermission: input.requestPermission,
     onPermissionTimeout: input.onPermissionTimeout,

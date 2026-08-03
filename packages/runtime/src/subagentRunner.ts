@@ -33,7 +33,7 @@ export interface SubagentRunnerHost {
   memory: MemorySnapshot;
   registry: ToolRegistry;
   permissionMode: PermissionMode;
-  permissionRules: PermissionRule[];
+  getPermissionRules(): PermissionRule[];
   randomId(prefix: string): string;
   createToolContext(signal: AbortSignal, jobId: string, depth: number): ToolExecutionContext;
   requestPermission(permission: PendingToolPermission): Promise<"approved" | "denied">;
@@ -104,7 +104,7 @@ export class SubagentRunner {
         registry: this.host.registry,
         toolContext: this.host.createToolContext(input.signal, input.parentJobId, input.depth + 1),
         permissionMode: this.host.permissionMode,
-        permissionRules: this.host.permissionRules,
+        getPermissionRules: this.host.getPermissionRules,
         signal: input.signal,
         maxTurns: 6,
         requestPermission: (permission) => this.host.requestPermission(permission),
