@@ -2,9 +2,9 @@ import { useCallback, useMemo, useState, type FormEvent } from "react";
 import { BriefcaseBusiness, Plus, Search } from "lucide-react";
 import {
   createProject,
-  fetchCommissionAgreements,
   fetchCustomers,
   fetchPartners,
+  fetchProjectCommissionAgreements,
   fetchProjects,
   newIdempotencyKey,
 } from "../api";
@@ -46,7 +46,7 @@ export default function ProjectsPage({ session }: { session: Session }) {
         fetchProjects(session, signal),
         fetchCustomers(session, signal),
         fetchPartners(session, signal),
-        fetchCommissionAgreements(session, signal),
+        fetchProjectCommissionAgreements(session, signal),
       ]);
       return { projects, customers, partners, agreements };
     },

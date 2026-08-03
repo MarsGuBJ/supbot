@@ -108,6 +108,19 @@ export const fetchPartnerAdmissions = (session: Session, signal?: AbortSignal) =
   requestList<PartnerAdmission>("/partner-admissions", session, signal);
 export const fetchCommissionAgreements = (session: Session, signal?: AbortSignal) =>
   requestList<CommissionAgreement>("/commission-agreements", session, signal);
+export async function fetchProjectCommissionAgreements(
+  session: Session,
+  signal?: AbortSignal,
+): Promise<ListResponse<CommissionAgreement>> {
+  try {
+    return await fetchCommissionAgreements(session, signal);
+  } catch (error) {
+    if (error instanceof LeasingAPIError && error.status === 403) {
+      return { items: [], total: 0 };
+    }
+    throw error;
+  }
+}
 export const fetchCommissionAccruals = (session: Session, signal?: AbortSignal) =>
   requestList<CommissionAccrual>("/commission-accruals", session, signal);
 export const fetchCommissionSettlements = (session: Session, signal?: AbortSignal) =>

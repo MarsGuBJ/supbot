@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { LeasingAPIError, requestJSON } from "./api";
+import { fetchProjectCommissionAgreements, LeasingAPIError, requestJSON } from "./api";
 import type { Session } from "./types";
 
 const session: Session = {
@@ -58,6 +58,30 @@ describe("leasing renderer API adapter", () => {
     expect(error.status).toBe(409);
     expect(error.isConflict).toBe(true);
     expect(error.requestId).toBe("req-409");
+  });
+
+  it("treats forbidden commission agreements as unavailable project form data", async () => {
+    const requestLeasing = window.supbot.requestLeasing as ReturnType<typeof vi.fn>;
+    requestLeasing.mockResolvedValue({
+      ok: false,
+      status: 403,
+      statusText: "Forbidden",
+      headers: {},
+      body: {
+        encoding: "json",
+        data: {
+          error: {
+            code: "command_forbidden",
+            message: "authenticated business role cannot execute this leasing command",
+          },
+        },
+      },
+    });
+
+    await expect(fetchProjectCommissionAgreements(session)).resolves.toEqual({ items: [], total: 0 });
+    expect(requestLeasing).toHaveBeenCalledWith(
+      expect.objectContaining({ path: "/commission-agreements", method: "GET" }),
+    );
   });
 });
 
