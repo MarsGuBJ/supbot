@@ -190,7 +190,9 @@ const legacyLocalBotstationA2A = {
 };
 
 const legacyRemoteBotstationA2A = {
-  baseUrl: "http://101.227.67.76",
+  bareBaseUrl: "http://101.227.67.76",
+  baseUrl: "http://101.227.67.76:8800",
+  issuerUrl: "http://101.227.67.76:8092",
 };
 
 const defaultBotstationA2A = {
@@ -1110,7 +1112,9 @@ function shouldUseLocalBotstationDefault(rawValue: string, normalizedValue: stri
     return (
       normalizedValue === legacyLocalBotstationA2A.baseUrl ||
       normalizedValue === legacyLocalBotstationA2A.issuerUrl ||
+      normalizedValue === legacyRemoteBotstationA2A.bareBaseUrl ||
       normalizedValue === legacyRemoteBotstationA2A.baseUrl ||
+      normalizedValue === legacyRemoteBotstationA2A.issuerUrl ||
       url.hostname === "zstupu.com" ||
       url.hostname.endsWith(".zstupu.com")
     );

@@ -96,7 +96,7 @@ async function main() {
   const updateConfig = fs.existsSync(updateConfigPath) ? fs.readFileSync(updateConfigPath, "utf8") : "";
   const hasUpdateConfig =
     updateConfig.includes("provider: generic") &&
-    updateConfig.includes("101.227.67.76:8800") &&
+    updateConfig.includes("101.227.67.77:8800") &&
     updateConfig.includes("useMultipleRangeRequest: false");
   const verification = { ...result, seededSkillCount, markerExists, hasUpdateConfig, userDataDir };
   console.log(JSON.stringify(verification, null, 2));

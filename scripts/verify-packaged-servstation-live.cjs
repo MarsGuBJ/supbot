@@ -309,8 +309,8 @@ async function main() {
     ),
   );
   if (
-    before.servstationA2A.config.baseUrl !== "http://101.227.67.76:8800" ||
-    before.servstationA2A.config.oidc?.issuerUrl !== "http://101.227.67.76:8092" ||
+    before.servstationA2A.config.baseUrl !== "http://101.227.67.77:8800" ||
+    before.servstationA2A.config.oidc?.issuerUrl !== "http://101.227.67.77:8092" ||
     loginResult.login?.identityContext?.userId !== loginUser ||
     result.reverseStatus !== "connected" ||
     !result.peerId ||

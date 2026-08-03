@@ -25,8 +25,8 @@ export const defaultToolMarketApiUrl = "https://i-shu.com";
 
 // Default Servstation/Botstation endpoints. The current deployment only serves
 // plain HTTP on this host; migrate these defaults to https:// once TLS is available.
-export const defaultServstationBaseUrl = "http://101.227.67.76:8800";
-export const defaultServstationIssuerUrl = "http://101.227.67.76:8092";
+export const defaultServstationBaseUrl = "http://101.227.67.77:8800";
+export const defaultServstationIssuerUrl = "http://101.227.67.77:8092";
 export const defaultServstationClientId = "botstation-agent-client-web";
 export const defaultLeasingScopes = ["leasing.read", "leasing.command"] as const;
 export const defaultServstationScope = `openid profile email ${defaultLeasingScopes.join(" ")}`;

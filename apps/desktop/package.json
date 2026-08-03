@@ -81,7 +81,7 @@
     "publish": [
       {
         "provider": "generic",
-        "url": "http://101.227.67.76:8800/api/v1/hbclient/updates/stable/win32-x64",
+        "url": "http://101.227.67.77:8800/api/v1/hbclient/updates/stable/win32-x64",
         "useMultipleRangeRequest": false
       }
     ],

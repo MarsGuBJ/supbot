@@ -1125,7 +1125,7 @@ describe("SupbotRuntime", () => {
     expect(restarted.snapshot().capabilities.some((item) => item.id === "tool.scheduler")).toBe(false);
   });
 
-  test("migrates the bare Botstation host to the public agent client port", async () => {
+  test("migrates the previous Botstation endpoints to the new defaults", async () => {
     const rootDir = await createGitRoot();
     const dir = await mkdtemp(join(tmpdir(), "supbot-test-"));
     tempDirs.push(dir);
@@ -1133,15 +1133,19 @@ describe("SupbotRuntime", () => {
     const state = createInitialState();
     state.servstationA2AConfig = {
       ...state.servstationA2AConfig,
-      baseUrl: "http://101.227.67.76",
+      baseUrl: "http://101.227.67.76:8800",
+      oidc: {
+        ...state.servstationA2AConfig.oidc!,
+        issuerUrl: "http://101.227.67.76:8092",
+      },
     };
     await storage.save(state);
 
     const runtime = new SupbotRuntime(storage, { rootDir });
     await runtime.init();
     const config = runtime.snapshot().servstationA2A.config;
-    expect(config.baseUrl).toBe("http://101.227.67.76:8800");
-    expect(config.oidc?.issuerUrl).toBe("http://101.227.67.76:8092");
+    expect(config.baseUrl).toBe("http://101.227.67.77:8800");
+    expect(config.oidc?.issuerUrl).toBe("http://101.227.67.77:8092");
   });
 
   test("installs market skills and plugins into native local folders", async () => {
