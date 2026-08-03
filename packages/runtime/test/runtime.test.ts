@@ -1137,8 +1137,17 @@ describe("SupbotRuntime", () => {
       oidc: {
         ...state.servstationA2AConfig.oidc!,
         issuerUrl: "http://101.227.67.76:8092",
+        accessTokenExpiresAt: new Date(Date.now() + 300_000).toISOString(),
+        refreshTokenSaved: true,
+        userId: "old-user",
       },
     };
+    state.servstationA2AOidcSecret = JSON.stringify({
+      accessToken: "old-access-token",
+      issuerUrl: "http://101.227.67.76:8092",
+      clientId: "botstation-agent-client-web",
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
+    });
     await storage.save(state);
 
     const runtime = new SupbotRuntime(storage, { rootDir });
@@ -1146,6 +1155,9 @@ describe("SupbotRuntime", () => {
     const config = runtime.snapshot().servstationA2A.config;
     expect(config.baseUrl).toBe("http://101.227.67.77:8800");
     expect(config.oidc?.issuerUrl).toBe("http://101.227.67.77:8092");
+    expect(config.oidc?.accessTokenExpiresAt).toBeUndefined();
+    expect(config.oidc?.refreshTokenSaved).toBe(false);
+    await expect(runtime.servstationA2AAccessToken()).rejects.toThrow("OIDC session is not configured");
   });
 
   test("installs market skills and plugins into native local folders", async () => {

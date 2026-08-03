@@ -117,6 +117,96 @@ describe("leasing transport", () => {
     expect(calls[1].headers.get("Authorization")).toBe("Bearer token-1");
   });
 
+  it("reauthenticates after a 401 when no OIDC refresh token is available", async () => {
+    let authenticated = false;
+    const reauthenticate = vi.fn(async () => {
+      authenticated = true;
+    });
+    const service: LeasingRuntime = {
+      servstationA2AConfig: vi.fn(async () => ({
+        ...config("oidc"),
+        oidc: {
+          ...config("oidc").oidc,
+          refreshTokenSaved: false,
+        },
+      })),
+      identityContext: vi.fn(async () => identity),
+      servstationA2AAccessToken: vi.fn(async (_signal?: AbortSignal, forceRefresh?: boolean) => {
+        if (forceRefresh) {
+          throw new Error("Servstation OIDC refresh token is not saved.");
+        }
+        return authenticated ? "fresh-token" : "stale-token";
+      }),
+    };
+    const seenTokens: string[] = [];
+
+    const result = await requestLeasing(
+      service,
+      { path: "/dashboard" },
+      {
+        reauthenticate,
+        fetch: vi.fn(async (input, init) => {
+          const request = new Request(input, init);
+          const token = request.headers.get("Authorization") || "";
+          seenTokens.push(token);
+          return token === "Bearer fresh-token"
+            ? response(JSON.stringify({ status: "ok" }), {
+                status: 200,
+                headers: { "content-type": "application/json" },
+              })
+            : response(JSON.stringify({ error: "expired" }), {
+                status: 401,
+                headers: { "content-type": "application/json" },
+              });
+        }),
+      },
+    );
+
+    expect(result.status).toBe(200);
+    expect(reauthenticate).toHaveBeenCalledTimes(1);
+    expect(seenTokens).toEqual(["Bearer stale-token", "Bearer fresh-token"]);
+    expect(service.servstationA2AAccessToken).not.toHaveBeenCalledWith(undefined, true);
+  });
+
+  it("stops after one reauthentication when the replacement token is also rejected", async () => {
+    const service = runtime("oidc");
+    service.servstationA2AConfig = vi.fn(async () => ({
+      ...config("oidc"),
+      oidc: { ...config("oidc").oidc, refreshTokenSaved: false },
+    }));
+    const reauthenticate = vi.fn(async () => undefined);
+    const fetchImpl = vi.fn(async () =>
+      response(JSON.stringify({ error: "unauthorized" }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const result = await requestLeasing(service, { path: "/dashboard" }, { reauthenticate, fetch: fetchImpl });
+
+    expect(result.status).toBe(401);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(reauthenticate).toHaveBeenCalledTimes(1);
+  });
+
+  it("propagates a canceled reauthentication without another request", async () => {
+    const service = runtime("oidc");
+    service.servstationA2AConfig = vi.fn(async () => ({
+      ...config("oidc"),
+      oidc: { ...config("oidc").oidc, refreshTokenSaved: false },
+    }));
+    const fetchImpl = vi.fn(async () => response(null, { status: 401 }));
+    const reauthenticate = vi.fn(async () => {
+      throw new Error("Botstation sign-in was canceled before leasing access was granted.");
+    });
+
+    await expect(requestLeasing(service, { path: "/dashboard" }, { reauthenticate, fetch: fetchImpl })).rejects.toThrow(
+      "sign-in was canceled",
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(reauthenticate).toHaveBeenCalledTimes(1);
+  });
+
   it("preserves leasing authorization and conflict responses for the renderer", async () => {
     const service = runtime("identityHeaders");
     const denied = await requestLeasing(

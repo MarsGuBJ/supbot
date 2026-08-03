@@ -39,9 +39,11 @@ import type {
   RemoteBridgeConfig,
   ScheduledJobInput,
   SendPromptInput,
+  ServstationA2AConfig,
   ServstationA2AConfigUpdate,
   ServstationA2AOidcLoginInput,
   ServstationA2AOidcLoginResult,
+  ServstationA2AOidcTokenSet,
   ServstationAutopilotStartInput,
   ServstationAutopilotStatusUpdate,
   ServstationClientSnapshotQuery,
@@ -69,7 +71,8 @@ import {
 } from "@supbot/shared";
 import { HBClientUpdateManager } from "./updateManager";
 import { removeOidcLoginWindowListeners } from "./oidcLoginWindowLifecycle";
-import { hasLeasingScopes, mergeLeasingScopes, requestLeasing, validateLeasingRequest } from "./leasingApi";
+import { mergeLeasingScopes, requestLeasing, validateLeasingRequest, type LeasingRuntime } from "./leasingApi";
+import { LeasingOidcSession, type LeasingOidcLoginInput } from "./leasingOidc";
 
 let mainWindow: BrowserWindow | null = null;
 let runtime: SupbotRuntime | null = null;
@@ -85,7 +88,7 @@ const productionCsp =
   "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'none'";
 const appIconPath = join(__dirname, `../../build/icon.${process.platform === "linux" ? "png" : "ico"}`);
 let productionCspInstalled = false;
-let leasingScopeUpgrade: Promise<void> | undefined;
+const leasingOidcSession = new LeasingOidcSession(authorizeLeasingOidc);
 
 app.setName(appDisplayName);
 app.setAppUserModelId("local.hbclient.desktop");
@@ -352,13 +355,26 @@ interface OidcDiscoveryDocument {
 
 type OidcCodeResult = { status: "authorized"; code: string } | { status: "canceled" };
 
+type OidcAuthorizationResult =
+  | { status: "canceled" }
+  | {
+      status: "authenticated";
+      baseUrl: string;
+      issuerUrl: string;
+      clientId: string;
+      scope: string;
+      redirectUri: string;
+      tokens: ServstationA2AOidcTokenSet;
+      identityContext?: IdentityContext;
+    };
+
 interface OidcAutoLogin {
   userId: string;
   password: string;
   issuerOrigin: string;
 }
 
-async function loginServstationOidc(input: ServstationA2AOidcLoginInput): Promise<ServstationA2AOidcLoginResult> {
+async function authorizeServstationOidc(input: ServstationA2AOidcLoginInput): Promise<OidcAuthorizationResult> {
   const service = getRuntime();
   const currentConfig = await service.servstationA2AConfig();
   const currentIdentity = await service.identityContext();
@@ -456,48 +472,118 @@ async function loginServstationOidc(input: ServstationA2AOidcLoginInput): Promis
     servstationUrl: baseUrl,
     agentInstanceId: currentConfig.agentInstanceId || currentIdentity?.agentInstanceId,
   });
-  const config = await service.updateServstationA2AOidcSession({
-    baseUrl,
-    issuerUrl,
-    clientId,
-    scope,
-    redirectUri,
-    tokens,
-    identityContext,
-  });
-  return { status: "authenticated", config, identityContext };
+  return { status: "authenticated", baseUrl, issuerUrl, clientId, scope, redirectUri, tokens, identityContext };
 }
 
-async function ensureLeasingOidcScopes(): Promise<void> {
+async function loginServstationOidc(input: ServstationA2AOidcLoginInput): Promise<ServstationA2AOidcLoginResult> {
   const service = getRuntime();
-  const config = await service.servstationA2AConfig();
+  const authorization = await authorizeServstationOidc(input);
+  if (authorization.status === "canceled") {
+    return authorization;
+  }
+  const config = await service.updateServstationA2AOidcSession({
+    baseUrl: authorization.baseUrl,
+    issuerUrl: authorization.issuerUrl,
+    clientId: authorization.clientId,
+    scope: authorization.scope,
+    redirectUri: authorization.redirectUri,
+    tokens: authorization.tokens,
+    identityContext: authorization.identityContext,
+  });
+  leasingOidcSession.clear();
+  return { status: "authenticated", config, identityContext: authorization.identityContext };
+}
+
+async function authorizeLeasingOidc(input: ServstationA2AOidcLoginInput): Promise<ServstationA2AOidcTokenSet> {
+  const service = getRuntime();
+  const currentIdentity = await service.identityContext();
+  const authorization = await authorizeServstationOidc(input);
+  if (authorization.status === "canceled") {
+    throw new Error("Botstation sign-in was canceled before leasing access was granted.");
+  }
+  const latestIdentity = await service.identityContext();
+  if (
+    !currentIdentity ||
+    !latestIdentity ||
+    !authorization.identityContext ||
+    !sameBotstationIdentity(currentIdentity, latestIdentity) ||
+    !sameBotstationIdentity(latestIdentity, authorization.identityContext)
+  ) {
+    throw new Error("Leasing sign-in must use the same Botstation account as the current HBClient session.");
+  }
+  return authorization.tokens;
+}
+
+async function reauthenticateLeasingOidc(): Promise<void> {
+  const service = getRuntime();
+  const [config, identity] = await Promise.all([service.servstationA2AConfig(), service.identityContext()]);
   if (!config.enabled || config.authMode !== "oidc") {
-    return;
+    throw new Error("Botstation OIDC authentication is not enabled.");
   }
-  const currentScope = config.oidc?.scope?.trim() || "";
-  const hasRequiredScopes = hasLeasingScopes(currentScope);
-  if (hasRequiredScopes && hasUsableBotstationOidcSession(config)) {
-    return;
+  await leasingOidcSession.accessToken(leasingOidcLoginInput(config, identity), true);
+}
+
+function leasingOidcLoginInput(
+  config: ServstationA2AConfig,
+  identity: IdentityContext | undefined,
+): LeasingOidcLoginInput {
+  if (!identity) {
+    throw new Error("Botstation identity is required before requesting leasing access.");
   }
-  if (!leasingScopeUpgrade) {
-    leasingScopeUpgrade = (async () => {
-      const nextScope = mergeLeasingScopes(currentScope || defaultServstationScope);
-      const login = await loginServstationOidc({
-        baseUrl: config.baseUrl,
-        issuerUrl: config.oidc?.issuerUrl,
-        clientId: config.oidc?.clientId,
-        scope: nextScope,
-        redirectUri: config.oidc?.redirectUri,
-        loginHint: config.staffAgentAccount,
-      });
-      if (login.status === "canceled") {
-        throw new Error("Botstation sign-in was canceled before leasing access was granted.");
+  return {
+    baseUrl: config.baseUrl || defaultServstationBaseUrl,
+    issuerUrl: config.oidc?.issuerUrl || defaultServstationIssuerUrl,
+    clientId: process.env.HBCLIENT_LEASING_OIDC_CLIENT_ID,
+    scope: mergeLeasingScopes(config.oidc?.scope || defaultServstationScope),
+    redirectUri: process.env.HBCLIENT_LEASING_OIDC_REDIRECT_URI,
+    loginHint: config.staffAgentAccount,
+    expectedIdentity: identity,
+  };
+}
+
+function sameBotstationIdentity(left: IdentityContext, right: IdentityContext): boolean {
+  return (
+    left.tenantId === right.tenantId &&
+    left.organizationId === right.organizationId &&
+    left.departmentId === right.departmentId &&
+    left.userId === right.userId
+  );
+}
+
+function createLeasingRuntime(service: SupbotRuntime): LeasingRuntime {
+  return {
+    servstationA2AConfig: async () => {
+      const config = await service.servstationA2AConfig();
+      if (config.authMode !== "oidc") {
+        return config;
       }
-    })().finally(() => {
-      leasingScopeUpgrade = undefined;
-    });
-  }
-  await leasingScopeUpgrade;
+      return {
+        ...config,
+        oidc: {
+          ...(config.oidc || { refreshTokenSaved: false }),
+          scope: mergeLeasingScopes(config.oidc?.scope || defaultServstationScope),
+          refreshTokenSaved: false,
+        },
+      };
+    },
+    identityContext: () => service.identityContext(),
+    servstationA2AAccessToken: async (signal, forceSignIn) => {
+      const [config, identity] = await Promise.all([service.servstationA2AConfig(), service.identityContext()]);
+      if (config.authMode !== "oidc") {
+        return service.servstationA2AAccessToken(signal, forceSignIn);
+      }
+      if (!config.enabled) {
+        throw new Error("Botstation connection is disabled.");
+      }
+      const token = await leasingOidcSession.accessToken(leasingOidcLoginInput(config, identity), Boolean(forceSignIn));
+      const latestIdentity = await service.identityContext();
+      if (!identity || !latestIdentity || !sameBotstationIdentity(identity, latestIdentity)) {
+        leasingOidcSession.clear();
+        throw new Error("Botstation identity changed while leasing access was being granted. Please retry.");
+      }
+      return token;
+    },
+  };
 }
 
 async function discoverOidcDocument(issuerUrl: string): Promise<OidcDiscoveryDocument> {
@@ -971,18 +1057,21 @@ function registerIpc(): void {
   );
   ipcMain.handle("remoteBridge:listAudit", () => getRuntime().listRemoteBridgeAudit());
   ipcMain.handle("identity:get", () => getRuntime().identityContext());
-  ipcMain.handle("identity:update", (_event, input: IdentityContext) =>
-    getRuntime().updateIdentityContext(validateIdentityContext(input)),
-  );
+  ipcMain.handle("identity:update", async (_event, input: IdentityContext) => {
+    leasingOidcSession.clear();
+    return getRuntime().updateIdentityContext(validateIdentityContext(input));
+  });
   ipcMain.handle("leasing:request", async (_event, input: LeasingRequestInput) => {
     const request = validateLeasingRequest(input);
-    await ensureLeasingOidcScopes();
-    return requestLeasing(getRuntime(), request);
+    return requestLeasing(createLeasingRuntime(getRuntime()), request, {
+      reauthenticate: reauthenticateLeasingOidc,
+    });
   });
   ipcMain.handle("servstationA2A:getConfig", () => getRuntime().servstationA2AConfig());
-  ipcMain.handle("servstationA2A:updateConfig", (_event, input: ServstationA2AConfigUpdate) =>
-    getRuntime().updateServstationA2AConfig(validateServstationA2AConfigUpdate(input)),
-  );
+  ipcMain.handle("servstationA2A:updateConfig", async (_event, input: ServstationA2AConfigUpdate) => {
+    leasingOidcSession.clear();
+    return getRuntime().updateServstationA2AConfig(validateServstationA2AConfigUpdate(input));
+  });
   ipcMain.handle("servstationA2A:loginOidc", async (_event, input?: ServstationA2AOidcLoginInput) => {
     const result = await loginServstationOidc(validateServstationA2AOidcLoginInput(input));
     if (result.status === "authenticated") {
@@ -995,7 +1084,10 @@ function registerIpc(): void {
     void updateManager?.check(false);
     return result;
   });
-  ipcMain.handle("servstationA2A:logoutOidc", () => getRuntime().clearServstationA2AOidcSession());
+  ipcMain.handle("servstationA2A:logoutOidc", () => {
+    leasingOidcSession.clear();
+    return getRuntime().clearServstationA2AOidcSession();
+  });
   ipcMain.handle("servstationA2A:connectReverse", async () => {
     const result = await getRuntime().connectServstationReverseBridge();
     void updateManager?.check(false);

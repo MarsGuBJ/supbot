@@ -22,6 +22,8 @@ export interface LeasingTransportOptions {
   fetch?: typeof fetch;
   /** Used by tests; production reads process.env. */
   env?: Record<string, string | undefined>;
+  /** Opens the existing OIDC login flow when the current access token is rejected. */
+  reauthenticate?: () => Promise<void>;
 }
 
 const ALLOWED_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
@@ -118,38 +120,55 @@ export async function requestLeasing(
   options: LeasingTransportOptions = {},
 ): Promise<LeasingResponse> {
   const request = validateLeasingRequest(input);
-  const config = await runtime.servstationA2AConfig();
-  if (!config.enabled) {
-    throw new Error("Botstation connection is disabled.");
-  }
-  const identity = await runtime.identityContext();
-  const baseUrl = resolveLeasingApiBaseUrl(config.baseUrl, identity?.servstationUrl, options.env);
-  const url = `${baseUrl}${request.path}`;
   const fetchImpl = options.fetch || fetch;
+  const loadContext = async () => {
+    const config = await runtime.servstationA2AConfig();
+    if (!config.enabled) {
+      throw new Error("Botstation connection is disabled.");
+    }
+    const identity = await runtime.identityContext();
+    const baseUrl = resolveLeasingApiBaseUrl(config.baseUrl, identity?.servstationUrl, options.env);
+    return { config, identity, url: `${baseUrl}${request.path}` };
+  };
+  let context = await loadContext();
 
   const send = async (forceRefresh: boolean): Promise<Response> => {
     const headers = requestHeaders(request.headers);
-    if (config.authMode === "oidc" || config.authMode === "bearer") {
+    if (context.config.authMode === "oidc" || context.config.authMode === "bearer") {
       const token = await runtime.servstationA2AAccessToken(undefined, forceRefresh);
       if (!token) {
         throw new Error("Botstation authentication token is not configured.");
       }
       headers.set("Authorization", `Bearer ${token}`);
-    } else if (config.authMode === "identityHeaders") {
-      addIdentityHeaders(headers, identity);
+    } else if (context.config.authMode === "identityHeaders") {
+      addIdentityHeaders(headers, context.identity);
     } else {
-      throw new Error(`Unsupported Botstation authentication mode: ${String(config.authMode)}`);
+      throw new Error(`Unsupported Botstation authentication mode: ${String(context.config.authMode)}`);
     }
 
     const body = toRequestBody(request.body, headers);
-    return fetchImpl(url, { method: request.method, headers, body });
+    return fetchImpl(context.url, { method: request.method, headers, body });
   };
 
   let response = await send(false);
-  // A request can race an expiring OIDC token. The runtime refreshes tokens
-  // proactively, and this retry handles an API that rejects one at the edge.
-  if (response.status === 401 && config.authMode === "oidc") {
-    response = await send(true);
+  if (response.status === 401 && context.config.authMode === "oidc") {
+    let needsSignIn = !context.config.oidc?.refreshTokenSaved;
+    if (!needsSignIn) {
+      try {
+        response = await send(true);
+        needsSignIn = response.status === 401;
+      } catch (error) {
+        if (!options.reauthenticate) {
+          throw error;
+        }
+        needsSignIn = true;
+      }
+    }
+    if (needsSignIn && options.reauthenticate) {
+      await options.reauthenticate();
+      context = await loadContext();
+      response = await send(false);
+    }
   }
   return toLeasingResponse(response);
 }

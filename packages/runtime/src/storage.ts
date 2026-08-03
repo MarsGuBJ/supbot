@@ -358,6 +358,34 @@ function normalizeState(input: LegacyRuntimeStateInput): RuntimeState {
   const initial = createInitialState();
   const modelProviders = normalizeModelProviders(input, initial.modelProviders);
   const activeModelProviderId = normalizeActiveModelProviderId(input.activeModelProviderId, modelProviders);
+  let servstationA2AOidcSecret =
+    typeof input.servstationA2AOidcSecret === "string" ? input.servstationA2AOidcSecret : undefined;
+  let servstationA2AConfig = normalizeServstationA2AConfig(
+    input.servstationA2AConfig,
+    Boolean(input.servstationA2ASecret),
+    Boolean(servstationA2AOidcSecret),
+    Boolean(input.servstationA2AStaffAgentPasswordSecret),
+  );
+  if (
+    servstationA2AOidcSecret &&
+    servstationOidcContextChangedDuringNormalization(input.servstationA2AConfig, servstationA2AConfig)
+  ) {
+    servstationA2AOidcSecret = undefined;
+    servstationA2AConfig = {
+      ...normalizeServstationA2AConfig(
+        input.servstationA2AConfig,
+        Boolean(input.servstationA2ASecret),
+        false,
+        Boolean(input.servstationA2AStaffAgentPasswordSecret),
+      ),
+      oidc: {
+        ...servstationA2AConfig.oidc,
+        accessTokenExpiresAt: undefined,
+        refreshTokenSaved: false,
+        userId: undefined,
+      },
+    };
+  }
   return {
     agentName: stringOr(input.agentName, initial.agentName),
     identityContext: normalizeIdentityContext(input.identityContext),
@@ -422,20 +450,23 @@ function normalizeState(input: LegacyRuntimeStateInput): RuntimeState {
     remoteBridgeAudit: Array.isArray(input.remoteBridgeAudit)
       ? (input.remoteBridgeAudit.map(normalizeRemoteBridgeAudit).filter(Boolean) as RemoteBridgeAuditRecord[])
       : [],
-    servstationA2AConfig: normalizeServstationA2AConfig(
-      input.servstationA2AConfig,
-      Boolean(input.servstationA2ASecret),
-      Boolean(input.servstationA2AOidcSecret),
-      Boolean(input.servstationA2AStaffAgentPasswordSecret),
-    ),
+    servstationA2AConfig,
     servstationA2ASecret: typeof input.servstationA2ASecret === "string" ? input.servstationA2ASecret : undefined,
-    servstationA2AOidcSecret:
-      typeof input.servstationA2AOidcSecret === "string" ? input.servstationA2AOidcSecret : undefined,
+    servstationA2AOidcSecret,
     servstationA2AStaffAgentPasswordSecret:
       typeof input.servstationA2AStaffAgentPasswordSecret === "string"
         ? input.servstationA2AStaffAgentPasswordSecret
         : undefined,
   };
+}
+
+function servstationOidcContextChangedDuringNormalization(value: unknown, normalized: ServstationA2AConfig): boolean {
+  const input = value as Partial<ServstationA2AConfig> | undefined;
+  const rawBaseUrl = typeof input?.baseUrl === "string" ? normalizeHttpUrl(input.baseUrl) : "";
+  const rawIssuerUrl = typeof input?.oidc?.issuerUrl === "string" ? normalizeHttpUrl(input.oidc.issuerUrl) : "";
+  return Boolean(
+    (rawBaseUrl && rawBaseUrl !== normalized.baseUrl) || (rawIssuerUrl && rawIssuerUrl !== normalized.oidc?.issuerUrl),
+  );
 }
 
 function normalizeModelProviders(input: LegacyRuntimeStateInput, initial: ModelProviderState[]): ModelProviderState[] {
