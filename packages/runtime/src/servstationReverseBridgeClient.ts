@@ -239,8 +239,19 @@ export class ServstationReverseBridgeClient {
     const baseUrl = this.requireBaseUrl(config, identity);
     const clientInstanceId = config.reverse?.clientInstanceId || this.host.randomId("hbclient");
     await this.host.updateReverseState({ enabled: true, status: "connecting", clientInstanceId });
-    const agentInstanceId = await this.ensureAgentInstanceId(baseUrl, signal);
-    const registration = await this.registerReverseConnection(baseUrl, agentInstanceId, clientInstanceId, signal);
+    let agentInstanceId = await this.ensureAgentInstanceId(baseUrl, signal);
+    let registration: ReverseRegisterResponse;
+    try {
+      registration = await this.registerReverseConnection(baseUrl, agentInstanceId, clientInstanceId, signal);
+    } catch (error) {
+      // Agent instances can disappear after a server restart or deployment. Re-provision once
+      // for the exact stale-id response, then let the normal retry loop handle other failures.
+      if (!isMissingAgentInstanceError(error)) {
+        throw error;
+      }
+      agentInstanceId = await this.connectAgentInstance(baseUrl, signal);
+      registration = await this.registerReverseConnection(baseUrl, agentInstanceId, clientInstanceId, signal);
+    }
     const peerId = registration.peer?.id;
     if (!peerId) {
       throw new Error("Botstation HBClient reverse registration did not return a peer id.");
@@ -322,6 +333,10 @@ export class ServstationReverseBridgeClient {
     if (existing) {
       return existing;
     }
+    return this.connectAgentInstance(baseUrl, signal);
+  }
+
+  private async connectAgentInstance(baseUrl: string, signal: AbortSignal): Promise<string> {
     const connected = await this.request<AgentConnectResponse>(baseUrl, "/api/v1/agent/connect", {
       method: "POST",
       signal,
@@ -710,6 +725,13 @@ function isRecoverableReverseRegistrationError(error: unknown): boolean {
     return false;
   }
   return error.message.toLowerCase().includes("invalid input syntax for type json");
+}
+
+function isMissingAgentInstanceError(error: unknown): boolean {
+  if (!(error instanceof ServstationHttpError) || (error.status !== 400 && error.status !== 404)) {
+    return false;
+  }
+  return error.message.toLowerCase().includes("agent instance not found");
 }
 
 function isRecoverableHeartbeatError(error: unknown): boolean {
