@@ -6,6 +6,7 @@ import {
   isBotstationLoginUrl,
   isOidcRedirectUrl,
   localBotstationAutoLogin,
+  resolveOidcAutoSubmitOutcome,
   resolveServstationOidcAutoLogin,
   servstationOidcIdentitySeed,
   servstationOidcLoginWindowPartition,
@@ -243,6 +244,29 @@ describe("isBotstationLoginUrl", () => {
     expect(isBotstationLoginUrl(`${loopbackIssuer}/oauth2/login`, loopbackIssuer)).toBe(true);
     expect(isBotstationLoginUrl(`${loopbackIssuer}/oauth2/login/extra`, loopbackIssuer)).toBe(false);
     expect(isBotstationLoginUrl(`${remoteIssuer}/oauth2/login`, loopbackIssuer)).toBe(false);
+  });
+});
+
+describe("resolveOidcAutoSubmitOutcome", () => {
+  it("submits the autofill on the first arrival at the login page", () => {
+    expect(resolveOidcAutoSubmitOutcome(false, `${remoteIssuer}/oauth2/login`, remoteIssuer)).toBe("submit");
+  });
+
+  it("treats a return to the login page after submitting as an SSO rejection", () => {
+    // A successful submit navigates away from the login page, so landing here again
+    // means the credentials were refused and the flow must fail instead of hanging.
+    expect(resolveOidcAutoSubmitOutcome(true, `${remoteIssuer}/oauth2/login`, remoteIssuer)).toBe("rejected");
+  });
+
+  it("ignores unrelated pages in both states", () => {
+    for (const autoSubmitted of [false, true]) {
+      expect(resolveOidcAutoSubmitOutcome(autoSubmitted, `${remoteIssuer}/oauth2/authorize`, remoteIssuer)).toBe(
+        "ignore",
+      );
+      expect(resolveOidcAutoSubmitOutcome(autoSubmitted, `${loopbackIssuer}/oauth2/login`, remoteIssuer)).toBe(
+        "ignore",
+      );
+    }
   });
 });
 

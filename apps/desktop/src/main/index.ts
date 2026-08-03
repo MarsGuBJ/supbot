@@ -74,8 +74,8 @@ import { HBClientUpdateManager } from "./updateManager";
 import { removeOidcLoginWindowListeners } from "./oidcLoginWindowLifecycle";
 import {
   buildServstationOidcAuthorizationUrl,
-  isBotstationLoginUrl,
   isOidcRedirectUrl,
+  resolveOidcAutoSubmitOutcome,
   resolveServstationOidcAutoLogin,
   servstationOidcIdentitySeed,
   servstationOidcLoginWindowPartition,
@@ -717,11 +717,18 @@ function openOidcLoginWindow(
     const onDidNavigate = (_event: Electron.Event, url: string): void => maybeComplete(url);
     let autoSubmitted = false;
     const onDidFinishLoad = (): void => {
-      if (!autoLogin || autoSubmitted || authWindow.isDestroyed()) {
+      if (!autoLogin || authWindow.isDestroyed()) {
         return;
       }
       const currentUrl = authWindow.webContents.getURL();
-      if (!isBotstationLoginUrl(currentUrl, autoLogin.issuerOrigin)) {
+      const outcome = resolveOidcAutoSubmitOutcome(autoSubmitted, currentUrl, autoLogin.issuerOrigin);
+      if (outcome === "ignore") {
+        return;
+      }
+      if (outcome === "rejected") {
+        // A successful submit navigates away from the login page, so landing here again means
+        // the SSO refused the credentials; fail the flow instead of hanging on this window.
+        settle(() => reject(new Error("Servstation sign-in rejected the provided account or password.")));
         return;
       }
       autoSubmitted = true;

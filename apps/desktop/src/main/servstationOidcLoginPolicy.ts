@@ -149,6 +149,25 @@ export function isBotstationLoginUrl(rawUrl: string, issuerOrigin: string): bool
   }
 }
 
+export type OidcAutoSubmitOutcome = "submit" | "rejected" | "ignore";
+
+/**
+ * Decides what an auto-login login-window load means. The first arrival at the SSO login page
+ * triggers the one-shot autofill; a successful submit navigates away from the login page, so
+ * landing on the login page again afterwards means the SSO rejected the credentials and the
+ * flow must fail instead of hanging on an unattended window.
+ */
+export function resolveOidcAutoSubmitOutcome(
+  autoSubmitted: boolean,
+  currentUrl: string,
+  issuerOrigin: string,
+): OidcAutoSubmitOutcome {
+  if (!isBotstationLoginUrl(currentUrl, issuerOrigin)) {
+    return "ignore";
+  }
+  return autoSubmitted ? "rejected" : "submit";
+}
+
 export function isOidcRedirectUrl(rawUrl: string, redirectUri: string): boolean {
   try {
     const actual = new URL(rawUrl);
