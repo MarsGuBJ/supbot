@@ -497,6 +497,25 @@ describe("model client helpers", () => {
 });
 
 describe("SupbotRuntime", () => {
+  test("defaults model max tokens to 200K and preserves that value when saved", async () => {
+    const runtime = await createRuntime();
+    const snapshot = runtime.snapshot();
+
+    expect(snapshot.modelConfig.maxTokens).toBe(200_000);
+    expect(snapshot.modelProviders[0]?.maxTokens).toBe(200_000);
+
+    const saved = await runtime.updateModelConfig({
+      providerName: snapshot.modelConfig.providerName,
+      baseUrl: snapshot.modelConfig.baseUrl,
+      model: snapshot.modelConfig.model,
+      temperature: snapshot.modelConfig.temperature,
+      maxTokens: 200_000,
+    });
+
+    expect(saved.maxTokens).toBe(200_000);
+    expect(runtime.snapshot().modelConfig.maxTokens).toBe(200_000);
+  });
+
   test("saves model config while redacting the API key", async () => {
     const runtime = await createRuntime();
     const saved = await runtime.updateModelConfig({

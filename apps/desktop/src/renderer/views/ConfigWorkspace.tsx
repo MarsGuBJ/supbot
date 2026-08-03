@@ -755,7 +755,7 @@ export function ModelConfigCard({
             <Slider min={0} max={2} step={0.1} />
           </Form.Item>
           <Form.Item label={t("Max tokens")} name="maxTokens">
-            <InputNumber min={64} max={128000} style={{ width: "100%" }} />
+            <InputNumber min={64} max={200_000} style={{ width: "100%" }} />
           </Form.Item>
         </Form>
       </Modal>

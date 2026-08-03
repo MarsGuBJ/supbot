@@ -1918,7 +1918,7 @@ function validateModelProviderUpdate(input: ModelProviderUpdate): ModelProviderU
     baseUrl: requiredString(value.baseUrl, "model base URL"),
     model: requiredString(value.model, "model name"),
     temperature: optionalNumber(value.temperature, "temperature") ?? 0.2,
-    maxTokens: optionalNumber(value.maxTokens, "max tokens") ?? 4096,
+    maxTokens: optionalNumber(value.maxTokens, "max tokens") ?? 200_000,
     apiKey: optionalString(value.apiKey, "API key"),
     clearApiKey: optionalBoolean(value.clearApiKey, "clear API key"),
   };
