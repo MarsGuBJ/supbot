@@ -41,6 +41,7 @@ import type {
   SendPromptInput,
   ServstationA2AConfig,
   ServstationA2AConfigUpdate,
+  ServstationA2AAccountSwitchInput,
   ServstationA2AOidcLoginInput,
   ServstationA2AOidcLoginResult,
   ServstationA2AOidcTokenSet,
@@ -71,6 +72,16 @@ import {
 } from "@supbot/shared";
 import { HBClientUpdateManager } from "./updateManager";
 import { removeOidcLoginWindowListeners } from "./oidcLoginWindowLifecycle";
+import {
+  buildServstationOidcAuthorizationUrl,
+  isBotstationLoginUrl,
+  isOidcRedirectUrl,
+  resolveServstationOidcAutoLogin,
+  servstationOidcIdentitySeed,
+  servstationOidcLoginWindowPartition,
+  validateServstationA2AAccountSwitchInput,
+  type OidcAutoLogin,
+} from "./servstationOidcLoginPolicy";
 import { mergeLeasingScopes, requestLeasing, validateLeasingRequest, type LeasingRuntime } from "./leasingApi";
 import { LeasingOidcSession, type LeasingOidcLoginInput } from "./leasingOidc";
 
@@ -368,13 +379,12 @@ type OidcAuthorizationResult =
       identityContext?: IdentityContext;
     };
 
-interface OidcAutoLogin {
-  userId: string;
-  password: string;
-  issuerOrigin: string;
-}
+type ServstationOidcAuthorizationInput = ServstationA2AOidcLoginInput & {
+  password?: string;
+  forceReauthentication?: boolean;
+};
 
-async function authorizeServstationOidc(input: ServstationA2AOidcLoginInput): Promise<OidcAuthorizationResult> {
+async function authorizeServstationOidc(input: ServstationOidcAuthorizationInput): Promise<OidcAuthorizationResult> {
   const service = getRuntime();
   const currentConfig = await service.servstationA2AConfig();
   const currentIdentity = await service.identityContext();
@@ -414,11 +424,11 @@ async function authorizeServstationOidc(input: ServstationA2AOidcLoginInput): Pr
     currentConfig.staffAgentAccount ||
     process.env.HBCLIENT_BOTSTATION_USERNAME ||
     defaultServstationUser;
-  const savedPassword = await service.servstationA2AStaffAgentPassword();
-  const autoLogin = localBotstationAutoLogin(
+  const autoLogin = await resolveServstationOidcAutoLogin(
     issuerUrl,
-    loginHint,
-    savedPassword || process.env.HBCLIENT_BOTSTATION_PASSWORD,
+    { loginHint, password: input.password, forceReauthentication: input.forceReauthentication },
+    async () => (await service.servstationA2AStaffAgentPassword()) || process.env.HBCLIENT_BOTSTATION_PASSWORD,
+    { isDev, defaultUser: defaultServstationUser, defaultPassword: defaultBotstationPassword },
   );
   const discovery = await discoverOidcDocument(issuerUrl);
   if (!discovery.authorization_endpoint || !discovery.token_endpoint) {
@@ -427,19 +437,23 @@ async function authorizeServstationOidc(input: ServstationA2AOidcLoginInput): Pr
   const verifier = base64Url(randomBytes(32));
   const challenge = base64Url(createHash("sha256").update(verifier).digest());
   const state = base64Url(randomBytes(16));
-  const authorizationUrl = new URL(discovery.authorization_endpoint);
-  authorizationUrl.searchParams.set("client_id", clientId);
-  authorizationUrl.searchParams.set("redirect_uri", redirectUri);
-  authorizationUrl.searchParams.set("response_type", "code");
-  authorizationUrl.searchParams.set("scope", scope);
-  authorizationUrl.searchParams.set("state", state);
-  authorizationUrl.searchParams.set("code_challenge", challenge);
-  authorizationUrl.searchParams.set("code_challenge_method", "S256");
-  if (loginHint?.trim()) {
-    authorizationUrl.searchParams.set("login_hint", loginHint.trim());
-  }
+  const authorizationUrl = buildServstationOidcAuthorizationUrl(discovery.authorization_endpoint, {
+    clientId,
+    redirectUri,
+    scope,
+    state,
+    challenge,
+    loginHint,
+    forceReauthentication: input.forceReauthentication,
+  });
 
-  const codeResult = await openOidcLoginWindow(authorizationUrl.toString(), redirectUri, state, autoLogin);
+  const codeResult = await openOidcLoginWindow(
+    authorizationUrl.toString(),
+    redirectUri,
+    state,
+    autoLogin,
+    servstationOidcLoginWindowPartition(input.forceReauthentication, state),
+  );
   if (codeResult.status === "canceled") {
     return codeResult;
   }
@@ -467,11 +481,15 @@ async function authorizeServstationOidc(input: ServstationA2AOidcLoginInput): Pr
     throw new Error(`Servstation OIDC token exchange failed: ${message}`);
   }
   const tokens = oidcTokenSetFromTokenResponse(tokenPayload, { issuerUrl, clientId });
-  const identityContext = identityContextFromAccessToken(tokens.accessToken, {
-    ...(currentIdentity || {}),
-    servstationUrl: baseUrl,
-    agentInstanceId: currentConfig.agentInstanceId || currentIdentity?.agentInstanceId,
-  });
+  const identityContext = identityContextFromAccessToken(
+    tokens.accessToken,
+    servstationOidcIdentitySeed({
+      forceReauthentication: input.forceReauthentication,
+      servstationUrl: baseUrl,
+      currentIdentity,
+      agentInstanceId: currentConfig.agentInstanceId,
+    }),
+  );
   return { status: "authenticated", baseUrl, issuerUrl, clientId, scope, redirectUri, tokens, identityContext };
 }
 
@@ -492,6 +510,37 @@ async function loginServstationOidc(input: ServstationA2AOidcLoginInput): Promis
   });
   leasingOidcSession.clear();
   return { status: "authenticated", config, identityContext: authorization.identityContext };
+}
+
+async function switchServstationA2AAccount(input: ServstationA2AAccountSwitchInput): Promise<ServstationA2AConfig> {
+  const service = getRuntime();
+  const currentConfig = await service.servstationA2AConfig();
+  const account = input.staffAgentAccount;
+  const password = input.staffAgentPassword;
+  return service.switchServstationA2AAccount({ staffAgentAccount: account, staffAgentPassword: password }, async () => {
+    const authorization = await authorizeServstationOidc({
+      baseUrl: currentConfig.baseUrl,
+      issuerUrl: currentConfig.oidc?.issuerUrl,
+      clientId: currentConfig.oidc?.clientId,
+      scope: currentConfig.oidc?.scope,
+      redirectUri: currentConfig.oidc?.redirectUri,
+      loginHint: account,
+      password,
+      forceReauthentication: true,
+    });
+    if (authorization.status !== "authenticated" || !authorization.identityContext) {
+      throw new Error("Botstation account switch was canceled before authentication completed.");
+    }
+    return {
+      baseUrl: authorization.baseUrl,
+      issuerUrl: authorization.issuerUrl,
+      clientId: authorization.clientId,
+      scope: authorization.scope,
+      redirectUri: authorization.redirectUri,
+      tokens: authorization.tokens,
+      identityContext: authorization.identityContext,
+    };
+  });
 }
 
 async function authorizeLeasingOidc(input: ServstationA2AOidcLoginInput): Promise<ServstationA2AOidcTokenSet> {
@@ -600,6 +649,7 @@ function openOidcLoginWindow(
   redirectUri: string,
   expectedState: string,
   autoLogin?: OidcAutoLogin,
+  partition?: string,
 ): Promise<OidcCodeResult> {
   return new Promise((resolve, reject) => {
     const authWindow = new BrowserWindow({
@@ -618,6 +668,7 @@ function openOidcLoginWindow(
         sandbox: true,
         webSecurity: true,
         allowRunningInsecureContent: false,
+        ...(partition ? { partition } : {}),
       },
     });
     authWindow.removeMenu();
@@ -635,7 +686,7 @@ function openOidcLoginWindow(
       }
     };
     const maybeComplete = (rawUrl: string, event?: Electron.Event): void => {
-      if (!rawUrl.startsWith(redirectUri)) {
+      if (!isOidcRedirectUrl(rawUrl, redirectUri)) {
         return;
       }
       event?.preventDefault();
@@ -670,7 +721,7 @@ function openOidcLoginWindow(
         return;
       }
       const currentUrl = authWindow.webContents.getURL();
-      if (!isLocalBotstationLoginUrl(currentUrl, autoLogin.issuerOrigin)) {
+      if (!isBotstationLoginUrl(currentUrl, autoLogin.issuerOrigin)) {
         return;
       }
       autoSubmitted = true;
@@ -711,39 +762,6 @@ function openOidcLoginWindow(
     authWindow.on("closed", onClosed);
     authWindow.loadURL(authorizationUrl).catch((error) => settle(() => reject(error)));
   });
-}
-
-function localBotstationAutoLogin(
-  issuerUrl: string,
-  userId: string | undefined,
-  password: string | undefined,
-): OidcAutoLogin | undefined {
-  if (!userId?.trim()) {
-    return undefined;
-  }
-  const issuer = new URL(issuerUrl);
-  if (!isLoopbackHost(issuer.hostname)) {
-    return undefined;
-  }
-  const resolvedPassword =
-    password?.trim() || (isDev && userId.trim() === defaultServstationUser ? defaultBotstationPassword : "");
-  if (!resolvedPassword) {
-    return undefined;
-  }
-  return {
-    userId: userId.trim(),
-    password: resolvedPassword,
-    issuerOrigin: issuer.origin,
-  };
-}
-
-function isLocalBotstationLoginUrl(rawUrl: string, issuerOrigin: string): boolean {
-  try {
-    const url = new URL(rawUrl);
-    return url.origin === issuerOrigin && url.pathname === "/oauth2/login";
-  } catch {
-    return false;
-  }
 }
 
 function isLoopbackHost(hostname: string): boolean {
@@ -1071,6 +1089,12 @@ function registerIpc(): void {
   ipcMain.handle("servstationA2A:updateConfig", async (_event, input: ServstationA2AConfigUpdate) => {
     leasingOidcSession.clear();
     return getRuntime().updateServstationA2AConfig(validateServstationA2AConfigUpdate(input));
+  });
+  ipcMain.handle("servstationA2A:switchAccount", async (_event, input: ServstationA2AAccountSwitchInput) => {
+    const config = await switchServstationA2AAccount(validateServstationA2AAccountSwitchInput(input));
+    leasingOidcSession.clear();
+    void updateManager?.check(false);
+    return config;
   });
   ipcMain.handle("servstationA2A:loginOidc", async (_event, input?: ServstationA2AOidcLoginInput) => {
     const result = await loginServstationOidc(validateServstationA2AOidcLoginInput(input));

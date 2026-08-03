@@ -167,10 +167,12 @@ export class ServstationReverseBridgeClient {
   private retryDelayMs = 1_000;
   private wakeRetry?: () => void;
   private restartAfterLoop = false;
+  private lifecycleVersion = 0;
 
   constructor(private readonly host: ReverseBridgeHost) {}
 
   start(): void {
+    this.lifecycleVersion += 1;
     if (this.loop) {
       this.stopped = false;
       this.retryDelayMs = 1_000;
@@ -194,11 +196,22 @@ export class ServstationReverseBridgeClient {
   }
 
   async stop(disable = true): Promise<void> {
+    const lifecycleVersion = ++this.lifecycleVersion;
     this.restartAfterLoop = false;
     this.stopped = true;
-    this.controller?.abort();
-    this.controller = undefined;
+    const controller = this.controller;
+    controller?.abort();
+    const loop = this.loop;
     this.wakeRetry?.();
+    if (loop) {
+      await loop.catch(() => undefined);
+    }
+    if (this.controller === controller) {
+      this.controller = undefined;
+    }
+    if (this.lifecycleVersion !== lifecycleVersion) {
+      return;
+    }
     await this.host.updateReverseState({
       ...(disable ? { enabled: false } : {}),
       status: "disconnected",
@@ -209,13 +222,14 @@ export class ServstationReverseBridgeClient {
 
   private async runLoop(): Promise<void> {
     while (!this.stopped) {
-      this.controller = new AbortController();
+      const controller = new AbortController();
+      this.controller = controller;
       try {
         await this.host.updateReverseState({ enabled: true, status: "connecting", lastError: undefined });
-        await this.connectOnce(this.controller.signal);
+        await this.connectOnce(controller.signal);
         this.retryDelayMs = 1_000;
       } catch (error) {
-        if (this.stopped || this.controller.signal.aborted) {
+        if (this.stopped || controller.signal.aborted) {
           break;
         }
         await this.host.updateReverseState({
@@ -226,6 +240,10 @@ export class ServstationReverseBridgeClient {
         });
         await this.waitBeforeRetry(this.retryDelayMs);
         this.retryDelayMs = Math.min(30_000, Math.round(this.retryDelayMs * 1.8));
+      } finally {
+        if (this.controller === controller) {
+          this.controller = undefined;
+        }
       }
     }
     if (!this.stopped) {
@@ -261,10 +279,10 @@ export class ServstationReverseBridgeClient {
       `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/a2a-peers/${encodeURIComponent(peerId)}/events`;
     await this.host.updateReverseState({
       enabled: true,
-      status: "connected",
+      status: "connecting",
       peerId,
       clientInstanceId,
-      connectedAt: this.host.nowIso(),
+      connectedAt: undefined,
       lastError: undefined,
     });
     await this.openEventStream(baseUrl, streamUrl, agentInstanceId, peerId, signal);

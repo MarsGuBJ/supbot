@@ -541,6 +541,18 @@ const zh: Record<string, string> = {
   "Configure the Servstation account used to connect the server staff-agent.":
     "配置用于连接服务端 staff-agent 的 Servstation 账号。",
   "Remote staff-agent configuration saved.": "远程 staff-agent 配置已保存。",
+  "Switch staff-agent account": "切换 staff-agent 账号",
+  "Re-authenticate with another account and reconnect the server staff-agent.":
+    "重新输入账号密码并重新连接服务端 staff-agent。",
+  "New staff-agent account": "新 staff-agent 账号",
+  "New staff-agent password": "新 staff-agent 密码",
+  "Switch account and reconnect": "切换账号并重新连接",
+  "Switching account and reconnecting...": "正在切换账号并重新连接...",
+  "Staff-agent account switched successfully.": "staff-agent 账号切换成功。",
+  "Failed to switch staff-agent account: {message}": "切换 staff-agent 账号失败：{message}",
+  "Staff-agent account is required.": "请输入 staff-agent 账号。",
+  "Staff-agent password is required.": "请输入 staff-agent 密码。",
+  "Account switching requires OIDC authentication.": "切换账号需要使用 OIDC 认证。",
   Conversations: "对话",
   Messages: "消息",
   Skills: "技能",

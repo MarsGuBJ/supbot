@@ -25,6 +25,7 @@ import type {
   ScheduledJobInput,
   SendPromptInput,
   ServstationA2AConfigUpdate,
+  ServstationA2AAccountSwitchInput,
   ServstationA2AOidcLoginInput,
   ServstationAutopilotEvent,
   ServstationAutopilotStartInput,
@@ -101,6 +102,8 @@ const api = {
   getServstationA2AConfig: () => ipcRenderer.invoke("servstationA2A:getConfig"),
   updateServstationA2AConfig: (input: ServstationA2AConfigUpdate) =>
     ipcRenderer.invoke("servstationA2A:updateConfig", input),
+  switchServstationA2AAccount: (input: ServstationA2AAccountSwitchInput) =>
+    ipcRenderer.invoke("servstationA2A:switchAccount", input),
   loginServstationOidc: (input?: ServstationA2AOidcLoginInput) => ipcRenderer.invoke("servstationA2A:loginOidc", input),
   refreshServstationOidc: () => ipcRenderer.invoke("servstationA2A:refreshOidc"),
   logoutServstationOidc: () => ipcRenderer.invoke("servstationA2A:logoutOidc"),

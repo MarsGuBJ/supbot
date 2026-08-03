@@ -507,6 +507,12 @@ export interface ServstationA2AConfigUpdate {
   reverseClientInstanceId?: string;
 }
 
+/** One-shot credentials used by the desktop account-switch transaction. */
+export interface ServstationA2AAccountSwitchInput {
+  staffAgentAccount: string;
+  staffAgentPassword: string;
+}
+
 export type LeasingRequestMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export interface LeasingBinaryRequestBody {

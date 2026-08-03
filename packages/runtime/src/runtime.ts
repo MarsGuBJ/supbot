@@ -76,6 +76,7 @@ import {
   type ScheduledJobInput,
   type SendPromptInput,
   type SendPromptResult,
+  type ServstationA2AAccountSwitchInput,
   type ServstationA2AConfig,
   type ServstationA2AConfigUpdate,
   type ServstationA2AOidcSessionUpdate,
@@ -142,6 +143,12 @@ interface RunningAutopilotRun {
   controller: AbortController;
 }
 
+interface ServstationA2AAccountSwitchState {
+  config: ServstationA2AConfig;
+  identityContext?: IdentityContext;
+  oidcSecret?: string;
+}
+
 interface ProjectToolContextOptions {
   project?: Project;
   policy?: AutopilotWritePolicy;
@@ -171,6 +178,8 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
   private readonly localPackageManager: LocalPackageManager;
   private readonly remoteBridgeManager: RemoteBridgeManager;
   private readonly servstationReverseBridgeClient: ServstationReverseBridgeClient;
+  private servstationA2AAccountSwitching = false;
+  private servstationA2AAccountSwitchState?: ServstationA2AAccountSwitchState;
   private readonly memoryManager = new MemoryManager({ randomId, nowIso });
   private readonly projectManager = new ProjectManager({ randomId, nowIso });
   private readonly autopilotOrchestrator = new AutopilotOrchestrator({ randomId, nowIso });
@@ -281,10 +290,10 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       randomId,
     });
     this.servstationReverseBridgeClient = new ServstationReverseBridgeClient({
-      getConfig: () => this.state.servstationA2AConfig,
-      getAccessToken: (signal) => this.servstationA2AAccessToken(signal),
-      getIdentityContext: () => this.state.identityContext,
-      updateConfig: (input) => this.updateServstationA2AConfig(input),
+      getConfig: () => this.servstationReverseConfig(),
+      getAccessToken: (signal) => this.servstationReverseAccessToken(signal),
+      getIdentityContext: () => this.servstationReverseIdentity(),
+      updateConfig: (input) => this.updateServstationA2AConfigFromReverse(input),
       updateReverseState: (input) => this.updateServstationReverseState(input),
       sendReadOnlyPromptAndWait: (input) => this.sendRemotePromptAndWait(input),
       getSnapshot: () => this.snapshot(),
@@ -841,6 +850,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
 
   async updateIdentityContext(input: IdentityContext): Promise<IdentityContext> {
     this.assertLoaded();
+    this.assertServstationA2AAccountSwitchIdle();
     const normalized = normalizeIdentityContext({
       ...input,
       updatedAt: input.updatedAt ?? nowIso(),
@@ -863,8 +873,128 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     return this.state.servstationA2AStaffAgentPasswordSecret;
   }
 
+  async switchServstationA2AAccount(
+    input: ServstationA2AAccountSwitchInput,
+    authorize: () => Promise<ServstationA2AOidcSessionUpdate>,
+  ): Promise<ServstationA2AConfig> {
+    this.assertLoaded();
+    if (this.state.servstationA2AConfig.authMode !== "oidc") {
+      throw new Error("Account switching requires Servstation OIDC authentication.");
+    }
+    if (this.servstationA2AAccountSwitching) {
+      throw new Error("A Servstation account switch is already in progress.");
+    }
+    const staffAgentAccount = requiredString(input.staffAgentAccount, "servstation staff-agent account");
+    const staffAgentPassword = requiredSecretString(input.staffAgentPassword, "servstation staff-agent password");
+    const previous = {
+      config: cloneServstationA2AConfig(this.state.servstationA2AConfig),
+      identityContext: cloneIdentityContext(this.state.identityContext),
+      oidcSecret: this.state.servstationA2AOidcSecret,
+      staffAgentPassword: this.state.servstationA2AStaffAgentPasswordSecret,
+    };
+    let eventBoundary = this.state.runtimeEvents.length;
+    this.servstationA2AAccountSwitching = true;
+
+    try {
+      await this.servstationReverseBridgeClient.stop(false);
+      eventBoundary = this.state.runtimeEvents.length;
+
+      const authorization = await authorize();
+      const candidate = this.createServstationA2AAccountSwitchState(staffAgentAccount, authorization, previous.config);
+      if (candidate.identityContext?.userId !== staffAgentAccount) {
+        throw new Error("The authenticated account does not match the requested staff-agent account.");
+      }
+      this.servstationA2AAccountSwitchState = candidate;
+      await this.updateServstationReverseState({ enabled: true, status: "connecting", lastError: undefined });
+      this.servstationReverseBridgeClient.start();
+      await this.waitForServstationReverseConnection();
+
+      const connected = this.servstationA2AAccountSwitchState;
+      if (!connected || connected.config.reverse?.status !== "connected") {
+        throw new Error("Servstation reverse A2A connection was not confirmed.");
+      }
+      const identityContext = connected.identityContext
+        ? {
+            ...connected.identityContext,
+            roleIds: [...connected.identityContext.roleIds],
+            agentInstanceId: connected.config.agentInstanceId,
+            updatedAt: nowIso(),
+          }
+        : undefined;
+      this.state.servstationA2AConfig = {
+        ...cloneServstationA2AConfig(connected.config),
+        staffAgentAccount,
+        staffAgentPasswordSaved: true,
+        staffAgentPasswordStorage: this.secretStorageKind,
+        oidc: {
+          ...(connected.config.oidc || { refreshTokenSaved: false }),
+          userId: identityContext?.userId,
+        },
+        updatedAt: nowIso(),
+      };
+      this.state.identityContext = identityContext;
+      this.state.servstationA2AOidcSecret = connected.oidcSecret;
+      this.state.servstationA2AStaffAgentPasswordSecret = staffAgentPassword;
+      this.servstationA2AAccountSwitchState = undefined;
+
+      const event = this.createRuntimeEvent("servstation_a2a", "Servstation staff-agent account switched", {
+        staffAgentAccount,
+        userId: identityContext?.userId,
+        agentInstanceId: this.state.servstationA2AConfig.agentInstanceId,
+        peerId: this.state.servstationA2AConfig.reverse?.peerId,
+      });
+      this.addRuntimeEvent(event);
+      try {
+        await this.persistAndBroadcast();
+      } catch (error) {
+        this.state.runtimeEvents = this.state.runtimeEvents.slice(0, eventBoundary);
+        throw error;
+      }
+      const redacted = this.redactServstationA2AConfig();
+      this.emitTyped({ type: "servstation_a2a", config: redacted, event });
+      return redacted;
+    } catch (error) {
+      let disconnectError: unknown;
+      try {
+        await this.servstationReverseBridgeClient.stop(false);
+      } catch (stopError) {
+        disconnectError = stopError;
+      }
+      this.servstationA2AAccountSwitchState = undefined;
+      this.state.runtimeEvents = this.state.runtimeEvents.slice(0, eventBoundary);
+      this.state.identityContext = cloneIdentityContext(previous.identityContext);
+      this.state.servstationA2AOidcSecret = previous.oidcSecret;
+      this.state.servstationA2AStaffAgentPasswordSecret = previous.staffAgentPassword;
+      this.state.servstationA2AConfig = disconnectedServstationA2AConfig(previous.config);
+      const failureEvent = this.createRuntimeEvent("servstation_a2a", "Servstation staff-agent account switch failed", {
+        staffAgentAccount,
+      });
+      this.addRuntimeEvent(failureEvent);
+      let restoreError: unknown;
+      try {
+        await this.persistAndBroadcast();
+        this.emitTyped({ type: "servstation_a2a", config: this.redactServstationA2AConfig(), event: failureEvent });
+      } catch (persistError) {
+        restoreError = persistError;
+      }
+      const rollbackErrors = [disconnectError, restoreError].filter((item) => item !== undefined);
+      if (rollbackErrors.length) {
+        throw new AggregateError(
+          [error, ...rollbackErrors],
+          "Servstation account switch failed and rollback was incomplete.",
+          { cause: error },
+        );
+      }
+      throw error;
+    } finally {
+      this.servstationA2AAccountSwitchState = undefined;
+      this.servstationA2AAccountSwitching = false;
+    }
+  }
+
   async updateServstationA2AConfig(input: ServstationA2AConfigUpdate): Promise<ServstationA2AConfig> {
     this.assertLoaded();
+    this.assertServstationA2AAccountSwitchIdle();
     const current = this.state.servstationA2AConfig;
     const baseUrl = input.baseUrl !== undefined ? normalizeHttpUrl(input.baseUrl) : current.baseUrl;
     const nextSecret = input.clearBearerToken
@@ -893,7 +1023,8 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       staffAgentPasswordChanged = Boolean(previousStaffAgentPassword);
       nextStaffAgentPassword = undefined;
     } else if (typeof input.staffAgentPassword === "string" && input.staffAgentPassword.trim()) {
-      nextStaffAgentPassword = input.staffAgentPassword.trim();
+      // Password bytes are significant: store the value exactly as provided.
+      nextStaffAgentPassword = input.staffAgentPassword;
       staffAgentPasswordChanged = nextStaffAgentPassword !== previousStaffAgentPassword;
     }
     const oidcContextChanged =
@@ -964,6 +1095,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
 
   async connectServstationReverseBridge(): Promise<ServstationA2AConfig> {
     this.assertLoaded();
+    this.assertServstationA2AAccountSwitchIdle();
     if (
       this.state.servstationA2AConfig.authMode === "oidc" &&
       !parseServstationOidcSecret(this.state.servstationA2AOidcSecret)
@@ -981,12 +1113,14 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
 
   async disconnectServstationReverseBridge(): Promise<ServstationA2AConfig> {
     this.assertLoaded();
+    this.assertServstationA2AAccountSwitchIdle();
     await this.servstationReverseBridgeClient.stop(false);
     return this.redactServstationA2AConfig();
   }
 
   async updateServstationA2AOidcSession(input: ServstationA2AOidcSessionUpdate): Promise<ServstationA2AConfig> {
     this.assertLoaded();
+    this.assertServstationA2AAccountSwitchIdle();
     const current = this.state.servstationA2AConfig;
     const baseUrl =
       input.baseUrl !== undefined
@@ -1046,6 +1180,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
 
   async refreshServstationA2AOidcSession(signal?: AbortSignal): Promise<ServstationA2AConfig> {
     this.assertLoaded();
+    this.assertServstationA2AAccountSwitchIdle();
     const current = this.state.servstationA2AConfig;
     const tokens = parseServstationOidcSecret(this.state.servstationA2AOidcSecret);
     if (!tokens) {
@@ -1091,6 +1226,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
 
   async clearServstationA2AOidcSession(): Promise<ServstationA2AConfig> {
     this.assertLoaded();
+    this.assertServstationA2AAccountSwitchIdle();
     const current = this.state.servstationA2AConfig;
     this.state.servstationA2AOidcSecret = undefined;
     this.state.servstationA2AConfig = {
@@ -3777,6 +3913,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
   }
 
   async servstationA2AAccessToken(signal?: AbortSignal, forceRefresh = false): Promise<string | undefined> {
+    this.assertServstationA2AAccountSwitchIdle();
     if (this.state.servstationA2AConfig.authMode !== "oidc") {
       return this.state.servstationA2ASecret;
     }
@@ -3794,7 +3931,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
   private async waitForServstationReverseConnection(timeoutMs = 45_000): Promise<ServstationA2AConfig> {
     const startedAt = Date.now();
     while (Date.now() - startedAt <= timeoutMs) {
-      const reverse = this.state.servstationA2AConfig.reverse;
+      const reverse = this.servstationReverseConfig().reverse;
       if (reverse?.status === "connected") {
         return this.redactServstationA2AConfig();
       }
@@ -3810,7 +3947,9 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     input: Partial<NonNullable<ServstationA2AConfig["reverse"]>>,
   ): Promise<void> {
     this.assertLoaded();
-    const current = this.state.servstationA2AConfig.reverse || { enabled: false, status: "disconnected" as const };
+    const switchState = this.servstationA2AAccountSwitchState;
+    const current = switchState?.config.reverse ||
+      this.state.servstationA2AConfig.reverse || { enabled: false, status: "disconnected" as const };
     const next = {
       ...current,
       ...input,
@@ -3819,6 +3958,10 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     if (next.enabled === false) {
       next.status = "disconnected";
       next.connectedAt = undefined;
+    }
+    if (switchState) {
+      switchState.config = { ...switchState.config, reverse: next, updatedAt: nowIso() };
+      return;
     }
     this.state.servstationA2AConfig = {
       ...this.state.servstationA2AConfig,
@@ -3831,6 +3974,85 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     this.addRuntimeEvent(event);
     await this.persistAndBroadcast();
     this.emitTyped({ type: "servstation_a2a", config: this.redactServstationA2AConfig(), event });
+  }
+
+  private servstationReverseConfig(): ServstationA2AConfig {
+    return this.servstationA2AAccountSwitchState?.config || this.state.servstationA2AConfig;
+  }
+
+  private servstationReverseIdentity(): IdentityContext | undefined {
+    return this.servstationA2AAccountSwitchState?.identityContext || this.state.identityContext;
+  }
+
+  private async servstationReverseAccessToken(signal?: AbortSignal): Promise<string | undefined> {
+    const switchState = this.servstationA2AAccountSwitchState;
+    if (switchState) {
+      return parseServstationOidcSecret(switchState.oidcSecret)?.accessToken;
+    }
+    return this.servstationA2AAccessToken(signal);
+  }
+
+  private async updateServstationA2AConfigFromReverse(
+    input: ServstationA2AConfigUpdate,
+  ): Promise<ServstationA2AConfig> {
+    const switchState = this.servstationA2AAccountSwitchState;
+    if (!switchState) {
+      return this.updateServstationA2AConfig(input);
+    }
+    const current = switchState.config;
+    const nextAgentInstanceId =
+      input.agentInstanceId !== undefined ? input.agentInstanceId.trim() || undefined : current.agentInstanceId;
+    switchState.config = { ...current, agentInstanceId: nextAgentInstanceId, updatedAt: nowIso() };
+    return switchState.config;
+  }
+
+  private createServstationA2AAccountSwitchState(
+    staffAgentAccount: string,
+    authorization: ServstationA2AOidcSessionUpdate,
+    previousConfig: ServstationA2AConfig,
+  ): ServstationA2AAccountSwitchState {
+    const identityContext = authorization.identityContext
+      ? { ...cloneIdentityContext(authorization.identityContext)!, agentInstanceId: undefined }
+      : undefined;
+    const tokens = { ...authorization.tokens, issuerUrl: authorization.issuerUrl, clientId: authorization.clientId };
+    return {
+      config: {
+        ...cloneServstationA2AConfig(previousConfig),
+        enabled: true,
+        baseUrl: authorization.baseUrl || previousConfig.baseUrl,
+        authMode: "oidc",
+        staffAgentAccount,
+        oidc: {
+          ...(previousConfig.oidc || { refreshTokenSaved: false }),
+          issuerUrl: authorization.issuerUrl,
+          clientId: authorization.clientId,
+          scope: authorization.scope || tokens.scope || previousConfig.oidc?.scope,
+          redirectUri: authorization.redirectUri || previousConfig.oidc?.redirectUri,
+          accessTokenExpiresAt: tokens.expiresAt,
+          refreshTokenSaved: Boolean(tokens.refreshToken),
+          userId: identityContext?.userId,
+        },
+        agentInstanceId: undefined,
+        reverse: {
+          ...(previousConfig.reverse || { enabled: false, status: "disconnected" as const }),
+          enabled: true,
+          status: "connecting",
+          peerId: undefined,
+          connectedAt: undefined,
+          lastHeartbeatAt: undefined,
+          lastError: undefined,
+        },
+        updatedAt: nowIso(),
+      },
+      identityContext,
+      oidcSecret: serializeServstationOidcSecret(tokens),
+    };
+  }
+
+  private assertServstationA2AAccountSwitchIdle(): void {
+    if (this.servstationA2AAccountSwitching) {
+      throw new Error("A Servstation account switch is already in progress.");
+    }
   }
 
   private findAssistantMessageForJob(conversationId: string, jobId: string): ChatMessage | undefined {
@@ -4536,6 +4758,42 @@ function requiredString(value: string, label: string): string {
     throw new Error(`${label} is required.`);
   }
   return trimmed;
+}
+
+function requiredSecretString(value: string, label: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${label} is required.`);
+  }
+  return value;
+}
+
+function cloneIdentityContext(value: IdentityContext | undefined): IdentityContext | undefined {
+  return value ? { ...value, roleIds: [...value.roleIds] } : undefined;
+}
+
+function cloneServstationA2AConfig(value: ServstationA2AConfig): ServstationA2AConfig {
+  return {
+    ...value,
+    oidc: value.oidc ? { ...value.oidc } : undefined,
+    reverse: value.reverse ? { ...value.reverse } : undefined,
+  };
+}
+
+function disconnectedServstationA2AConfig(value: ServstationA2AConfig): ServstationA2AConfig {
+  return {
+    ...cloneServstationA2AConfig(value),
+    reverse: {
+      ...(value.reverse || { enabled: false, status: "disconnected" as const }),
+      enabled: false,
+      status: "disconnected",
+      peerId: undefined,
+      connectedAt: undefined,
+      lastHeartbeatAt: undefined,
+      lastError: undefined,
+      updatedAt: nowIso(),
+    },
+    updatedAt: nowIso(),
+  };
 }
 
 function emptyToUndefined(value: string): string | undefined {

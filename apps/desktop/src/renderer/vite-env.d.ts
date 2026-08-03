@@ -57,6 +57,7 @@ import type {
   ScheduledJobInput,
   SendPromptInput,
   SendPromptResult,
+  ServstationA2AAccountSwitchInput,
   ServstationA2AConfig,
   ServstationA2AConfigUpdate,
   ServstationA2AOidcLoginInput,
@@ -162,6 +163,7 @@ declare global {
       requestLeasing(input: LeasingRequestInput): Promise<LeasingResponse>;
       getServstationA2AConfig(): Promise<ServstationA2AConfig>;
       updateServstationA2AConfig(input: ServstationA2AConfigUpdate): Promise<ServstationA2AConfig>;
+      switchServstationA2AAccount(input: ServstationA2AAccountSwitchInput): Promise<ServstationA2AConfig>;
       loginServstationOidc(input?: ServstationA2AOidcLoginInput): Promise<ServstationA2AOidcLoginResult>;
       refreshServstationOidc(): Promise<ServstationA2AConfig>;
       logoutServstationOidc(): Promise<ServstationA2AConfig>;

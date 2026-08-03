@@ -949,22 +949,35 @@ async function main() {
   if (finalLayoutMetrics.messageStream.distanceFromBottom > 2) {
     throw new Error("Message stream did not start at the bottom.");
   }
+  // The renderer only re-pins the message stream to the bottom on snapshot updates when
+  // the user is within 48px of the bottom (updateMessageStickiness). The spacer must make
+  // the stream overflow by much more than that, otherwise scrollTop = 0 still counts as
+  // "at bottom" and a refresh would correctly scroll back down. The Virtuoso viewport is
+  // positioned out of flow, so the spacer alone defines the scrollable overflow.
   const scrollAfterRefresh = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => {
       const stream = document.querySelector(".message-stream");
-      const refresh = document.querySelector(".topbar-actions button");
-      if (!stream || !refresh) return null;
+      if (!stream) return null;
       const spacer = document.createElement("div");
       spacer.className = "smoke-scroll-spacer";
-      spacer.style.height = "220px";
+      spacer.style.height = (stream.clientHeight + 480) + "px";
       stream.appendChild(spacer);
       stream.scrollTop = 0;
       stream.dispatchEvent(new Event("scroll", { bubbles: true }));
-      refresh.click();
-      return stream.scrollTop;
+      return {
+        scrollTop: stream.scrollTop,
+        distanceFromBottom: stream.scrollHeight - stream.scrollTop - stream.clientHeight
+      };
     })()`,
   );
+  if (!scrollAfterRefresh || scrollAfterRefresh.scrollTop > 2 || scrollAfterRefresh.distanceFromBottom <= 48) {
+    throw new Error(`Message stream scroll-away setup did not take effect: ${JSON.stringify(scrollAfterRefresh)}`);
+  }
+  // Trigger the same snapshot refresh a topbar refresh would cause (persistAndBroadcast
+  // emits a snapshot event) without clicking the server-agent connect button, whose OIDC
+  // flow is asynchronous and network dependent.
+  await evaluate(page.webSocketDebuggerUrl, `window.supbot.setPermissionMode("default")`);
   await sleep(1000);
   const scrollAfterSettling = await evaluate(
     page.webSocketDebuggerUrl,

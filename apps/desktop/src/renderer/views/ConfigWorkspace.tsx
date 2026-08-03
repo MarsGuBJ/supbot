@@ -51,6 +51,15 @@ import { formatDateTime } from "@supbot/shared";
 import { McpServersCard } from "../components/McpServersCard";
 import { MemoryPanel } from "../components/MemoryPanel";
 import { truncateText } from "../lib/chatFormat";
+import {
+  buildServstationAccountSwitchInput,
+  canSwitchServstationA2AAccount,
+  isRemoteStaffAgentConfigBusy,
+  isServstationAccountSwitchReady,
+  remoteStaffAgentSwitchSubmitLabel,
+  switchServstationA2AAccount,
+  type ServstationAccountSwitchValues,
+} from "../servstationAccountSwitch";
 
 export const hiddenSlashCommandCapabilityIds = new Set(["tool.file", "tool.shell"]);
 
@@ -359,10 +368,21 @@ export function RemoteStaffAgentConfigCard({
   t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
   const [form] = Form.useForm<ServstationA2AConfigUpdate>();
+  const [switchForm] = Form.useForm<ServstationAccountSwitchValues>();
   const [saving, setSaving] = useState(false);
+  const [switching, setSwitching] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
   const config = snapshot.servstationA2A.config;
   const identity = snapshot.identityContext;
+  const reverseStatus = config.reverse?.status || "disconnected";
+  const canSwitchAccount = canSwitchServstationA2AAccount(config);
+  const busy = isRemoteStaffAgentConfigBusy(saving, switching);
+  const switchAccountValue = Form.useWatch("staffAgentAccount", switchForm);
+  const switchPasswordValue = Form.useWatch("staffAgentPassword", switchForm);
+  const switchReady = isServstationAccountSwitchReady({
+    staffAgentAccount: switchAccountValue,
+    staffAgentPassword: switchPasswordValue,
+  });
 
   useEffect(() => {
     form.setFieldsValue({
@@ -381,6 +401,29 @@ export function RemoteStaffAgentConfigCard({
       messageApi.error((error as Error).message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const switchAccount = async (values: ServstationAccountSwitchValues) => {
+    const input = buildServstationAccountSwitchInput(values);
+    if (!input) {
+      return;
+    }
+    setSwitching(true);
+    try {
+      await switchServstationA2AAccount(
+        input,
+        refresh,
+        {
+          resetForm: () => switchForm.resetFields(),
+          clearPassword: () => switchForm.setFieldValue("staffAgentPassword", ""),
+          notifySuccess: (text) => messageApi.success(text),
+          notifyError: (text) => messageApi.error(text),
+        },
+        t,
+      );
+    } finally {
+      setSwitching(false);
     }
   };
 
@@ -403,7 +446,12 @@ export function RemoteStaffAgentConfigCard({
           </Tag>
         </Space>
       </div>
-      <Form form={form} layout="vertical" onFinish={(values) => void save(values as ServstationA2AConfigUpdate)}>
+      <Form
+        form={form}
+        layout="vertical"
+        onFinish={(values) => void save(values as ServstationA2AConfigUpdate)}
+        disabled={busy}
+      >
         <Form.Item label={t("Staff-agent account")} name="staffAgentAccount">
           <Input autoComplete="username" />
         </Form.Item>
@@ -424,6 +472,52 @@ export function RemoteStaffAgentConfigCard({
           </Button>
         </Space>
       </Form>
+      <Divider />
+      <div className="panel-heading">
+        <div>
+          <div className="section-title">
+            <ReloadOutlined /> {t("Switch staff-agent account")}
+          </div>
+          <div className="muted">{t("Re-authenticate with another account and reconnect the server staff-agent.")}</div>
+        </div>
+        <Space wrap>
+          {config.staffAgentAccount ? <Tag color="blue">{config.staffAgentAccount}</Tag> : null}
+          {config.oidc?.userId ? <Tag color="blue">{config.oidc.userId}</Tag> : null}
+          <Tag color={reverseStatus === "connected" ? "green" : reverseStatus === "error" ? "red" : "default"}>
+            {t(`reverse:${reverseStatus}`)}
+          </Tag>
+        </Space>
+      </div>
+      {canSwitchAccount ? (
+        <Form form={switchForm} layout="vertical" onFinish={(values) => void switchAccount(values)} disabled={busy}>
+          <Form.Item
+            label={t("New staff-agent account")}
+            name="staffAgentAccount"
+            rules={[{ required: true, whitespace: true, message: t("Staff-agent account is required.") }]}
+          >
+            <Input autoComplete="username" />
+          </Form.Item>
+          <Form.Item
+            label={t("New staff-agent password")}
+            name="staffAgentPassword"
+            rules={[{ required: true, message: t("Staff-agent password is required.") }]}
+          >
+            <Input.Password autoComplete="current-password" />
+          </Form.Item>
+          <Button
+            type="primary"
+            danger
+            icon={<ReloadOutlined />}
+            htmlType="submit"
+            loading={switching}
+            disabled={!switchReady}
+          >
+            {remoteStaffAgentSwitchSubmitLabel(switching, t)}
+          </Button>
+        </Form>
+      ) : (
+        <Alert type="info" showIcon message={t("Account switching requires OIDC authentication.")} />
+      )}
     </div>
   );
 }
