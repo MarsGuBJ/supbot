@@ -1902,7 +1902,7 @@ export const defaultModelConfig: ModelConfig = {
   baseUrl: "https://api.openai.com/v1",
   model: "gpt-4.1-mini",
   temperature: 0.2,
-  maxTokens: 4096,
+  maxTokens: 200_000,
   apiKeySaved: false,
 };
 
