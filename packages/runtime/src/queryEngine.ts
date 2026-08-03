@@ -42,7 +42,7 @@ export interface QueryEngineInput {
   registry: ToolRegistry;
   toolContext: ToolExecutionContext;
   permissionMode: PermissionMode;
-  permissionRules: PermissionRule[];
+  getPermissionRules(): PermissionRule[];
   signal: AbortSignal;
   maxTurns?: number;
   model?: ModelAdapter;
@@ -234,7 +234,7 @@ export class QueryEngine {
         registry: this.input.registry,
         toolContext: this.input.toolContext,
         permissionMode: this.input.permissionMode,
-        permissionRules: this.input.permissionRules,
+        getPermissionRules: this.input.getPermissionRules,
         maxTurns: this.input.maxTurns,
         requestPermission: this.input.requestPermission,
         onPermissionTimeout: async (permission) => {

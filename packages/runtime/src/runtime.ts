@@ -99,6 +99,7 @@ import { LocalPackageManager } from "./localPackageManager";
 import { MemoryManager } from "./memoryManager";
 import { McpManager } from "./mcpManager";
 import { generateReply, normalizeModelApiKey } from "./modelAdapter";
+import { PermissionPolicy } from "./permissionPolicy";
 import { ProjectManager } from "./projectManager";
 import { QueryEngine } from "./queryEngine";
 import { RemoteBridgeManager } from "./remoteBridgeManager";
@@ -707,6 +708,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       createdAt: nowIso(),
     };
     this.state.permissionRules = [next, ...this.state.permissionRules.filter((item) => item.id !== next.id)];
+    await this.reevaluatePendingPermissions();
     await this.persistAndBroadcast();
     return next;
   }
@@ -1930,7 +1932,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         registry: this.toolRegistry,
         toolContext: this.createToolExecutionContext(controller.signal, jobId, 0, toolContextOptions),
         permissionMode: this.state.permissionMode,
-        permissionRules: this.state.permissionRules,
+        getPermissionRules: () => this.state.permissionRules,
         signal: controller.signal,
         requestPermission: (permission) => this.requestToolPermission(permission),
         onSession: (session) => {
@@ -2456,7 +2458,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         policy: run.writePolicy,
       }),
       permissionMode: "bypassPermissions",
-      permissionRules: this.state.permissionRules,
+      getPermissionRules: () => this.state.permissionRules,
       signal,
       maxTurns: 8,
       requestPermission: (permission) => this.requestToolPermission(permission),
@@ -3082,7 +3084,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
           memory: this.state.memory,
           registry: this.toolRegistry,
           permissionMode: this.state.permissionMode,
-          permissionRules: this.state.permissionRules,
+          getPermissionRules: () => this.state.permissionRules,
           randomId,
           createToolContext: (childSignal, parentJobId, childDepth) =>
             this.createToolExecutionContext(childSignal, parentJobId, childDepth, options),
@@ -3301,19 +3303,56 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     ];
   }
 
+  private async reevaluatePendingPermissions(): Promise<void> {
+    const policy = new PermissionPolicy();
+    for (const permission of [...this.state.pendingToolPermissions]) {
+      const tool = this.toolRegistry.get(permission.toolName);
+      if (!tool) {
+        continue;
+      }
+      const decision = policy.decide({
+        mode: this.state.permissionMode,
+        rules: this.state.permissionRules,
+        jobId: permission.jobId,
+        conversationId: permission.conversationId,
+        toolCallId: permission.toolCallId,
+        tool,
+        input: permission.input,
+        nowIso,
+      });
+      if (decision.behavior === "ask") {
+        continue;
+      }
+      const resolution = decision.behavior === "allow" ? "approved" : "denied";
+      const resolved = this.resolvePermission(permission.id, resolution);
+      if (resolved) {
+        await this.recordPermissionDecision(resolved, resolution);
+      }
+    }
+  }
+
   private async requestToolPermission(permission: PendingToolPermission): Promise<"approved" | "denied"> {
     if (this.runningJobs.get(permission.jobId)?.controller.signal.aborted) {
       return "denied";
     }
+    const decision = new Promise<"approved" | "denied">((resolve) => {
+      this.permissionWaiters.set(permission.id, { resolve });
+    });
     this.state.pendingToolPermissions = [
       ...this.state.pendingToolPermissions.filter((item) => item.id !== permission.id),
       permission,
     ];
-    await this.persistAndBroadcast();
-    this.emitTyped({ type: "tool_permission", permission });
-    return new Promise((resolve) => {
-      this.permissionWaiters.set(permission.id, { resolve });
-    });
+    try {
+      await this.persistAndBroadcast();
+      if (this.permissionWaiters.has(permission.id)) {
+        this.emitTyped({ type: "tool_permission", permission });
+      }
+      return decision;
+    } catch (error) {
+      this.permissionWaiters.delete(permission.id);
+      this.state.pendingToolPermissions = this.state.pendingToolPermissions.filter((item) => item.id !== permission.id);
+      throw error;
+    }
   }
 
   private resolvePermission(permissionId: string, decision: "approved" | "denied"): PendingToolPermission | undefined {
