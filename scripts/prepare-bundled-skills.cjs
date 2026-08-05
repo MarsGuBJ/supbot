@@ -48,6 +48,7 @@ function resolveSourceDataDir() {
   const candidates = [
     process.env.HBCLIENT_BUNDLED_DATA_DIR,
     process.env.SUPBOT_BUNDLED_DATA_DIR,
+    process.env.APPDATA ? path.join(process.env.APPDATA, "HyBot", "data") : undefined,
     process.env.APPDATA ? path.join(process.env.APPDATA, "HBClient", "data") : undefined,
     process.env.APPDATA ? path.join(process.env.APPDATA, "hbclient", "data") : undefined,
   ].filter(Boolean);

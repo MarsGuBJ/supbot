@@ -95,6 +95,30 @@ function closeWebSocket(ws, label) {
   });
 }
 
+function waitForChildExit(childProcess, timeoutMs = 5000) {
+  if (childProcess.exitCode !== null || childProcess.signalCode !== null) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error("Timed out waiting for Electron to exit."));
+    }, timeoutMs);
+    const cleanup = () => {
+      clearTimeout(timer);
+      childProcess.removeListener("exit", onExit);
+    };
+    const onExit = () => {
+      cleanup();
+      resolve();
+    };
+    childProcess.once("exit", onExit);
+    if (childProcess.exitCode !== null || childProcess.signalCode !== null) {
+      onExit();
+    }
+  });
+}
+
 async function evaluate(wsUrl, expression) {
   const ws = new WebSocket(wsUrl);
   await waitForWebSocketOpen(ws, "evaluate");
@@ -1122,11 +1146,12 @@ main()
     console.error(error);
     process.exitCode = 1;
   })
-  .finally(() => {
+  .finally(async () => {
     clearTimeout(smokeDeadline);
     child.kill();
+    await waitForChildExit(child);
     servstationServer.close();
-    fs.rmSync(smokeUserDataDir, { recursive: true, force: true });
+    fs.rmSync(smokeUserDataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
 function createSmokeServstationServer() {

@@ -41,7 +41,7 @@ Botstation stores installers in its existing artifact-repo MinIO bucket and gene
 
 ## Data And Credentials
 
-Runtime data lives under Electron's `userData` directory unless `SUPBOT_USER_DATA_DIR` is set for development or testing. The app stores conversations, transcripts, memory, generated files, worktree metadata, schedules, MCP config, and Remote Bridge audit records under `data/`.
+Runtime data lives under the dedicated Electron `userData` directory `%APPDATA%\\HyBot` unless `HYBOT_USER_DATA_DIR`, `HBCLIENT_USER_DATA_DIR`, or `SUPBOT_USER_DATA_DIR` is set for development or testing. This namespace is intentionally separate from HyBot-Leasing and other variants. The app stores conversations, transcripts, memory, generated files, worktree metadata, schedules, MCP config, and Remote Bridge audit records under `data/`.
 
 Model API keys and tool-market credentials use Electron `safeStorage` when the operating system makes encryption available. If Supbot reports `file` storage for a credential, treat that fallback as local obfuscation, not strong encryption. Do not publish logs, transcripts, or state files from a real user profile.
 

@@ -66,6 +66,7 @@ import {
   defaultServstationScope,
   defaultServstationUser,
 } from "@supbot/shared";
+import { configureUserDataPath } from "./appIdentity";
 import { HBClientUpdateManager } from "./updateManager";
 import { removeOidcLoginWindowListeners } from "./oidcLoginWindowLifecycle";
 
@@ -86,10 +87,10 @@ let productionCspInstalled = false;
 
 app.setName(appDisplayName);
 app.setAppUserModelId("local.hbclient.desktop");
+configureUserDataPath(app, process.env);
 
 async function createRuntime(): Promise<SupbotRuntime> {
-  const userDataPath =
-    process.env.HBCLIENT_USER_DATA_DIR || process.env.SUPBOT_USER_DATA_DIR || app.getPath("userData");
+  const userDataPath = app.getPath("userData");
   const dataDir = join(userDataPath, "data");
   await ensureRuntimeDirs(dataDir);
   await seedBundledDefaultData(dataDir);
@@ -1297,17 +1298,13 @@ function registerIpc(): void {
   });
   ipcMain.handle("file:open", async (_event, filePath: string) => {
     const safePath = requiredPath(filePath, "file path");
-    const userDataPath =
-      process.env.HBCLIENT_USER_DATA_DIR || process.env.SUPBOT_USER_DATA_DIR || app.getPath("userData");
+    const userDataPath = app.getPath("userData");
     if (!getRuntime().isKnownSafePath(safePath) && !pathIsInside(userDataPath, safePath)) {
       throw new Error("HBClient can only open files or folders it created, imported, or tracks as a worktree.");
     }
     await shell.openPath(safePath);
   });
-  ipcMain.handle(
-    "path:userData",
-    () => process.env.HBCLIENT_USER_DATA_DIR || process.env.SUPBOT_USER_DATA_DIR || app.getPath("userData"),
-  );
+  ipcMain.handle("path:userData", () => app.getPath("userData"));
 }
 
 function validateRendererPermissionMode(mode: PermissionMode): PermissionMode {
