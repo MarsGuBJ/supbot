@@ -31,7 +31,7 @@ export const MessageBubble = memo(function MessageBubble({
             {item.role === "user"
               ? t("You")
               : item.role === "assistant"
-                ? "HBClient"
+                ? "HyBot"
                 : item.role === "tool"
                   ? t("Tool")
                   : t("System")}

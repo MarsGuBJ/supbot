@@ -201,7 +201,7 @@ export function McpServersCard({
               <ToolOutlined /> {t("MCP Servers")}
             </div>
             <div className="muted">
-              {t("Connect local stdio MCP servers. Tools are registered through HBClient permissions.")}
+              {t("Connect local stdio MCP servers. Tools are registered through HyBot permissions.")}
             </div>
           </div>
           <Space wrap>

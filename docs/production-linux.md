@@ -1,4 +1,4 @@
-# HBClient Linux Production Checklist
+# HyBot Linux Production Checklist
 
 The supported self-updating Linux distribution is the x64 AppImage. A Debian
 package can be produced for managed environments, but it must be upgraded by
@@ -7,7 +7,7 @@ the package manager or by installing a newer `.deb`.
 ## Initial Build
 
 Build on Linux x64 with Node.js 22 or newer. Point `HBCLIENT_BUNDLED_DATA_DIR`
-at the HBClient data directory whose installed skills should be included, then
+at the HyBot data directory whose installed skills should be included, then
 run:
 
 ```bash
@@ -21,7 +21,7 @@ From Windows, keep the Windows `node_modules` directory untouched by building
 in an isolated WSL directory:
 
 ```powershell
-npm run dist:linux:wsl -- /mnt/c/Users/<user>/AppData/Roaming/HBClient/data
+npm run dist:linux:wsl -- /mnt/c/Users/<user>/AppData/Roaming/HyBot/data
 ```
 
 On a Linux desktop, launch-smoke the packaged application before publishing:
@@ -35,7 +35,7 @@ do not provide FUSE.
 
 The release directory must contain a matching set:
 
-- `HBClient-{version}-linux-x86_64.AppImage`
+- `HyBot-{version}-linux-x86_64.AppImage`
 - `latest-linux.yml`
 
 The AppImage contains the block map used by `electron-updater` for differential
@@ -49,9 +49,9 @@ it. A typical installation is:
 
 ```bash
 mkdir -p "$HOME/Applications"
-cp -f HBClient-0.1.5-linux-x86_64.AppImage "$HOME/Applications/"
-chmod +x "$HOME/Applications/HBClient-0.1.5-linux-x86_64.AppImage"
-"$HOME/Applications/HBClient-0.1.5-linux-x86_64.AppImage"
+cp -f HyBot-0.1.5-linux-x86_64.AppImage "$HOME/Applications/"
+chmod +x "$HOME/Applications/HyBot-0.1.5-linux-x86_64.AppImage"
+"$HOME/Applications/HyBot-0.1.5-linux-x86_64.AppImage"
 ```
 
 Do not install the self-updating AppImage under `/usr`, `/opt`, or another
@@ -79,5 +79,5 @@ the client disables multiple-range requests.
 
 `HBCLIENT_UPDATE_FEED_URL` overrides the channel root for controlled testing.
 Production clients reject non-HTTPS update feeds. Linux in-app updating is
-enabled only when HBClient is running from an AppImage; `.deb` installations do
+enabled only when HyBot is running from an AppImage; `.deb` installations do
 not show the managed update flow.

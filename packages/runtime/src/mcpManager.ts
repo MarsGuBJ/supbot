@@ -1002,7 +1002,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function invalidMcpConfigTransfer(): Error {
-  return new Error("Invalid MCP config transfer. Expected an HBClient export or an MCP servers object.");
+  return new Error("Invalid MCP config transfer. Expected a HyBot export or an MCP servers object.");
 }
 
 function importEnvPlaceholders(env: Record<string, unknown> | undefined): Record<string, string> | undefined {
@@ -1133,7 +1133,7 @@ const mcpServerPresets: McpServerPreset[] = [
     envHints: [{ key: "TOKEN", description: "Optional token used by the MCP package.", required: false }],
     docsUrl: "https://modelcontextprotocol.io",
     riskNote:
-      "Does not install from HBClient, but npx may execute package code available on this machine or registry cache.",
+      "Does not install from HyBot, but npx may execute package code available on this machine or registry cache.",
     serverInput: {
       name: "npx-mcp",
       command: "npx",

@@ -357,7 +357,7 @@ export function ChatPanel({
               <div className="brand-mark">
                 <RobotOutlined />
               </div>
-              <Typography.Title level={3}>{t("HBClient is ready")}</Typography.Title>
+              <Typography.Title level={3}>{t("HyBot is ready")}</Typography.Title>
               <p className="muted">
                 {t("Ask a question, attach local files, use /commands, or mention @research and @builder.")}
               </p>
@@ -486,7 +486,7 @@ export function ChatPanel({
                 }
               }}
               autoSize={{ minRows: 2, maxRows: 6 }}
-              placeholder={t("Message HBClient, use /config, or mention @research...")}
+              placeholder={t("Message HyBot, use /config, or mention @research...")}
             />
             {filteredCommands.length ? (
               <div className="slash-menu">

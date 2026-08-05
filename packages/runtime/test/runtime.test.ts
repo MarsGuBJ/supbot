@@ -4377,7 +4377,7 @@ describe("SupbotRuntime", () => {
             "schedule.manage",
             "autopilot.manage",
           ]);
-          expect(parsed.displayName).toBe("HBClient Desktop");
+          expect(parsed.displayName).toBe("HyBot Desktop");
           expect(parsed.hbclientVersion).toBe("0.1.2");
           response.end(
             JSON.stringify({
@@ -4633,7 +4633,7 @@ describe("SupbotRuntime", () => {
       departmentId: "dept-recover",
       userId: "user-recover",
       peerType: "hbclient",
-      displayName: "HBClient Desktop",
+      displayName: "HyBot Desktop",
       connectionMode: "reverse_sse",
       clientInstanceId: "hbclient-client-recover",
       capabilities: ["prompt.readOnly"],

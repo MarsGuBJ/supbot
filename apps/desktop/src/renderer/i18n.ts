@@ -7,7 +7,7 @@ export interface I18nValue {
 }
 
 const zh: Record<string, string> = {
-  "Starting HBClient": "正在启动 HBClient",
+  "Starting HyBot": "正在启动 HyBot",
   "LOCAL AGENT CONSOLE": "本地智能体控制台",
   Chat: "对话",
   Config: "配置",
@@ -61,11 +61,11 @@ const zh: Record<string, string> = {
   Conversation: "会话",
   "No conversation yet": "还没有会话",
   "Copy latest response": "复制最新回复",
-  "HBClient is ready": "HBClient 已就绪",
+  "HyBot is ready": "HyBot 已就绪",
   "Ask a question, attach local files, use /commands, or mention @research and @builder.":
     "可以提问、附加本地文件、使用 / 命令，或提及 @research、@builder。",
   "Attach files": "附加文件",
-  "Message HBClient, use /config, or mention @research...": "给 HBClient 发消息，使用 /config，或提及 @research...",
+  "Message HyBot, use /config, or mention @research...": "给 HyBot 发消息，使用 /config，或提及 @research...",
   Stop: "停止",
   Send: "发送",
   You: "你",
@@ -87,8 +87,8 @@ const zh: Record<string, string> = {
   "Restore project": "恢复项目",
   Remove: "移除",
   "Remove project?": "移除这个项目？",
-  "This removes the project, its conversations, and related HBClient records. The project folder and its files will not be deleted.":
-    "将移除项目、项目下的历史对话及相关 HBClient 记录，但不会删除项目文件夹及其中的文件。",
+  "This removes the project, its conversations, and related HyBot records. The project folder and its files will not be deleted.":
+    "将移除项目、项目下的历史对话及相关 HyBot 记录，但不会删除项目文件夹及其中的文件。",
   "Rename project": "重命名项目",
   "Delete project?": "删除这个项目？",
   "Delete project resource?": "删除这个项目资源？",
@@ -166,7 +166,7 @@ const zh: Record<string, string> = {
   "Use scheduled prompts and subagents for the first version's automation loop.":
     "第一版可通过计划提示词和子智能体实现自动化循环。",
   "LOCAL CONFIG": "本地配置",
-  "HBClient Settings": "HBClient 设置",
+  "HyBot Settings": "HyBot 设置",
   "Model, personality, local capabilities, and subagents live on this machine.":
     "模型、人格、本地能力和子智能体都保存在这台机器上。",
   Model: "模型",
@@ -217,8 +217,8 @@ const zh: Record<string, string> = {
   "Track artifacts created by local agent jobs.": "追踪本地智能体任务创建的产物。",
   "Loading...": "加载中...",
   "Credential storage": "凭据存储",
-  "HBClient uses the operating system safe storage when available. If the app reports file storage for a credential, treat that fallback as local obfuscation rather than strong encryption.":
-    "HBClient 会优先使用操作系统安全存储。如果凭据显示为 file 存储，请将其视为本地混淆而不是强加密。",
+  "HyBot uses the operating system safe storage when available. If the app reports file storage for a credential, treat that fallback as local obfuscation rather than strong encryption.":
+    "HyBot 会优先使用操作系统安全存储。如果凭据显示为 file 存储，请将其视为本地混淆而不是强加密。",
   "Local tool commands": "本地工具命令",
   "/read <path> reads a UTF-8 text file, /write <name-or-path> creates a generated file, and /shell <command> runs a local command with a 60-second timeout.":
     "/read <路径> 读取 UTF-8 文本文件；/write <文件名或路径> 创建生成文件；/shell <命令> 运行本地命令，超时 60 秒。",
@@ -335,7 +335,7 @@ const zh: Record<string, string> = {
   "Work locally, explain important actions, and keep user data on this machine.":
     "在本地工作，说明重要操作，并将用户数据保留在这台机器上。",
   "precise, calm, proactive": "精准、冷静、主动",
-  "HBClient Local": "HBClient 本地",
+  "HyBot Local": "HyBot 本地",
   "Local Files Plus": "本地文件增强",
   "Curated file workflows for reading, writing, and tracking generated local artifacts.":
     "用于读取、写入和追踪本地生成产物的精选文件工作流。",
@@ -406,8 +406,8 @@ const zh: Record<string, string> = {
   Confidence: "置信度",
   Configure: "配置",
   Connect: "连接",
-  "Connect local stdio MCP servers. Tools are registered through HBClient permissions.":
-    "连接本地 stdio MCP 服务器。工具会通过 HBClient 权限注册。",
+  "Connect local stdio MCP servers. Tools are registered through HyBot permissions.":
+    "连接本地 stdio MCP 服务器。工具会通过 HyBot 权限注册。",
   Content: "内容",
   "DATA AUTOPILOT": "数据自动驾驶",
   Decision: "决策",
@@ -700,7 +700,7 @@ const zh: Record<string, string> = {
   "Transcript recovery": "转录恢复",
   Type: "类型",
   Warning: "警告",
-  "What should HBClient remember?": "HBClient 应该记住什么？",
+  "What should HyBot remember?": "HyBot 应该记住什么？",
   "Working directory": "工作目录",
   "Worktree applied.": "工作区修改已应用。",
   "Worktree discarded.": "工作区修改已丢弃。",

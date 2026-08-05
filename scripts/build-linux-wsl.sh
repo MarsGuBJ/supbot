@@ -9,7 +9,7 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source_data_dir=${1:-${HBCLIENT_BUNDLED_DATA_DIR:-}}
 
 if [[ -z "$source_data_dir" || ! -d "$source_data_dir/skills" ]]; then
-  echo "Usage: $0 /mnt/c/path/to/HBClient/data" >&2
+  echo "Usage: $0 /mnt/c/path/to/HyBot/data" >&2
   exit 1
 fi
 
@@ -48,5 +48,5 @@ HBCLIENT_BUNDLED_DATA_DIR="$source_data_dir" "${npm_cli[@]}" run dist:linux
 
 release_target="$repo_root/apps/desktop/release"
 mkdir -p "$release_target"
-cp -f apps/desktop/release/HBClient-*-linux-*.AppImage "$release_target"/
+cp -f apps/desktop/release/HyBot-*-linux-*.AppImage "$release_target"/
 cp -f apps/desktop/release/latest-linux.yml "$release_target"/

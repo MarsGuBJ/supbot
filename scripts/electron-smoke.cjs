@@ -222,17 +222,17 @@ async function main() {
     })()`,
   );
   const text = String(bodyText);
-  const hasHBClient = text.includes("HBClient");
+  const hasHyBot = text.includes("HyBot");
   const hasDefaultChinese = text.includes("本地智能体控制台") && text.includes("对话") && text.includes("配置");
   const versionDialog = await evaluate(
     page.webSocketDebuggerUrl,
     `(async () => {
-      const trigger = document.querySelector("button[aria-label='\u67e5\u770b HBClient \u7248\u672c\u4fe1\u606f']");
+      const trigger = document.querySelector("button[aria-label='\u67e5\u770b HyBot \u7248\u672c\u4fe1\u606f']");
       trigger?.click();
       await new Promise((resolve) => setTimeout(resolve, 100));
       const dialog = document.querySelector(".ant-modal-confirm");
       const text = dialog?.textContent || "";
-      const visible = Boolean(dialog) && text.includes("HBClient") && /v\\d+\\.\\d+\\.\\d+/.test(text);
+      const visible = Boolean(dialog) && text.includes("HyBot") && /v\\d+\\.\\d+\\.\\d+/.test(text);
       const dialogIsVisible = () => {
         const current = document.querySelector(".ant-modal-confirm");
         if (!current) return false;
@@ -281,7 +281,7 @@ async function main() {
     JSON.stringify(
       {
         rootChildren,
-        hasHBClient,
+        hasHyBot,
         hasDefaultChinese,
         versionDialog,
         layoutMetrics,
@@ -296,11 +296,11 @@ async function main() {
       2,
     ),
   );
-  if (!rootChildren || !hasHBClient || !hasDefaultChinese) {
-    throw new Error("Electron renderer did not render the HBClient workspace.");
+  if (!rootChildren || !hasHyBot || !hasDefaultChinese) {
+    throw new Error("Electron renderer did not render the HyBot workspace.");
   }
   if (!versionDialog?.triggerFound || !versionDialog.visible || !versionDialog.closed) {
-    throw new Error(`HBClient version dialog did not complete its open/close flow: ${JSON.stringify(versionDialog)}`);
+    throw new Error(`HyBot version dialog did not complete its open/close flow: ${JSON.stringify(versionDialog)}`);
   }
   const securityWarning = diagnostics.events.find((event) => {
     const text = `${event.args || ""} ${event.text || ""}`;
@@ -335,7 +335,7 @@ async function main() {
   );
   if (
     !securityIpc?.permissionMode.includes("bypassPermissions") ||
-    !securityIpc?.openFile.includes("HBClient can only open")
+    !securityIpc?.openFile.includes("HyBot can only open")
   ) {
     throw new Error(`Renderer IPC security checks failed: ${JSON.stringify(securityIpc)}`);
   }
@@ -1369,7 +1369,7 @@ function seedSmokeState(userDataDir, smokeMcpServerPath) {
     path.join(dataDir, "state.json"),
     `${JSON.stringify(
       {
-        agentName: "HBClient Local Agent",
+        agentName: "HyBot Local Agent",
         modelConfig: {
           providerName: "OpenAI Compatible",
           baseUrl: "https://api.openai.com/v1",

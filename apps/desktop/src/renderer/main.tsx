@@ -288,10 +288,10 @@ function App() {
     }
     const chinese = language === "zh";
     modalApi.info({
-      title: chinese ? "关于 HBClient" : "About HBClient",
+      title: chinese ? "关于 HyBot" : "About HyBot",
       content: (
         <div className="version-info">
-          <div className="version-info-product">HBClient</div>
+          <div className="version-info-product">HyBot</div>
           <div className="version-info-number">
             <span>{chinese ? "版本号" : "Version"}</span>
             <strong>{currentVersion ? `v${currentVersion}` : chinese ? "未知" : "Unknown"}</strong>
@@ -402,7 +402,7 @@ function App() {
     const version = updateState.availableVersion ? ` v${updateState.availableVersion}` : "";
     const currentVersion = updateState.currentVersion ? ` v${updateState.currentVersion}` : "";
     modalApi.confirm({
-      title: chinese ? `发现 HBClient 新版本${version}` : `HBClient update${version} is available`,
+      title: chinese ? `发现 HyBot 新版本${version}` : `HyBot update${version} is available`,
       content: chinese
         ? `当前版本${currentVersion || "未知"}。是否立即升级？`
         : `Current version${currentVersion || " unknown"}. Upgrade now?`,
@@ -668,7 +668,7 @@ function App() {
           <div className="brand-mark">
             <RobotOutlined />
           </div>
-          <Typography.Title level={3}>{t("Starting HBClient")}</Typography.Title>
+          <Typography.Title level={3}>{t("Starting HyBot")}</Typography.Title>
         </div>
       </ConfigProvider>
     );

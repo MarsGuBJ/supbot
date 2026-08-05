@@ -7,16 +7,16 @@ const path = require("node:path");
 const { buildBlockMap } = require("../node_modules/app-builder-lib/out/targets/blockmap/blockmap.js");
 
 const appPath =
-  process.env.HBCLIENT_PACKAGED_EXE || path.resolve("apps", "desktop", "release", "win-unpacked", "HBClient.exe");
+  process.env.HBCLIENT_PACKAGED_EXE || path.resolve("apps", "desktop", "release", "win-unpacked", "HyBot.exe");
 const oldInstallerPath =
-  process.env.HBCLIENT_CURRENT_INSTALLER || path.resolve("apps", "desktop", "release", "HBClient-0.1.2-win-x64.exe");
+  process.env.HBCLIENT_CURRENT_INSTALLER || path.resolve("apps", "desktop", "release", "HyBot-0.1.2-win-x64.exe");
 const targetInstallerPath = process.env.HBCLIENT_TARGET_INSTALLER
   ? path.resolve(process.env.HBCLIENT_TARGET_INSTALLER)
   : "";
 const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "hbclient-differential-update-"));
 const userDataDir = path.join(fixtureDir, "user-data");
 const localAppDataDir = path.join(fixtureDir, "local-app-data");
-const newInstallerPath = targetInstallerPath || path.join(fixtureDir, "HBClient-0.1.3-win-x64.exe");
+const newInstallerPath = targetInstallerPath || path.join(fixtureDir, "HyBot-0.1.3-win-x64.exe");
 const oldInstallerName = path.basename(oldInstallerPath);
 const newInstallerName = path.basename(newInstallerPath);
 const oldVersion = installerVersion(oldInstallerName);
@@ -37,9 +37,9 @@ let child;
 let temporaryUpdateConfigPath = "";
 
 function installerVersion(fileName) {
-  const match = /^HBClient-(\d+\.\d+\.\d+)-win-x64\.exe$/.exec(fileName);
+  const match = /^HyBot-(\d+\.\d+\.\d+)-win-x64\.exe$/.exec(fileName);
   if (!match) {
-    throw new Error(`Installer file name does not contain a valid HBClient version: ${fileName}`);
+    throw new Error(`Installer file name does not contain a valid HyBot version: ${fileName}`);
   }
   return match[1];
 }
@@ -69,7 +69,7 @@ async function waitForPage() {
     }
     await sleep(250);
   }
-  throw new Error("No packaged HBClient page exposed through DevTools.");
+  throw new Error("No packaged HyBot page exposed through DevTools.");
 }
 
 async function evaluate(wsUrl, expression, timeoutMs = 45_000) {
@@ -194,7 +194,7 @@ async function main() {
   fs.copyFileSync(oldInstallerPath, path.join(updaterCacheDir, "installer.exe"));
   if (!targetInstallerPath) {
     fs.copyFileSync(oldInstallerPath, newInstallerPath);
-    fs.appendFileSync(newInstallerPath, Buffer.from("\nHBClient differential verification fixture\n", "utf8"));
+    fs.appendFileSync(newInstallerPath, Buffer.from("\nHyBot differential verification fixture\n", "utf8"));
   }
   if (!fs.existsSync(oldBlockmapPath)) {
     await buildBlockMap(oldInstallerPath, "gzip", oldBlockmapPath);

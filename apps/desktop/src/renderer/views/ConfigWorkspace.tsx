@@ -98,7 +98,7 @@ export function ConfigWorkspace({
       <div className="config-header">
         <div>
           <div className="eyebrow">{t("LOCAL CONFIG")}</div>
-          <Typography.Title level={3}>{t("HBClient Settings")}</Typography.Title>
+          <Typography.Title level={3}>{t("HyBot Settings")}</Typography.Title>
           <div className="muted">
             {t("Model, personality, local capabilities, and subagents live on this machine.")}
           </div>
@@ -189,7 +189,7 @@ export function StorageCard({
         showIcon
         message={t("Credential storage")}
         description={t(
-          "HBClient uses the operating system safe storage when available. If the app reports file storage for a credential, treat that fallback as local obfuscation rather than strong encryption.",
+          "HyBot uses the operating system safe storage when available. If the app reports file storage for a credential, treat that fallback as local obfuscation rather than strong encryption.",
         )}
       />
       <Divider />

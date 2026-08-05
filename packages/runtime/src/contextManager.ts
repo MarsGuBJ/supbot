@@ -83,7 +83,7 @@ function buildSystemPrompt(
 ): string {
   const identity = input.subagent
     ? `You are subagent @${input.subagent.name}. ${input.subagent.systemPrompt}`
-    : "You are HBClient, a local desktop agent.";
+    : "You are HyBot, a local desktop agent.";
   const systemContext = Object.entries(input.systemContext || {})
     .filter(([, value]) => value.trim())
     .map(([key, value]) => `${key}: ${value}`)

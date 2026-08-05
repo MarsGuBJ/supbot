@@ -26,7 +26,7 @@ const artifactPath = path.join(releaseDir, artifactName);
 if (version !== desktopPackage.version) {
   fail(`Manifest version ${version} does not match desktop package version ${desktopPackage.version}.`);
 }
-if (!/^HBClient-\d+\.\d+\.\d+-linux-(?:x86_64|x64)\.AppImage$/.test(artifactName)) {
+if (!/^HyBot-\d+\.\d+\.\d+-linux-(?:x86_64|x64)\.AppImage$/.test(artifactName)) {
   fail(`Unexpected Linux artifact name: ${artifactName}`);
 }
 if (!fs.existsSync(artifactPath)) {

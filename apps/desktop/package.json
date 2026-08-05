@@ -1,8 +1,8 @@
 {
   "name": "hbclient",
-  "version": "0.1.8",
+  "version": "0.1.0",
   "description": "Local single-user desktop agent.",
-  "author": "HBClient contributors",
+  "author": "HyBot contributors",
   "desktopName": "hbclient.desktop",
   "main": "dist/main/index.js",
   "bin": {
@@ -51,10 +51,10 @@
   },
   "build": {
     "appId": "local.hbclient.desktop",
-    "productName": "HBClient",
+    "productName": "HyBot",
     "electronVersion": "42.4.1",
-    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
-    "copyright": "Copyright © 2026 HBClient contributors",
+    "artifactName": "HyBot-standalone-${version}-${os}-${arch}.${ext}",
+    "copyright": "Copyright © 2026 HyBot contributors",
     "directories": {
       "output": "release"
     },
@@ -91,7 +91,7 @@
       "requestedExecutionLevel": "asInvoker",
       "verifyUpdateCodeSignature": false,
       "signtoolOptions": {
-        "publisherName": "HBClient"
+        "publisherName": "HyBot"
       }
     },
     "nsis": {
@@ -103,7 +103,7 @@
       "deleteAppDataOnUninstall": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "HBClient"
+      "shortcutName": "HyBot"
     },
     "linux": {
       "target": [

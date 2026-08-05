@@ -424,7 +424,7 @@ export function MemoryPanel({
               <Input placeholder={t("Memory title")} />
             </Form.Item>
             <Form.Item name="content" label={t("Content")} rules={[{ required: true }]}>
-              <Input.TextArea rows={3} placeholder={t("What should HBClient remember?")} />
+              <Input.TextArea rows={3} placeholder={t("What should HyBot remember?")} />
             </Form.Item>
             <div className="memory-form-grid">
               <Form.Item name="kind" label={t("Kind")}>

@@ -16,7 +16,7 @@ const defaultAppImage = path.join(
   "apps",
   "desktop",
   "release",
-  `HBClient-${desktopPackage.version}-linux-x86_64.AppImage`,
+  `HyBot-${desktopPackage.version}-linux-x86_64.AppImage`,
 );
 const appImagePath = path.resolve(process.env.HBCLIENT_LINUX_APPIMAGE || defaultAppImage);
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "hbclient-linux-smoke-"));

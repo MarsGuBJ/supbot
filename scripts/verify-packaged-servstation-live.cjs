@@ -4,7 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const appPath =
-  process.env.HBCLIENT_PACKAGED_EXE || path.resolve("apps", "desktop", "release", "win-unpacked", "HBClient.exe");
+  process.env.HBCLIENT_PACKAGED_EXE || path.resolve("apps", "desktop", "release", "win-unpacked", "HyBot.exe");
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "hbclient-servstation-"));
 const port = Number(process.env.HBCLIENT_VERIFY_PORT || 9348);
 const loginUser = process.env.HBCLIENT_BOTSTATION_USERNAME || "dev-user";
@@ -31,7 +31,7 @@ async function waitForPage() {
     }
     await sleep(300);
   }
-  throw new Error("No packaged HBClient page exposed through DevTools.");
+  throw new Error("No packaged HyBot page exposed through DevTools.");
 }
 
 async function waitForAuthPage() {

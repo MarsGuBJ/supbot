@@ -57,7 +57,7 @@ function resolveSourceDataDir() {
       return path.resolve(candidate);
     }
   }
-  fail(`Unable to find an installed HBClient data directory. Checked: ${candidates.join(", ")}`);
+  fail(`Unable to find an installed HyBot data directory. Checked: ${candidates.join(", ")}`);
 }
 
 function copyMarketReceipts(skillNames) {

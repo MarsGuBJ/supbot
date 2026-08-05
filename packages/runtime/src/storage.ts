@@ -210,7 +210,7 @@ export function createInitialState(): RuntimeState {
     updatedAt: createdAt,
   };
   return {
-    agentName: "HBClient Local Agent",
+    agentName: "HyBot Local Agent",
     identityContext: undefined,
     modelProviders: [defaultProvider],
     activeModelProviderId: defaultProvider.id,

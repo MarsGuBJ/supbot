@@ -185,7 +185,7 @@ export class HBClientUpdateManager {
         throw error;
       }
     }
-    throw new Error("HBClient update authorization failed.");
+    throw new Error("HyBot update authorization failed.");
   }
 
   private isEnabled(): boolean {
@@ -237,7 +237,7 @@ export function isUpdateRuntimeSupported(options: {
 function requireUpdatePlatform(): HBClientUpdatePlatform {
   const platform = updatePlatform(process.platform, process.arch);
   if (!platform) {
-    throw new Error(`HBClient updates are not supported on ${process.platform}-${process.arch}.`);
+    throw new Error(`HyBot updates are not supported on ${process.platform}-${process.arch}.`);
   }
   return platform;
 }
@@ -247,10 +247,10 @@ export function requireHttpsUpdateFeedUrl(value: string): string {
   try {
     url = new URL(value);
   } catch (error) {
-    throw new Error("HBClient update feed URL is invalid.", { cause: error });
+    throw new Error("HyBot update feed URL is invalid.", { cause: error });
   }
   if (url.protocol !== "https:") {
-    throw new Error("HBClient update feed requires HTTPS; refusing an unencrypted update channel.");
+    throw new Error("HyBot update feed requires HTTPS; refusing an unencrypted update channel.");
   }
   url.username = "";
   url.password = "";

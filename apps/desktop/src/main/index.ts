@@ -76,7 +76,7 @@ let updateManager: HBClientUpdateManager | null = null;
 const servstationMessageEventSubscriptions = new Map<string, AbortController>();
 const servstationAutopilotEventSubscriptions = new Map<string, AbortController>();
 const isDev = !app.isPackaged;
-const appDisplayName = "HBClient";
+const appDisplayName = "HyBot";
 // Dev-only fallback password for the local Botstation login form autofill.
 const defaultBotstationPassword = "dev-user";
 const allowedDevServerOrigin = "http://127.0.0.1:5173";
@@ -338,7 +338,7 @@ function safeUserName(): string {
 
 function getRuntime(): SupbotRuntime {
   if (!runtime) {
-    throw new Error("HBClient runtime is not ready.");
+    throw new Error("HyBot runtime is not ready.");
   }
   return runtime;
 }
@@ -731,7 +731,7 @@ async function createWindow(): Promise<void> {
       throw new Error("HBCLIENT_DEV_SERVER_URL is disabled in packaged production builds.");
     }
     if (!isAllowedAppUrl(devServerUrl)) {
-      throw new Error(`Unsupported HBClient dev server URL: ${devServerUrl}`);
+      throw new Error(`Unsupported HyBot dev server URL: ${devServerUrl}`);
     }
     await mainWindow.loadURL(devServerUrl);
     mainWindow.webContents.openDevTools({ mode: "detach" });
@@ -786,10 +786,7 @@ async function autoConnectLocalBotstation(): Promise<void> {
     }
     await service.connectServstationReverseBridge();
   } catch (error) {
-    console.warn(
-      "HBClient local Botstation auto-connect failed:",
-      error instanceof Error ? error.message : String(error),
-    );
+    console.warn("HyBot local Botstation auto-connect failed:", error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -1300,7 +1297,7 @@ function registerIpc(): void {
     const safePath = requiredPath(filePath, "file path");
     const userDataPath = app.getPath("userData");
     if (!getRuntime().isKnownSafePath(safePath) && !pathIsInside(userDataPath, safePath)) {
-      throw new Error("HBClient can only open files or folders it created, imported, or tracks as a worktree.");
+      throw new Error("HyBot can only open files or folders it created, imported, or tracks as a worktree.");
     }
     await shell.openPath(safePath);
   });
@@ -1432,7 +1429,7 @@ function validateRemoteBridgeUpdate(input: Partial<RemoteBridgeConfig> & { token
   const host = optionalString(value.host, "remote bridge host");
   const allowRemoteBind = optionalBoolean(value.allowRemoteBind, "allow remote bridge bind");
   if (host && !isLocalhost(host) && !allowRemoteBind) {
-    throw new Error("Production HBClient only allows Remote Bridge to bind localhost.");
+    throw new Error("Production HyBot only allows Remote Bridge to bind localhost.");
   }
   return compactUndefined({
     enabled: optionalBoolean(value.enabled, "remote bridge enabled"),
@@ -2073,7 +2070,7 @@ app
     });
   })
   .catch((error) => {
-    dialog.showErrorBox("HBClient failed to start", error instanceof Error ? error.message : String(error));
+    dialog.showErrorBox("HyBot failed to start", error instanceof Error ? error.message : String(error));
     app.quit();
   });
 

@@ -1617,7 +1617,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
             id: "model-test",
             conversationId: "model-test",
             role: "user",
-            text: "Reply with exactly: HBClient model test ok",
+            text: "Reply with exactly: HyBot model test ok",
             createdAt: nowIso(),
           },
         ],
@@ -1884,7 +1884,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         id: randomId("msg"),
         conversationId: conversation.id,
         role: "assistant",
-        text: subagent ? `@${subagent.name} is thinking...` : "HBClient is thinking...",
+        text: subagent ? `@${subagent.name} is thinking...` : "HyBot is thinking...",
         createdAt: nowIso(),
         jobId,
         status: "running",
@@ -3772,7 +3772,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       status: "failed",
       conversationId: sent.job.conversationId,
       jobId: sent.job.id,
-      error: "Timed out waiting for HBClient prompt result.",
+      error: "Timed out waiting for HyBot prompt result.",
     };
   }
 
@@ -3963,7 +3963,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
 
   protected assertLoaded(): void {
     if (!this.loaded) {
-      throw new Error("HBClient runtime init() must be called before use.");
+      throw new Error("HyBot runtime init() must be called before use.");
     }
   }
 

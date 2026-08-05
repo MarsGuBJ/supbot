@@ -28,14 +28,14 @@ Before publishing a build:
 
 ## Remote Updates
 
-HBClient checks the authenticated Botstation stable update feed after connecting and every 30 minutes. It never downloads or installs an update without user action.
+HyBot checks the authenticated Botstation stable update feed after connecting and every 30 minutes. It never downloads or installs an update without user action.
 
 Publish a release from Botstation Admin Console:
 
 1. Build and sign the Windows x64 NSIS installer.
-2. Confirm the file name is `HBClient-{version}-win-x64.exe` and the embedded application version uses the same SemVer value.
+2. Confirm the file name is `HyBot-{version}-win-x64.exe` and the embedded application version uses the same SemVer value.
 3. Open **客户端版本**, upload the EXE, confirm the version, and publish it.
-4. Verify an installed older HBClient displays the upgrade prompt, downloads the package, and offers **重启并安装**.
+4. Verify an installed older HyBot displays the upgrade prompt, downloads the package, and offers **重启并安装**.
 
 Botstation stores installers in its existing artifact-repo MinIO bucket and generates `latest.yml` from the published release. The feed and installer require the user's Botstation access token. `HBCLIENT_UPDATE_FEED_URL` overrides the feed root for controlled testing; `HBCLIENT_ENABLE_DEV_UPDATES=1` enables updater wiring in an unpackaged development build.
 

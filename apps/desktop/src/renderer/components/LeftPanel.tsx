@@ -156,7 +156,7 @@ export function LeftPanel({
     modalApi.confirm({
       title: t("Remove project?"),
       content: t(
-        "This removes the project, its conversations, and related HBClient records. The project folder and its files will not be deleted.",
+        "This removes the project, its conversations, and related HyBot records. The project folder and its files will not be deleted.",
       ),
       okText: t("Remove"),
       cancelText: t("Cancel"),

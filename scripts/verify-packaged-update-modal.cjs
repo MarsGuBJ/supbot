@@ -5,7 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const appPath =
-  process.env.HBCLIENT_PACKAGED_EXE || path.resolve("apps", "desktop", "release", "win-unpacked", "HBClient.exe");
+  process.env.HBCLIENT_PACKAGED_EXE || path.resolve("apps", "desktop", "release", "win-unpacked", "HyBot.exe");
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "hbclient-update-modal-"));
 const debugPort = Number(process.env.HBCLIENT_VERIFY_PORT || 9359);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -25,7 +25,7 @@ async function waitForPage() {
     }
     await sleep(250);
   }
-  throw new Error("No packaged HBClient page exposed through DevTools.");
+  throw new Error("No packaged HyBot page exposed through DevTools.");
 }
 
 async function evaluate(wsUrl, expression, timeoutMs = 10_000) {
@@ -69,10 +69,10 @@ async function main() {
       const body = [
         "version: 0.1.3",
         "files:",
-        "  - url: HBClient-0.1.3-win-x64.exe",
+        "  - url: HyBot-0.1.3-win-x64.exe",
         "    sha512: dGVzdA==",
         "    size: 1",
-        "path: HBClient-0.1.3-win-x64.exe",
+        "path: HyBot-0.1.3-win-x64.exe",
         "sha512: dGVzdA==",
         "releaseDate: 2026-07-16T00:00:00Z",
         "",
