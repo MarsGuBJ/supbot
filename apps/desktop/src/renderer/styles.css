@@ -772,6 +772,7 @@ button {
 
 .message-row.user .message-bubble {
   border-color: rgba(212, 117, 10, 0.28);
+  border-radius: 8px;
   background: rgba(255, 239, 224, 0.92);
 }
 
