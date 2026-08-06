@@ -14,7 +14,7 @@ import {
 } from "@ant-design/icons";
 import { Button, Dropdown, Form, Input, Modal, Popconfirm, Tooltip, message } from "antd";
 import type { Conversation, Project, ProjectUpdateInput, RuntimeSnapshot } from "@supbot/shared";
-import { conversationTitle, formatDateTime } from "@supbot/shared";
+import { conversationTitle } from "@supbot/shared";
 
 export const projectConversationPreviewLimit = 5;
 
@@ -588,10 +588,6 @@ export function ProjectConversationGroup({
             >
               <button className="history-item-content" type="button" onClick={() => onSelectConversation(conversation)}>
                 <strong>{conversationTitle(conversation, t("New conversation"))}</strong>
-                <span className="muted">
-                  {formatDateTime(conversation.lastMessageAt || conversation.updatedAt)} ·{" "}
-                  {conversation.messageCount || 0} {t((conversation.messageCount || 0) === 1 ? "message" : "messages")}
-                </span>
               </button>
               <Popconfirm
                 title={t("Delete conversation?")}
