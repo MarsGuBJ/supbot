@@ -733,6 +733,7 @@ function App() {
               onMessageScroll={updateMessageStickiness}
               t={t}
               slashCommands={slashCommandList}
+              skills={snapshot.capabilities}
             />
             <RightPanel
               snapshot={snapshot}

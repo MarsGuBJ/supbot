@@ -10,16 +10,18 @@ import {
   SendOutlined,
   StarOutlined,
   StopOutlined,
+  ToolOutlined,
 } from "@ant-design/icons";
-import { Button, Input, Space, Tag, Tooltip, Typography, message } from "antd";
+import { Button, Input, Popover, Space, Tag, Tooltip, Typography, message } from "antd";
 import type { TextAreaRef } from "antd/es/input/TextArea";
-import type { AgentJob, Attachment, Conversation, PendingToolPermission } from "@supbot/shared";
+import type { AgentJob, Attachment, CapabilityDefinition, Conversation, PendingToolPermission } from "@supbot/shared";
 import { buildSlashCommands, conversationTitle, statusLabel } from "@supbot/shared";
 import { Virtuoso } from "react-virtuoso";
 import { ComposerPermissionPrompt } from "./ComposerPermissionPrompt";
 import { MessageBubble } from "./MessageBubble";
 import { readClipboardText, selectedTextWithin } from "../lib/clipboard";
 import type { PromptContextMenu, SelectionContextMenu } from "../lib/types";
+import { enabledSkillCapabilities, formatSkillPromptDirective } from "../lib/skills";
 
 const VirtualMessageList = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   ({ className, ...props }, ref) => (
@@ -52,6 +54,7 @@ export function ChatPanel({
   onMessageScroll,
   t,
   slashCommands,
+  skills,
 }: {
   conversation?: Conversation;
   attachments: Attachment[];
@@ -76,6 +79,7 @@ export function ChatPanel({
   onMessageScroll: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
   slashCommands: ReturnType<typeof buildSlashCommands>;
+  skills: CapabilityDefinition[];
 }) {
   const selectionMenuRef = useRef<HTMLDivElement | null>(null);
   const promptMenuRef = useRef<HTMLDivElement | null>(null);
@@ -84,6 +88,7 @@ export function ChatPanel({
   const [selectionAction, setSelectionAction] = useState<"copy" | "memory" | null>(null);
   const [promptMenu, setPromptMenu] = useState<PromptContextMenu | null>(null);
   const [promptAction, setPromptAction] = useState<"copy" | "paste" | null>(null);
+  const [skillsOpen, setSkillsOpen] = useState(false);
   const [prompt, setPrompt] = useState("");
   const promptRef = useRef(prompt);
   promptRef.current = prompt;
@@ -112,6 +117,27 @@ export function ChatPanel({
       setPrompt(text);
     }
   }, [prompt, send]);
+  const availableSkills = useMemo(() => enabledSkillCapabilities(skills), [skills]);
+  const insertSkill = useCallback(
+    (skill: CapabilityDefinition) => {
+      const directive = formatSkillPromptDirective(skill);
+      const textArea = promptInputRef.current?.resizableTextArea?.textArea;
+      const currentValue = textArea?.value ?? prompt;
+      const fallbackPosition = currentValue.length;
+      const start = Math.max(0, Math.min(textArea?.selectionStart ?? fallbackPosition, currentValue.length));
+      const end = Math.max(start, Math.min(textArea?.selectionEnd ?? start, currentValue.length));
+      const nextPrompt = `${currentValue.slice(0, start)}${directive}${currentValue.slice(end)}`;
+      const caret = start + directive.length;
+      setPrompt(nextPrompt);
+      setSkillsOpen(false);
+      window.requestAnimationFrame(() => {
+        const nextTextArea = promptInputRef.current?.resizableTextArea?.textArea;
+        nextTextArea?.focus();
+        nextTextArea?.setSelectionRange(caret, caret);
+      });
+    },
+    [prompt],
+  );
   const filteredCommands = useMemo(() => {
     if (!prompt.startsWith("/")) {
       return [];
@@ -315,6 +341,31 @@ export function ChatPanel({
     }),
     [historyLoading],
   );
+  const skillsContent = (
+    <div className="chat-skill-popover">
+      <div className="chat-skill-grid" role="list">
+        {availableSkills.length ? (
+          availableSkills.map((skill) => (
+            <button
+              className="chat-skill-card"
+              key={skill.id}
+              type="button"
+              role="listitem"
+              onClick={() => insertSkill(skill)}
+            >
+              <ToolOutlined />
+              <span>
+                <strong>{skill.name}</strong>
+                {skill.description ? <small>{skill.description}</small> : null}
+              </span>
+            </button>
+          ))
+        ) : (
+          <div className="chat-skill-empty">{t("No matching capabilities")}</div>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <section className="chat-panel">
@@ -326,6 +377,17 @@ export function ChatPanel({
           </div>
         </div>
         <Space>
+          <Popover
+            title={t("Skills")}
+            content={skillsContent}
+            trigger="click"
+            placement="bottomRight"
+            open={skillsOpen}
+            onOpenChange={setSkillsOpen}
+            overlayClassName="chat-skill-overlay"
+          >
+            <Button icon={<ToolOutlined />}>{t("Skills")}</Button>
+          </Popover>
           <Tooltip title={t("Compact conversation")}>
             <Button
               icon={<CompressOutlined />}
