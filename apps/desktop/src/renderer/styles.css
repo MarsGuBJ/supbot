@@ -1226,7 +1226,7 @@ button {
 }
 
 .history-item.is-active {
-  background: transparent;
+  background: rgba(212, 117, 10, 0.16);
 }
 
 .history-item-content {
