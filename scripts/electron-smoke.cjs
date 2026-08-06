@@ -258,7 +258,7 @@ async function main() {
     `(() => ({
       hasToolCard: Boolean(document.querySelector(".tool-card")),
       hasToolResultHeader: document.body.innerText.includes("工具结果") || document.body.innerText.includes("Tool result"),
-      hasToolResultToggle: Boolean(document.querySelector(".tool-result-toggle[aria-expanded='false']")),
+      hasToolResultToggle: Boolean(document.querySelector(".tool-card.result .tool-result-toggle[aria-expanded='false']")),
       isToolResultCollapsed: Boolean(document.querySelector(".tool-card.result.is-collapsed")) && !document.querySelector(".tool-result-content"),
       hasTruncatedMarker: document.body.innerText.includes("已截断") || document.body.innerText.includes("truncated")
     }))()`,
@@ -266,11 +266,11 @@ async function main() {
   const expandedToolUi = await evaluate(
     page.webSocketDebuggerUrl,
     `(async () => {
-      const toggle = document.querySelector(".tool-result-toggle");
+      const toggle = document.querySelector(".tool-card.result .tool-result-toggle");
       toggle?.click();
       await new Promise((resolve) => requestAnimationFrame(() => resolve()));
       return {
-        hasExpandedToggle: Boolean(document.querySelector(".tool-result-toggle[aria-expanded='true']")),
+        hasExpandedToggle: Boolean(document.querySelector(".tool-card.result .tool-result-toggle[aria-expanded='true']")),
         hasToolResult: document.body.innerText.includes("Tool completed from smoke"),
         hasToolResultParts: Boolean(document.querySelector(".tool-result-part")),
         hasToolResultPartTypes: document.body.innerText.includes("image/png") && document.body.innerText.includes("resource text")

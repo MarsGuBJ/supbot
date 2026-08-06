@@ -1,6 +1,6 @@
 {
   "name": "hbclient",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local single-user desktop agent.",
   "author": "HyBot contributors",
   "desktopName": "hbclient.desktop",
@@ -53,7 +53,7 @@
     "appId": "local.hbclient.desktop",
     "productName": "HyBot",
     "electronVersion": "42.4.1",
-    "artifactName": "HyBot-standalone-${version}-${os}-${arch}.${ext}",
+    "artifactName": "HyBot-${version}-${os}-${arch}.${ext}",
     "copyright": "Copyright © 2026 HyBot contributors",
     "directories": {
       "output": "release"
