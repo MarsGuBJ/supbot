@@ -891,6 +891,10 @@ button {
   gap: 0;
 }
 
+.message-row.assistant .tool-card.is-collapsed {
+  border-radius: 8px;
+}
+
 .tool-result-head .tool-result-toggle {
   flex: 0 0 auto;
   margin-left: auto;
