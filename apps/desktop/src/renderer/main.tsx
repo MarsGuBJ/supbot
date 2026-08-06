@@ -2313,7 +2313,6 @@ function ServerAgentProjectGroup({
                 onClick={() => void onSelectConversation(conversation)}
               >
                 <strong>{servstationConversationTitle(conversation, t("New conversation"))}</strong>
-                <small>{formatDateTime(conversation.lastMessageAt || conversation.updatedAt)}</small>
               </button>
             </div>
           ))}

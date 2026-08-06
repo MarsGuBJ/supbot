@@ -107,4 +107,16 @@ describe("Server Agent projects", () => {
     expect(serverAgentMessages).toContain("onContextMenu={openPromptMenu}");
     expect(serverAgentMessages).toContain('runPromptAction("paste")');
   });
+
+  it("renders project conversation history without a timestamp row", () => {
+    const source = readFileSync(new URL("./main.tsx", import.meta.url), "utf8");
+    const projectGroupStart = source.indexOf("function ServerAgentProjectGroup");
+    const projectGroupEnd = source.indexOf("function SubagentModal");
+    const projectGroup = source.slice(projectGroupStart, projectGroupEnd);
+
+    expect(projectGroup).toContain('<div className="server-agent-project-conversations">');
+    expect(projectGroup).toContain("servstationConversationTitle(conversation");
+    expect(projectGroup).not.toContain("conversation.lastMessageAt");
+    expect(projectGroup).not.toContain("formatDateTime(conversation.updatedAt)");
+  });
 });
