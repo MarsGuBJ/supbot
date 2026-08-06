@@ -765,6 +765,11 @@ button {
   background: rgba(255, 255, 255, 0.92);
 }
 
+.message-row.assistant .message-bubble {
+  border: 0;
+  background: transparent;
+}
+
 .message-row.user .message-bubble {
   border-color: rgba(212, 117, 10, 0.28);
   background: rgba(255, 239, 224, 0.92);
@@ -1206,18 +1211,17 @@ button {
   gap: 6px;
   margin-top: 0;
   padding: 6px 4px 6px 8px;
-  border-color: transparent;
+  border: 0;
   border-radius: 6px;
   background: transparent;
 }
 
 .history-item:hover {
-  background: rgba(255, 255, 255, 0.72);
+  background: transparent;
 }
 
 .history-item.is-active {
-  border-color: rgba(212, 117, 10, 0.24);
-  background: rgba(255, 239, 224, 0.82);
+  background: transparent;
 }
 
 .history-item-content {

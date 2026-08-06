@@ -12,7 +12,7 @@ import {
 } from "@ant-design/icons";
 import { Alert, Button, Tag, Tooltip } from "antd";
 import type { ChatMessage } from "@supbot/shared";
-import { formatDateTime, statusColor, statusLabel } from "@supbot/shared";
+import { statusColor, statusLabel } from "@supbot/shared";
 import { formatToolPayload, shouldShowGeneratedFileInChat } from "../lib/chatFormat";
 
 export const MessageBubble = memo(function MessageBubble({
@@ -26,19 +26,12 @@ export const MessageBubble = memo(function MessageBubble({
   return (
     <div className={`message-row ${item.role}`}>
       <div className="message-bubble">
-        <div className="message-meta">
-          <span>
-            {item.role === "user"
-              ? t("You")
-              : item.role === "assistant"
-                ? "HBClient"
-                : item.role === "tool"
-                  ? t("Tool")
-                  : t("System")}
-          </span>
-          <span>{formatDateTime(item.createdAt)}</span>
-          {item.status ? <Tag color={statusColor(item.status)}>{statusLabel(item.status, t)}</Tag> : null}
-        </div>
+        {item.role === "user" ? null : (
+          <div className="message-meta">
+            <span>{item.role === "assistant" ? "HBClient" : item.role === "tool" ? t("Tool") : t("System")}</span>
+            {item.status ? <Tag color={statusColor(item.status)}>{statusLabel(item.status, t)}</Tag> : null}
+          </div>
+        )}
         <MessageBlocks message={item} t={t} />
         {item.attachments?.length ? (
           <div className="attachment-row">
