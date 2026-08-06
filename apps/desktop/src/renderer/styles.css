@@ -1227,8 +1227,7 @@ button {
   gap: 2px !important;
 }
 
-.history-item-content strong,
-.history-item-content span {
+.history-item-content strong {
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -1242,11 +1241,6 @@ button {
   overflow-wrap: normal;
   font-size: 13px;
   line-height: 1.35;
-}
-
-.history-item-content span {
-  font-size: 11px;
-  line-height: 1.3;
 }
 
 .tool-approvals {
