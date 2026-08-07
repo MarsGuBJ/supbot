@@ -51,7 +51,7 @@ export class ServstationA2AProvider implements ToolProvider {
         name: "ServstationConnect",
         modelName: "servstation_connect",
         description:
-          "Connect to the paired Servstation agent using HBClient's bound identity context and return the agent instance id.",
+          "Connect to the paired Servstation agent using HyBotLeasing's bound identity context and return the agent instance id.",
         risk: "dangerous",
         concurrency: "exclusive",
         interruptBehavior: "cancel",

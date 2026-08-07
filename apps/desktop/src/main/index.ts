@@ -91,7 +91,7 @@ let updateManager: HBClientUpdateManager | null = null;
 const servstationMessageEventSubscriptions = new Map<string, AbortController>();
 const servstationAutopilotEventSubscriptions = new Map<string, AbortController>();
 const isDev = !app.isPackaged;
-const appDisplayName = "HBClient";
+const appDisplayName = "HyBotLeasing";
 // Dev-only fallback password for the local Botstation login form autofill.
 const defaultBotstationPassword = "dev-user";
 const allowedDevServerOrigin = "http://127.0.0.1:5173";
@@ -354,7 +354,7 @@ function safeUserName(): string {
 
 function getRuntime(): SupbotRuntime {
   if (!runtime) {
-    throw new Error("HBClient runtime is not ready.");
+    throw new Error("HyBotLeasing runtime is not ready.");
   }
   return runtime;
 }
@@ -558,7 +558,7 @@ async function authorizeLeasingOidc(input: ServstationA2AOidcLoginInput): Promis
     !sameBotstationIdentity(currentIdentity, latestIdentity) ||
     !sameBotstationIdentity(latestIdentity, authorization.identityContext)
   ) {
-    throw new Error("Leasing sign-in must use the same Botstation account as the current HBClient session.");
+    throw new Error("Leasing sign-in must use the same Botstation account as the current HyBotLeasing session.");
   }
   return authorization.tokens;
 }
@@ -876,7 +876,7 @@ async function createWindow(): Promise<void> {
       throw new Error("HBCLIENT_DEV_SERVER_URL is disabled in packaged production builds.");
     }
     if (!isAllowedAppUrl(devServerUrl)) {
-      throw new Error(`Unsupported HBClient dev server URL: ${devServerUrl}`);
+      throw new Error(`Unsupported HyBotLeasing dev server URL: ${devServerUrl}`);
     }
     await mainWindow.loadURL(devServerUrl);
     mainWindow.webContents.openDevTools({ mode: "detach" });
@@ -932,7 +932,7 @@ async function autoConnectLocalBotstation(): Promise<void> {
     await service.connectServstationReverseBridge();
   } catch (error) {
     console.warn(
-      "HBClient local Botstation auto-connect failed:",
+      "HyBotLeasing local Botstation auto-connect failed:",
       error instanceof Error ? error.message : String(error),
     );
   }
@@ -1463,7 +1463,7 @@ function registerIpc(): void {
     const userDataPath =
       process.env.HBCLIENT_USER_DATA_DIR || process.env.SUPBOT_USER_DATA_DIR || app.getPath("userData");
     if (!getRuntime().isKnownSafePath(safePath) && !pathIsInside(userDataPath, safePath)) {
-      throw new Error("HBClient can only open files or folders it created, imported, or tracks as a worktree.");
+      throw new Error("HyBotLeasing can only open files or folders it created, imported, or tracks as a worktree.");
     }
     await shell.openPath(safePath);
   });
@@ -1598,7 +1598,7 @@ function validateRemoteBridgeUpdate(input: Partial<RemoteBridgeConfig> & { token
   const host = optionalString(value.host, "remote bridge host");
   const allowRemoteBind = optionalBoolean(value.allowRemoteBind, "allow remote bridge bind");
   if (host && !isLocalhost(host) && !allowRemoteBind) {
-    throw new Error("Production HBClient only allows Remote Bridge to bind localhost.");
+    throw new Error("Production HyBotLeasing only allows Remote Bridge to bind localhost.");
   }
   return compactUndefined({
     enabled: optionalBoolean(value.enabled, "remote bridge enabled"),
@@ -2239,7 +2239,7 @@ app
     });
   })
   .catch((error) => {
-    dialog.showErrorBox("HBClient failed to start", error instanceof Error ? error.message : String(error));
+    dialog.showErrorBox("HyBotLeasing failed to start", error instanceof Error ? error.message : String(error));
     app.quit();
   });
 

@@ -43,7 +43,7 @@ export function Topbar({
           <button
             className="brand-mark brand-mark-button small"
             type="button"
-            aria-label={language === "zh" ? "查看 HBClient 版本信息" : "View HBClient version information"}
+            aria-label={language === "zh" ? "查看 HyBotLeasing 版本信息" : "View HyBotLeasing version information"}
             onClick={() => void showVersionInfo()}
           >
             <RobotOutlined />

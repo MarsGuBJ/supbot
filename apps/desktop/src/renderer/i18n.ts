@@ -358,7 +358,7 @@ const zh: Record<string, string> = {
   "Work locally, explain important actions, and keep user data on this machine.":
     "在本地工作，说明重要操作，并将用户数据保留在这台机器上。",
   "precise, calm, proactive": "精准、冷静、主动",
-  "HBClient Local": "HBClient 本地",
+  "HyBotLeasing Local": "HyBotLeasing 本地",
   "Local Files Plus": "本地文件增强",
   "Curated file workflows for reading, writing, and tracking generated local artifacts.":
     "用于读取、写入和追踪本地生成产物的精选文件工作流。",
@@ -764,7 +764,7 @@ const zh: Record<string, string> = {
 };
 
 export function translate(language: Language, key: string, vars?: Record<string, string | number>): string {
-  const template = language === "zh" ? zh[key] || key : key;
+  const template = (language === "zh" ? zh[key] || key : key).replaceAll("HBClient", "HyBotLeasing");
   if (!vars) {
     return template;
   }

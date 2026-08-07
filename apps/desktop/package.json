@@ -2,7 +2,7 @@
   "name": "hbclient",
   "version": "0.1.0",
   "description": "Local single-user desktop agent.",
-  "author": "HBClient contributors",
+  "author": "HyBotLeasing contributors",
   "desktopName": "hbclient.desktop",
   "main": "dist/main/index.js",
   "bin": {
@@ -53,10 +53,10 @@
   },
   "build": {
     "appId": "local.hybot.leasing",
-    "productName": "HyBot-Leasing",
+    "productName": "HyBotLeasing",
     "electronVersion": "42.4.1",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
-    "copyright": "Copyright © 2026 HBClient contributors",
+    "copyright": "Copyright © 2026 HyBotLeasing contributors",
     "directories": {
       "output": "release"
     },
@@ -93,7 +93,7 @@
       "requestedExecutionLevel": "asInvoker",
       "verifyUpdateCodeSignature": false,
       "signtoolOptions": {
-        "publisherName": "HyBot-Leasing"
+        "publisherName": "HyBotLeasing"
       }
     },
     "nsis": {
@@ -105,7 +105,7 @@
       "deleteAppDataOnUninstall": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "HyBot-Leasing"
+      "shortcutName": "HyBotLeasing"
     },
     "linux": {
       "target": [

@@ -28,7 +28,7 @@ export const MessageBubble = memo(function MessageBubble({
       <div className="message-bubble">
         {item.role === "user" ? null : (
           <div className="message-meta">
-            <span>{item.role === "assistant" ? "HBClient" : item.role === "tool" ? t("Tool") : t("System")}</span>
+            <span>{item.role === "assistant" ? "HyBotLeasing" : item.role === "tool" ? t("Tool") : t("System")}</span>
             {item.status ? <Tag color={statusColor(item.status)}>{statusLabel(item.status, t)}</Tag> : null}
           </div>
         )}

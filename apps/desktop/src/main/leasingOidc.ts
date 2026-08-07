@@ -117,7 +117,7 @@ function validateLeasingToken(tokens: ServstationA2AOidcTokenSet, input: Resolve
     throw new Error("Leasing OIDC token is missing leasing.read scope.");
   }
   if (!tokenMatchesIdentity(tokens.accessToken, input.expectedIdentity)) {
-    throw new Error("Leasing OIDC token identity does not match the current HBClient account.");
+    throw new Error("Leasing OIDC token identity does not match the current HyBotLeasing account.");
   }
 }
 

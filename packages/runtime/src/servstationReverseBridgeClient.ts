@@ -272,7 +272,7 @@ export class ServstationReverseBridgeClient {
     }
     const peerId = registration.peer?.id;
     if (!peerId) {
-      throw new Error("Botstation HBClient reverse registration did not return a peer id.");
+      throw new Error("Botstation HyBotLeasing reverse registration did not return a peer id.");
     }
     const streamUrl =
       registration.streamUrl ||
@@ -303,7 +303,7 @@ export class ServstationReverseBridgeClient {
           signal,
           body: JSON.stringify({
             clientInstanceId,
-            displayName: "HBClient Desktop",
+            displayName: "HyBotLeasing Desktop",
             capabilities: [
               "prompt.readOnly",
               SERVSTATION_PROJECT_AWARE_CAPABILITY,
@@ -382,7 +382,7 @@ export class ServstationReverseBridgeClient {
     });
     if (!response.ok || !response.body) {
       const text = await response.text().catch(() => "");
-      throw new Error(`Botstation HBClient reverse event stream failed: ${text || `HTTP ${response.status}`}`);
+      throw new Error(`Botstation HyBotLeasing reverse event stream failed: ${text || `HTTP ${response.status}`}`);
     }
     await this.host.updateReverseState({
       enabled: true,
@@ -433,7 +433,7 @@ export class ServstationReverseBridgeClient {
       }
     }
     if (!signal.aborted) {
-      throw new Error("Botstation HBClient reverse event stream ended.");
+      throw new Error("Botstation HyBotLeasing reverse event stream ended.");
     }
   }
 
@@ -677,7 +677,7 @@ export class ServstationReverseBridgeClient {
   private requireIdentity(): IdentityContext {
     const identity = this.host.getIdentityContext();
     if (!identity) {
-      throw new Error("Botstation HBClient reverse A2A identity context is not paired.");
+      throw new Error("Botstation HyBotLeasing reverse A2A identity context is not paired.");
     }
     return identity;
   }
@@ -685,7 +685,7 @@ export class ServstationReverseBridgeClient {
   private requireBaseUrl(config: ServstationA2AConfig, identity: IdentityContext): string {
     const baseUrl = normalizeBaseUrl(config.baseUrl || identity.servstationUrl);
     if (!baseUrl) {
-      throw new Error("Botstation HBClient reverse A2A base URL is not configured.");
+      throw new Error("Botstation HyBotLeasing reverse A2A base URL is not configured.");
     }
     return baseUrl;
   }

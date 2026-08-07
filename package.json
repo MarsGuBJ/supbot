@@ -2,7 +2,7 @@
   "name": "hbclient-workspace",
   "version": "0.1.0",
   "private": true,
-  "description": "HBClient local desktop agent workspace.",
+  "description": "HyBotLeasing local desktop agent workspace.",
   "config": {
     "electron_mirror": "https://npmmirror.com/mirrors/electron/"
   },

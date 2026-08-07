@@ -290,10 +290,10 @@ function App() {
     }
     const chinese = language === "zh";
     modalApi.info({
-      title: chinese ? "关于 HBClient" : "About HBClient",
+      title: chinese ? "关于 HyBotLeasing" : "About HyBotLeasing",
       content: (
         <div className="version-info">
-          <div className="version-info-product">HBClient</div>
+          <div className="version-info-product">HyBotLeasing</div>
           <div className="version-info-number">
             <span>{chinese ? "版本号" : "Version"}</span>
             <strong>{currentVersion ? `v${currentVersion}` : chinese ? "未知" : "Unknown"}</strong>
@@ -410,7 +410,7 @@ function App() {
     const version = updateState.availableVersion ? ` v${updateState.availableVersion}` : "";
     const currentVersion = updateState.currentVersion ? ` v${updateState.currentVersion}` : "";
     modalApi.confirm({
-      title: chinese ? `发现 HBClient 新版本${version}` : `HBClient update${version} is available`,
+      title: chinese ? `发现 HyBotLeasing 新版本${version}` : `HyBotLeasing update${version} is available`,
       content: chinese
         ? `当前版本${currentVersion || "未知"}。是否立即升级？`
         : `Current version${currentVersion || " unknown"}. Upgrade now?`,

@@ -23,8 +23,19 @@ describe("JsonFileStorage", () => {
     const dir = await createTempDir();
     const storage = new JsonFileStorage(dir);
     const state = await storage.load();
-    expect(state.agentName).toBeTruthy();
+    expect(state.agentName).toBe("HyBotLeasing Local Agent");
     await stat(join(dir, "state.json"));
+  });
+
+  test("migrates the legacy default agent name", async () => {
+    const dir = await createTempDir();
+    const storage = new JsonFileStorage(dir);
+    const legacyState = createInitialState();
+    legacyState.agentName = "HBClient Local Agent";
+    await storage.save(legacyState);
+
+    const state = await storage.load();
+    expect(state.agentName).toBe("HyBotLeasing Local Agent");
   });
 
   test("recovers from the backup when state.json is corrupted", async () => {
