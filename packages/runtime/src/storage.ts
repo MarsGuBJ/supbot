@@ -212,7 +212,7 @@ export function createInitialState(): RuntimeState {
     updatedAt: createdAt,
   };
   return {
-    agentName: "HyBotLeasing Local Agent",
+    agentName: "HyBotLeasing",
     identityContext: undefined,
     modelProviders: [defaultProvider],
     activeModelProviderId: defaultProvider.id,
@@ -388,7 +388,8 @@ function normalizeState(input: LegacyRuntimeStateInput): RuntimeState {
   }
   const agentName = stringOr(input.agentName, initial.agentName);
   return {
-    agentName: agentName === "HBClient Local Agent" ? "HyBotLeasing Local Agent" : agentName,
+    agentName:
+      agentName === "HBClient Local Agent" || agentName === "HyBotLeasing Local Agent" ? "HyBotLeasing" : agentName,
     identityContext: normalizeIdentityContext(input.identityContext),
     modelProviders,
     activeModelProviderId,

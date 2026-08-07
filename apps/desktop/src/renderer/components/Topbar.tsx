@@ -36,6 +36,11 @@ export function Topbar({
   startUpdate: () => void | Promise<void>;
   showVersionInfo: () => void | Promise<void>;
 }) {
+  const agentTitle =
+    snapshot.agentName === "HBClient Local Agent" || snapshot.agentName === "HyBotLeasing Local Agent"
+      ? "HyBotLeasing"
+      : snapshot.agentName;
+
   return (
     <header className="topbar">
       <div className="identity">
@@ -51,7 +56,7 @@ export function Topbar({
         </Tooltip>
         <div>
           <div className="eyebrow">{translate(language, "LOCAL AGENT CONSOLE")}</div>
-          <div className="agent-title">{snapshot.agentName}</div>
+          <div className="agent-title">{agentTitle}</div>
           <div className="muted mono">
             {snapshot.modelConfig.providerName} / {snapshot.modelConfig.model}
           </div>

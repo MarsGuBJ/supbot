@@ -23,7 +23,7 @@ describe("JsonFileStorage", () => {
     const dir = await createTempDir();
     const storage = new JsonFileStorage(dir);
     const state = await storage.load();
-    expect(state.agentName).toBe("HyBotLeasing Local Agent");
+    expect(state.agentName).toBe("HyBotLeasing");
     await stat(join(dir, "state.json"));
   });
 
@@ -35,7 +35,7 @@ describe("JsonFileStorage", () => {
     await storage.save(legacyState);
 
     const state = await storage.load();
-    expect(state.agentName).toBe("HyBotLeasing Local Agent");
+    expect(state.agentName).toBe("HyBotLeasing");
   });
 
   test("recovers from the backup when state.json is corrupted", async () => {
