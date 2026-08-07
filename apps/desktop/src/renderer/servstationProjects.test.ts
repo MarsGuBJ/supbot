@@ -119,4 +119,15 @@ describe("Server Agent projects", () => {
     expect(projectGroup).not.toContain("conversation.lastMessageAt");
     expect(projectGroup).not.toContain("formatDateTime(conversation.updatedAt)");
   });
+
+  it("renders project metadata without the updated timestamp", () => {
+    const source = readFileSync(new URL("./main.tsx", import.meta.url), "utf8");
+    const projectGroupStart = source.indexOf("function ServerAgentProjectGroup");
+    const projectGroupEnd = source.indexOf("function SubagentModal");
+    const projectGroup = source.slice(projectGroupStart, projectGroupEnd);
+
+    expect(projectGroup).toContain('<div className="server-agent-project-meta">');
+    expect(projectGroup).toContain('t("Resource count")');
+    expect(projectGroup).not.toContain("formatDateTime(project.updatedAt)");
+  });
 });

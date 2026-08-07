@@ -2294,7 +2294,6 @@ function ServerAgentProjectGroup({
       </div>
       {project && !collapsed ? (
         <div className="server-agent-project-meta">
-          <span>{formatDateTime(project.updatedAt)}</span>
           <span>
             {t("Resource count")}: {project.resourceCount || 0}
           </span>
