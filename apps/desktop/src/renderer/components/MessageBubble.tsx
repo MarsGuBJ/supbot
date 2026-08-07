@@ -12,7 +12,7 @@ import {
 } from "@ant-design/icons";
 import { Alert, Button, Tag, Tooltip } from "antd";
 import type { ChatMessage } from "@supbot/shared";
-import { formatDateTime, statusColor, statusLabel } from "@supbot/shared";
+import { statusColor, statusLabel } from "@supbot/shared";
 import { formatToolPayload, shouldShowGeneratedFileInChat } from "../lib/chatFormat";
 
 export const MessageBubble = memo(function MessageBubble({
@@ -26,19 +26,12 @@ export const MessageBubble = memo(function MessageBubble({
   return (
     <div className={`message-row ${item.role}`}>
       <div className="message-bubble">
-        <div className="message-meta">
-          <span>
-            {item.role === "user"
-              ? t("You")
-              : item.role === "assistant"
-                ? "HBClient"
-                : item.role === "tool"
-                  ? t("Tool")
-                  : t("System")}
-          </span>
-          <span>{formatDateTime(item.createdAt)}</span>
-          {item.status ? <Tag color={statusColor(item.status)}>{statusLabel(item.status, t)}</Tag> : null}
-        </div>
+        {item.role === "user" ? null : (
+          <div className="message-meta">
+            <span>{item.role === "assistant" ? "HBClient" : item.role === "tool" ? t("Tool") : t("System")}</span>
+            {item.status ? <Tag color={statusColor(item.status)}>{statusLabel(item.status, t)}</Tag> : null}
+          </div>
+        )}
         <MessageBlocks message={item} t={t} />
         {item.attachments?.length ? (
           <div className="attachment-row">
@@ -89,18 +82,7 @@ export function MessageBlocks({
           ) : null;
         }
         if (block.type === "tool_use") {
-          const sourceLabel = mcpToolSourceLabel(block.toolName);
-          return (
-            <div className={`tool-card status-${block.status}`} key={`${message.id}-${block.toolCallId}-use`}>
-              <div className="tool-card-head">
-                <ToolOutlined />
-                <strong>{block.toolName}</strong>
-                {sourceLabel ? <span className="tool-source">{sourceLabel}</span> : null}
-                <Tag>{t(block.status)}</Tag>
-              </div>
-              <pre>{formatToolPayload(block.input)}</pre>
-            </div>
-          );
+          return <ToolUseBlock block={block} t={t} key={`${message.id}-${block.toolCallId}-use`} />;
         }
         if (block.type === "tool_result") {
           return (
@@ -164,6 +146,41 @@ export function MessageBlocks({
         return <Alert key={`${message.id}-${index}`} type="error" message={block.message} />;
       })}
     </>
+  );
+}
+
+export type ToolUseMessageBlock = Extract<NonNullable<ChatMessage["blocks"]>[number], { type: "tool_use" }>;
+
+export function ToolUseBlock({
+  block,
+  t,
+}: {
+  block: ToolUseMessageBlock;
+  t: (key: string, vars?: Record<string, string | number>) => string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const sourceLabel = mcpToolSourceLabel(block.toolName);
+  return (
+    <div className={`tool-card status-${block.status} ${expanded ? "is-expanded" : "is-collapsed"}`}>
+      <div className="tool-card-head tool-result-head">
+        <ToolOutlined />
+        <strong>{block.toolName}</strong>
+        {sourceLabel ? <span className="tool-source">{sourceLabel}</span> : null}
+        <Tag>{t(block.status)}</Tag>
+        <Tooltip title={t(expanded ? "Collapse" : "Expand")}>
+          <Button
+            type="text"
+            size="small"
+            className="tool-result-toggle"
+            icon={expanded ? <DownOutlined /> : <RightOutlined />}
+            aria-label={t(expanded ? "Collapse" : "Expand")}
+            aria-expanded={expanded}
+            onClick={() => setExpanded((value) => !value)}
+          />
+        </Tooltip>
+      </div>
+      {expanded ? <pre>{formatToolPayload(block.input)}</pre> : null}
+    </div>
   );
 }
 

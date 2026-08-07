@@ -542,8 +542,14 @@ button {
   background: rgba(255, 255, 255, 0.92);
 }
 
+.message-row.assistant .message-bubble {
+  border: 0;
+  background: transparent;
+}
+
 .message-row.user .message-bubble {
   border-color: rgba(212, 117, 10, 0.28);
+  border-radius: 8px;
   background: rgba(255, 239, 224, 0.92);
 }
 
@@ -660,6 +666,10 @@ button {
 
 .tool-card.result.is-collapsed {
   gap: 0;
+}
+
+.message-row.assistant .tool-card.is-collapsed {
+  border-radius: 8px;
 }
 
 .tool-result-head .tool-result-toggle {
