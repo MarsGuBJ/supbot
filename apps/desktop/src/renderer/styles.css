@@ -2471,23 +2471,11 @@ button {
   cursor: pointer;
 }
 
-.server-agent-project-conversation strong,
-.server-agent-project-conversation small {
+.server-agent-project-conversation strong {
   display: block;
   min-width: 0;
-}
-
-.server-agent-project-conversation strong {
   overflow: hidden;
   font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.server-agent-project-conversation small {
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
