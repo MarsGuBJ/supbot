@@ -1980,10 +1980,12 @@ function ServerAgentMessages({
           {messages.map((item) => (
             <div className={`message-row ${item.role === "agent" ? "assistant" : item.role}`} key={item.id}>
               <div className="message-bubble">
-                <div className="message-meta">
-                  <span>{item.role === "user" ? t("You") : t("Agent")}</span>
-                  {item.status ? <Tag color={servstationStatusColor(item.status)}>{t(item.status)}</Tag> : null}
-                </div>
+                {item.role === "user" ? null : (
+                  <div className="message-meta">
+                    <span>{t("Agent")}</span>
+                    {item.status ? <Tag color={servstationStatusColor(item.status)}>{t(item.status)}</Tag> : null}
+                  </div>
+                )}
                 <div className="message-text">{item.text || t("Waiting for model response...")}</div>
                 {item.attachments?.length ? (
                   <div className="message-attachments">
