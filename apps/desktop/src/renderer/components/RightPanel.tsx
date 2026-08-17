@@ -57,6 +57,7 @@ export function RightPanel({
   refresh,
   t,
   openSchedule,
+  onLocateJob,
 }: {
   snapshot: RuntimeSnapshot;
   activeConversationId: string;
@@ -66,13 +67,20 @@ export function RightPanel({
   refresh: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
   openSchedule: () => void;
+  onLocateJob: (job: AgentJob) => void;
 }) {
+  const conversationJobs = snapshot.jobs.filter((job) => job.conversationId === activeConversationId);
   return (
     <aside className={`activity-panel ${collapsed ? "is-collapsed" : ""}`}>
       <Tabs
         activeKey={panel || "memory"}
         onChange={(key) => setPanel(key as DetailPanel)}
         items={[
+          {
+            key: "tasks",
+            label: t("Tasks"),
+            children: <ConversationTasksPanel jobs={conversationJobs} onLocateJob={onLocateJob} t={t} />,
+          },
           {
             key: "memory",
             label: t("Memory"),
@@ -93,6 +101,51 @@ export function RightPanel({
         ]}
       />
     </aside>
+  );
+}
+
+function ConversationTasksPanel({
+  jobs,
+  onLocateJob,
+  t,
+}: {
+  jobs: AgentJob[];
+  onLocateJob: (job: AgentJob) => void;
+  t: (key: string, vars?: Record<string, string | number>) => string;
+}) {
+  if (!jobs.length) {
+    return (
+      <div className="activity-list">
+        <Empty description={t("No jobs yet")} />
+      </div>
+    );
+  }
+  return (
+    <div className="activity-list">
+      {jobs.map((job) => {
+        const isActiveJob = job.status === "queued" || job.status === "running";
+        return (
+          <div className={`activity-item stacked job-item ${isActiveJob ? "is-running" : ""}`} key={job.id}>
+            <button type="button" onClick={() => onLocateJob(job)} aria-label={t("Locate task message")}>
+              <div className="activity-head">
+                <strong>{job.prompt.slice(0, 70)}</strong>
+                <div className="job-status-group">
+                  {isActiveJob ? (
+                    <span className="job-running-indicator" aria-label={statusLabel(job.status, t)}>
+                      <span />
+                      <span />
+                      <span />
+                    </span>
+                  ) : null}
+                  <Tag color={statusColor(job.status)}>{statusLabel(job.status, t)}</Tag>
+                </div>
+              </div>
+              <div className="muted">{formatDateTime(job.createdAt)}</div>
+            </button>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

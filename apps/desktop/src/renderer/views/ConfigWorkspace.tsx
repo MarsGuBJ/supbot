@@ -65,6 +65,19 @@ export function MemorySettingsCard({
 }) {
   return (
     <div className="settings-card">
+      <div className="memory-toggle">
+        <div>
+          <strong>{t("Memory enabled")}</strong>
+          <p className="memory-toggle-hint">{t("When off, conversations no longer use remembered content.")}</p>
+        </div>
+        <Switch
+          checked={snapshot.memoryEnabled}
+          onChange={async (checked) => {
+            await window.supbot.setMemoryEnabled(checked);
+            refresh();
+          }}
+        />
+      </div>
       <MemoryPanel
         snapshot={snapshot}
         activeConversationId={snapshot.conversations[0]?.id || ""}
@@ -856,6 +869,7 @@ export function CapabilitiesCard({
             { label: t("default"), value: "default" },
             { label: t("acceptEdits"), value: "acceptEdits" },
             { label: t("plan"), value: "plan" },
+            { label: t("bypassPermissions"), value: "bypassPermissions" },
           ]}
         />
         <Divider />

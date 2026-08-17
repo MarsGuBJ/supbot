@@ -51,6 +51,7 @@ import type { TextAreaRef } from "antd/es/input/TextArea";
 import zhCN from "antd/locale/zh_CN";
 import enUS from "antd/locale/en_US";
 import type {
+  AgentJob,
   Attachment,
   ChatMessage,
   HBClientUpdateState,
@@ -206,6 +207,7 @@ function App() {
   const [messageApi, contextHolder] = message.useMessage();
   const [modalApi, modalContextHolder] = Modal.useModal();
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const locateMessageRef = useRef<((messageId: string) => void) | null>(null);
   const activeConversationIdRef = useRef("");
   const shouldStickToBottomRef = useRef(true);
   const promptedUpdateRef = useRef("");
@@ -440,6 +442,25 @@ function App() {
   const activeConversation = useMemo(
     () => snapshot?.conversations.find((item) => item.id === activeConversationId) || snapshot?.conversations[0],
     [snapshot?.conversations, activeConversationId],
+  );
+  const locateJobMessage = useCallback(
+    (job: AgentJob) => {
+      const messages = activeConversation?.messages || [];
+      let target = messages.find((item) => item.jobId === job.id);
+      if (!target) {
+        const jobTime = Date.parse(job.createdAt);
+        target = [...messages]
+          .reverse()
+          .find((item) => item.role === "user" && Date.parse(item.createdAt) <= jobTime + 1000);
+      }
+      if (!target) {
+        messageApi.info(t("Task message not loaded yet."));
+        return;
+      }
+      shouldStickToBottomRef.current = false;
+      locateMessageRef.current?.(target.id);
+    },
+    [activeConversation, messageApi, t],
   );
   const hasOlderMessages = Boolean(
     activeConversation && activeConversation.messages.length < (activeConversation.messageCount || 0),
@@ -730,6 +751,7 @@ function App() {
               hasOlderMessages={hasOlderMessages}
               historyLoading={historyLoading}
               scrollRef={scrollRef}
+              locateMessageRef={locateMessageRef}
               onMessageScroll={updateMessageStickiness}
               t={t}
               slashCommands={slashCommandList}
@@ -744,6 +766,7 @@ function App() {
               refresh={refresh}
               t={t}
               openSchedule={() => setScheduleOpen(true)}
+              onLocateJob={locateJobMessage}
             />
           </section>
         ) : view === "server" ? (

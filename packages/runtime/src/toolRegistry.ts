@@ -243,6 +243,7 @@ export function defaultToolDefinitions(): ToolDefinition[] {
           context.signal,
           normalizeTimeoutMs(parsed.timeoutMs, context.host.shellTimeoutMs),
           context.host.cwd || context.host.workspacePath,
+          context.host,
         );
       },
     },

@@ -31,6 +31,7 @@ export interface SubagentRunnerHost {
   subagents: SubagentConfig[];
   compactBoundaries: CompactBoundary[];
   memory: MemorySnapshot;
+  memoryEnabled?: boolean;
   registry: ToolRegistry;
   permissionMode: PermissionMode;
   getPermissionRules(): PermissionRule[];
@@ -101,6 +102,7 @@ export class SubagentRunner {
         messages: subMessages,
         compactBoundaries: this.host.compactBoundaries,
         memory: this.host.memory,
+        memoryEnabled: this.host.memoryEnabled,
         registry: this.host.registry,
         toolContext: this.host.createToolContext(input.signal, input.parentJobId, input.depth + 1),
         permissionMode: this.host.permissionMode,

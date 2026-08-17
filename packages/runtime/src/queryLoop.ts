@@ -8,6 +8,7 @@ import type {
   ToolCallRecord,
 } from "@supbot/shared";
 import { nowIso } from "@supbot/shared";
+import { generatedResultFilePattern } from "./localTools";
 import type { AdapterMessage, AdapterToolCall, ModelAdapter } from "./modelAdapter";
 import { ToolExecutor } from "./toolExecutor";
 import type { ToolExecutionContext, ToolRegistry } from "./toolRegistry";
@@ -207,15 +208,14 @@ function artifactCompletionFromTrace(trace: AgentLoopTrace): string | undefined 
 }
 
 function artifactSummaryLine(output: string): string | undefined {
-  const artifactExtension = /\.(pptx|docx|xlsx|pdf|csv|tsv|txt|md|html|png|jpe?g|webp)\b/i;
   const lines = output
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
   return (
     lines.find(
-      (line) => /(saved to|wrote|created|copied|fullpath|path|name)/i.test(line) && artifactExtension.test(line),
-    ) || lines.find((line) => artifactExtension.test(line) && /[\\/]/.test(line))
+      (line) => /(saved to|wrote|created|copied|fullpath|path|name)/i.test(line) && generatedResultFilePattern.test(line),
+    ) || lines.find((line) => generatedResultFilePattern.test(line) && /[\\/]/.test(line))
   );
 }
 

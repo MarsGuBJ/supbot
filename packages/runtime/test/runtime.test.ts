@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
+import { createServer, type ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -242,6 +242,110 @@ type MockMcpMode =
   | "invalid-schema"
   | "rich-result"
   | "notifications";
+
+function mockMcpResult(method: string): unknown {
+  if (method === "initialize") {
+    return { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "mock-remote", version: "1.0.0" } };
+  }
+  if (method === "tools/list") {
+    return {
+      tools: [
+        {
+          name: "echo",
+          description: "Echo a message.",
+          inputSchema: { type: "object", properties: { message: { type: "string" } }, required: ["message"] },
+        },
+      ],
+    };
+  }
+  return {};
+}
+
+async function startMockHttpMcpServer() {
+  const requests: Array<{ method?: string }> = [];
+  const authorizationHeaders: string[] = [];
+  const server = createServer((req, res) => {
+    if (req.method !== "POST") {
+      res.writeHead(405).end();
+      return;
+    }
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk;
+    });
+    req.on("end", () => {
+      const message = JSON.parse(body) as { id?: number; method?: string };
+      requests.push({ method: message.method });
+      const authorization = req.headers.authorization;
+      if (authorization) {
+        authorizationHeaders.push(authorization);
+      }
+      if (message.id === undefined) {
+        res.writeHead(202).end();
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json", "mcp-session-id": "mock-session-1" });
+      res.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: mockMcpResult(message.method || "") }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as AddressInfo).port;
+  return {
+    url: `http://127.0.0.1:${port}/mcp`,
+    requests,
+    authorizationHeaders,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}
+
+async function startMockSseMcpServer() {
+  const requests: Array<{ method?: string }> = [];
+  const streamClients: ServerResponse[] = [];
+  const server = createServer((req, res) => {
+    const port = (server.address() as AddressInfo).port;
+    if (req.method === "GET") {
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        connection: "keep-alive",
+      });
+      streamClients.push(res);
+      res.write(`event: endpoint\ndata: http://127.0.0.1:${port}/messages\n\n`);
+      return;
+    }
+    if (req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk;
+      });
+      req.on("end", () => {
+        const message = JSON.parse(body) as { id?: number; method?: string };
+        requests.push({ method: message.method });
+        res.writeHead(202).end();
+        if (message.id !== undefined) {
+          const frame = `event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: message.id, result: mockMcpResult(message.method || "") })}\n\n`;
+          for (const client of streamClients) {
+            client.write(frame);
+          }
+        }
+      });
+      return;
+    }
+    res.writeHead(405).end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as AddressInfo).port;
+  return {
+    url: `http://127.0.0.1:${port}/sse`,
+    requests,
+    close: async () => {
+      for (const client of streamClients) {
+        client.end();
+      }
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
 
 async function writeMockMcpServer(mode: MockMcpMode = "ok"): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "supbot-mcp-"));
@@ -752,6 +856,53 @@ describe("SupbotRuntime", () => {
     } finally {
       await mock.close();
     }
+  });
+
+  test("does not recall memory into the model context when memory is disabled", async () => {
+    const runtime = await createRuntime();
+    const conversation = await runtime.createConversation("Memory toggle");
+    await runtime.addMemory({
+      type: "fact",
+      scope: "conversation",
+      conversationId: conversation.id,
+      title: "Toggle target",
+      content: "The toggle keyword is Cloudstone.",
+      keywords: ["cloudstone"],
+    });
+    expect(runtime.snapshot().memoryEnabled).toBe(true);
+    await runtime.setMemoryEnabled(false);
+    expect(runtime.snapshot().memoryEnabled).toBe(false);
+    const mock = await withMockModel(runtime, (body) => {
+      const parsed = JSON.parse(body);
+      const system = parsed.messages.find((message: { role: string }) => message.role === "system")?.content || "";
+      expect(system).not.toContain("<memory>");
+      expect(system).not.toContain("Cloudstone");
+      return { choices: [{ message: { content: "No memory used." } }] };
+    });
+    try {
+      const result = await runtime.sendPrompt({ conversationId: conversation.id, prompt: "Cloudstone" });
+      await waitForJob(runtime, result.job.id);
+      expect(runtime.snapshot().runtimeEvents.some((event) => event.kind === "memory_recall")).toBe(false);
+      const fact = runtime.snapshot().memory.facts.find((item) => item.title === "Toggle target");
+      expect(fact?.accessCount || 0).toBe(0);
+      expect(mock.calls()).toBe(1);
+    } finally {
+      await mock.close();
+    }
+  });
+
+  test("memoryEnabled defaults to true and persists across restart", async () => {
+    const rootDir = await createGitRoot();
+    const dir = await mkdtemp(join(tmpdir(), "supbot-test-"));
+    tempDirs.push(dir);
+    const runtime = new SupbotRuntime(new JsonFileStorage(dir), { rootDir });
+    await runtime.init();
+    expect(runtime.snapshot().memoryEnabled).toBe(true);
+    await runtime.setMemoryEnabled(false);
+
+    const restarted = new SupbotRuntime(new JsonFileStorage(dir), { rootDir });
+    await restarted.init();
+    expect(restarted.snapshot().memoryEnabled).toBe(false);
   });
 
   test("searches memory with keyword, scope, and disabled filters", async () => {
@@ -2759,6 +2910,55 @@ describe("SupbotRuntime", () => {
     }
   });
 
+  test("captures shell-created result files as generated files, excluding scripts", async () => {
+    const runtime = await createRuntime();
+    await runtime.addPermissionRule({ toolName: "Shell", behavior: "allow" });
+    const command =
+      process.platform === "win32"
+        ? "Set-Content -Path report.json -Value '{}'; Set-Content -Path page.html -Value '<p>hi</p>'; Set-Content -Path helper.py -Value 'print(1)'"
+        : "printf '{}' > report.json && printf '<p>hi</p>' > page.html && printf 'print(1)' > helper.py";
+    const mock = await withMockModel(runtime, (body, call) => {
+      if (call === 1) {
+        return {
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call_shell_capture",
+                    type: "function",
+                    function: { name: "Shell", arguments: JSON.stringify({ command }) },
+                  },
+                ],
+              },
+            },
+          ],
+        };
+      }
+      const parsed = JSON.parse(body);
+      const toolMessage =
+        parsed.messages.find((message: { role: string; content: string }) => message.role === "tool")?.content || "";
+      expect(toolMessage).toContain("Generated files:");
+      expect(toolMessage).toContain("report.json");
+      return { choices: [{ message: { content: "Files created." } }] };
+    });
+    try {
+      const result = await runtime.sendPrompt({ prompt: "create result files" });
+      await waitForJob(runtime, result.job.id);
+      const conversation = runtime.snapshot().conversations.find((item) => item.id === result.conversation.id);
+      const assistant = conversation?.messages.find((item) => item.role === "assistant");
+      const names = (assistant?.generatedFiles || []).map((file) => file.name);
+      expect(names).toContain("report.json");
+      expect(names).toContain("page.html");
+      expect(names).not.toContain("helper.py");
+      const report = assistant?.generatedFiles?.find((file) => file.name === "report.json");
+      expect((await readFile(report!.path, "utf8")).trim()).toBe("{}");
+    } finally {
+      await mock.close();
+    }
+  });
+
   test("deletes jobs and task execution records when deleting a conversation", async () => {
     const runtime = await createRuntime();
     await runtime.addPermissionRule({ toolName: "WriteFile", behavior: "allow" });
@@ -3154,6 +3354,68 @@ describe("SupbotRuntime", () => {
     expect(presets.length).toBeGreaterThan(0);
     expect(presets[0].serverInput.autoConnect).toBe(false);
     expect(runtime.snapshot().mcpTools).toHaveLength(0);
+  });
+
+  test("connects to a remote streamable HTTP MCP server and lists its tools", async () => {
+    const runtime = await createRuntime();
+    const mock = await startMockHttpMcpServer();
+    try {
+      const server = await runtime.addMcpServer({
+        name: "remote http",
+        transport: "http",
+        url: mock.url,
+        headers: { Authorization: "Bearer test-token" },
+        enabled: true,
+      });
+      expect(server.transport).toBe("http");
+      expect(server.url).toBe(mock.url);
+      await runtime.connectMcpServer(server.id);
+      const snapshot = runtime.snapshot();
+      expect(snapshot.mcpServers.find((item) => item.id === server.id)?.status.state).toBe("connected");
+      expect(snapshot.mcpTools.some((item) => item.runtimeToolName === `mcp.${server.id}.echo`)).toBe(true);
+      const methods = mock.requests.map((item) => item.method);
+      expect(methods).toContain("initialize");
+      expect(methods).toContain("tools/list");
+      expect(mock.authorizationHeaders).toContain("Bearer test-token");
+
+      const diagnostic = await runtime.diagnoseMcpServer({ name: "remote http", transport: "http", url: mock.url });
+      expect(diagnostic.ok).toBe(true);
+      expect(diagnostic.tools.map((tool) => tool.name)).toContain("echo");
+
+      await runtime.disconnectMcpServer(server.id);
+      expect(runtime.snapshot().mcpServers.find((item) => item.id === server.id)?.status.state).toBe("disconnected");
+    } finally {
+      await mock.close();
+    }
+  });
+
+  test("connects to a legacy SSE MCP server and lists its tools", async () => {
+    const runtime = await createRuntime();
+    const mock = await startMockSseMcpServer();
+    try {
+      const server = await runtime.addMcpServer({ name: "remote sse", transport: "sse", url: mock.url, enabled: true });
+      await runtime.connectMcpServer(server.id);
+      const snapshot = runtime.snapshot();
+      expect(snapshot.mcpServers.find((item) => item.id === server.id)?.status.state).toBe("connected");
+      expect(snapshot.mcpTools.some((item) => item.runtimeToolName === `mcp.${server.id}.echo`)).toBe(true);
+      expect(mock.requests.map((item) => item.method)).toContain("initialize");
+      expect(mock.requests.map((item) => item.method)).toContain("tools/list");
+      await runtime.disconnectMcpServer(server.id);
+      expect(runtime.snapshot().mcpServers.find((item) => item.id === server.id)?.status.state).toBe("disconnected");
+    } finally {
+      await mock.close();
+    }
+  });
+
+  test("validates remote MCP server input", async () => {
+    const runtime = await createRuntime();
+    await expect(runtime.addMcpServer({ name: "missing url", transport: "http" })).rejects.toThrow("URL is required");
+    await expect(runtime.addMcpServer({ name: "bad url", transport: "sse", url: "ftp://example.com" })).rejects.toThrow(
+      "valid http(s) URL",
+    );
+    await expect(runtime.addMcpServer({ name: "missing command", transport: "stdio" })).rejects.toThrow(
+      "command is required",
+    );
   });
 
   test("exports redacted MCP config and imports duplicate ids as disabled autoconnect-safe configs", async () => {

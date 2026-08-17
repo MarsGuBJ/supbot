@@ -381,6 +381,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       runtimeEvents: this.state.runtimeEvents,
       compactBoundaries: this.state.compactBoundaries,
       memory: this.state.memory,
+      memoryEnabled: this.state.memoryEnabled,
       permissionMode: this.state.permissionMode,
       permissionRules: this.state.permissionRules,
       ...this.mcpManager.snapshot(),
@@ -694,6 +695,13 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     this.state.permissionMode = normalizePermissionMode(mode);
     await this.persistAndBroadcast();
     return this.state.permissionMode;
+  }
+
+  async setMemoryEnabled(enabled: boolean): Promise<boolean> {
+    this.assertLoaded();
+    this.state.memoryEnabled = enabled === true;
+    await this.persistAndBroadcast();
+    return this.state.memoryEnabled;
   }
 
   async addPermissionRule(
@@ -1929,6 +1937,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
           this.findConversation(conversation.id)?.messages.filter((message) => message.id !== assistantSeed.id) || [],
         compactBoundaries: this.state.compactBoundaries,
         memory: this.state.memory,
+        memoryEnabled: this.state.memoryEnabled,
         registry: this.toolRegistry,
         toolContext: this.createToolExecutionContext(controller.signal, jobId, 0, toolContextOptions),
         permissionMode: this.state.permissionMode,
@@ -2452,6 +2461,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       ],
       compactBoundaries: this.state.compactBoundaries,
       memory: this.state.memory,
+      memoryEnabled: this.state.memoryEnabled,
       registry: this.toolRegistry,
       toolContext: this.createToolExecutionContext(signal, `${run.id}:${task.id}`, 0, {
         project,
@@ -3082,6 +3092,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
           subagents: this.state.subagents,
           compactBoundaries: this.state.compactBoundaries,
           memory: this.state.memory,
+          memoryEnabled: this.state.memoryEnabled,
           registry: this.toolRegistry,
           permissionMode: this.state.permissionMode,
           getPermissionRules: () => this.state.permissionRules,
@@ -4057,13 +4068,14 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     const now = nowIso();
     const id = marketMcpServerId(product, input);
     const current = this.state.mcpServers.find((server) => server.id === id);
-    const command = materializeInstallPath(input.command, installPath).trim();
+    const command = materializeInstallPath(input.command || "", installPath).trim();
     if (!command) {
       throw new Error(`Tool market MCP product has no local command: ${product.name}`);
     }
     const server: McpServerConfig = {
       id,
       name: input.name.trim() || product.name,
+      transport: "stdio",
       command,
       args: (input.args || []).map((arg) => materializeInstallPath(arg, installPath)),
       cwd: input.cwd ? materializeInstallPath(input.cwd, installPath) : installPath,

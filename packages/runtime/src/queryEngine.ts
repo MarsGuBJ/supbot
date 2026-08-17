@@ -39,6 +39,7 @@ export interface QueryEngineInput {
   messages: ChatMessage[];
   compactBoundaries: CompactBoundary[];
   memory: MemorySnapshot;
+  memoryEnabled?: boolean;
   registry: ToolRegistry;
   toolContext: ToolExecutionContext;
   permissionMode: PermissionMode;
@@ -126,80 +127,84 @@ export class QueryEngine {
       }
     }
 
-    const activeCompactBoundary =
-      compactBoundary || latestBoundaryFor(this.input.conversationId, this.input.compactBoundaries);
-    const recallQuery = latestUserPrompt(this.input.messages);
-    const recall = this.memoryManager.recall(memorySnapshot, {
-      query: recallQuery,
-      scope: "all",
-      conversationId: this.input.conversationId,
-      subagentName: this.input.subagent?.name,
-      excludeSources: activeCompactBoundary ? [`compact:${activeCompactBoundary.id}`] : [],
-      limit: 6,
-      budgetChars: 6000,
-    });
-    memorySnapshot = this.memoryManager.recordRecall(recall.memory, {
-      id: this.input.toolContext.host.randomId("mem_recall"),
-      conversationId: this.input.conversationId,
-      subagentName: this.input.subagent?.name,
-      query: recallQuery,
-      resultIds: recall.results.map((item) => item.id),
-      resultCount: recall.results.length,
-      injected: recall.injected,
-      budgetChars: recall.budgetChars,
-      usedChars: recall.usedChars,
-      createdAt: nowIso(),
-      results: recall.results.map((item) => ({
-        id: item.id,
-        title: item.title,
-        score: item.score,
-        matchedKeywords: item.matchedKeywords,
-        reason: item.reason,
-        sourceLabel: item.sourceLabel,
-      })),
-      excludedResults: recall.excludedResults.map((item) => ({
-        id: item.id,
-        title: item.title,
-        score: item.score,
-        matchedKeywords: item.matchedKeywords,
-        reason: item.reason,
-        sourceLabel: item.sourceLabel,
-      })),
-      blockPreview: recall.block,
-    });
-    await this.input.onMemoryChanged(memorySnapshot);
-    if (recall.results.length) {
-      await this.recordRuntimeEvent({
-        id: this.randomEventId(),
-        jobId: this.input.jobId,
+    let memoryBlock: string | undefined;
+    if (this.input.memoryEnabled !== false) {
+      const activeCompactBoundary =
+        compactBoundary || latestBoundaryFor(this.input.conversationId, this.input.compactBoundaries);
+      const recallQuery = latestUserPrompt(this.input.messages);
+      const recall = this.memoryManager.recall(memorySnapshot, {
+        query: recallQuery,
+        scope: "all",
         conversationId: this.input.conversationId,
-        kind: "memory_recall",
-        message: `Recalled ${recall.results.length} memory item${recall.results.length === 1 ? "" : "s"} (${recall.usedChars}/${recall.budgetChars} chars)`,
-        createdAt: nowIso(),
-        data: {
-          query: recallQuery,
-          resultCount: recall.results.length,
-          injected: recall.injected,
-          budgetChars: recall.budgetChars,
-          usedChars: recall.usedChars,
-          results: recall.results.map((item) => ({
-            id: item.id,
-            title: item.title,
-            score: item.score,
-            matchedKeywords: item.matchedKeywords,
-            reason: item.reason,
-            sourceLabel: item.sourceLabel,
-          })),
-          excludedResults: recall.excludedResults.map((item) => ({
-            id: item.id,
-            title: item.title,
-            score: item.score,
-            matchedKeywords: item.matchedKeywords,
-            reason: item.reason,
-            sourceLabel: item.sourceLabel,
-          })),
-        },
+        subagentName: this.input.subagent?.name,
+        excludeSources: activeCompactBoundary ? [`compact:${activeCompactBoundary.id}`] : [],
+        limit: 6,
+        budgetChars: 6000,
       });
+      memorySnapshot = this.memoryManager.recordRecall(recall.memory, {
+        id: this.input.toolContext.host.randomId("mem_recall"),
+        conversationId: this.input.conversationId,
+        subagentName: this.input.subagent?.name,
+        query: recallQuery,
+        resultIds: recall.results.map((item) => item.id),
+        resultCount: recall.results.length,
+        injected: recall.injected,
+        budgetChars: recall.budgetChars,
+        usedChars: recall.usedChars,
+        createdAt: nowIso(),
+        results: recall.results.map((item) => ({
+          id: item.id,
+          title: item.title,
+          score: item.score,
+          matchedKeywords: item.matchedKeywords,
+          reason: item.reason,
+          sourceLabel: item.sourceLabel,
+        })),
+        excludedResults: recall.excludedResults.map((item) => ({
+          id: item.id,
+          title: item.title,
+          score: item.score,
+          matchedKeywords: item.matchedKeywords,
+          reason: item.reason,
+          sourceLabel: item.sourceLabel,
+        })),
+        blockPreview: recall.block,
+      });
+      await this.input.onMemoryChanged(memorySnapshot);
+      if (recall.results.length) {
+        await this.recordRuntimeEvent({
+          id: this.randomEventId(),
+          jobId: this.input.jobId,
+          conversationId: this.input.conversationId,
+          kind: "memory_recall",
+          message: `Recalled ${recall.results.length} memory item${recall.results.length === 1 ? "" : "s"} (${recall.usedChars}/${recall.budgetChars} chars)`,
+          createdAt: nowIso(),
+          data: {
+            query: recallQuery,
+            resultCount: recall.results.length,
+            injected: recall.injected,
+            budgetChars: recall.budgetChars,
+            usedChars: recall.usedChars,
+            results: recall.results.map((item) => ({
+              id: item.id,
+              title: item.title,
+              score: item.score,
+              matchedKeywords: item.matchedKeywords,
+              reason: item.reason,
+              sourceLabel: item.sourceLabel,
+            })),
+            excludedResults: recall.excludedResults.map((item) => ({
+              id: item.id,
+              title: item.title,
+              score: item.score,
+              matchedKeywords: item.matchedKeywords,
+              reason: item.reason,
+              sourceLabel: item.sourceLabel,
+            })),
+          },
+        });
+      }
+      memoryBlock = recall.block;
     }
 
     const context = await this.contextManager.build({
@@ -212,7 +217,7 @@ export class QueryEngine {
       compactBoundaries: compactBoundary
         ? [compactBoundary, ...this.input.compactBoundaries]
         : this.input.compactBoundaries,
-      memoryBlock: recall.block,
+      memoryBlock,
       systemContext: {
         conversationId: this.input.conversationId,
         jobId: this.input.jobId,

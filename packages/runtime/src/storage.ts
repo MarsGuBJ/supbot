@@ -75,6 +75,7 @@ export interface RuntimeState {
   runtimeEvents: RuntimeEventRecord[];
   compactBoundaries: CompactBoundary[];
   memory: MemorySnapshot;
+  memoryEnabled: boolean;
   permissionMode: PermissionMode;
   permissionRules: PermissionRule[];
   mcpServers: McpServerConfig[];
@@ -234,6 +235,7 @@ export function createInitialState(): RuntimeState {
     runtimeEvents: [],
     compactBoundaries: [],
     memory: { pages: [], facts: [], chunks: [], links: [], candidates: [], recallHistory: [], recallFeedback: [] },
+    memoryEnabled: true,
     permissionMode: "default",
     permissionRules: [],
     mcpServers: [],
@@ -404,6 +406,7 @@ function normalizeState(input: LegacyRuntimeStateInput): RuntimeState {
     runtimeEvents: Array.isArray(input.runtimeEvents) ? input.runtimeEvents : [],
     compactBoundaries: Array.isArray(input.compactBoundaries) ? input.compactBoundaries : [],
     memory: normalizeMemory(input.memory),
+    memoryEnabled: typeof input.memoryEnabled === "boolean" ? input.memoryEnabled : true,
     permissionMode: normalizePermissionMode(input.permissionMode),
     permissionRules: Array.isArray(input.permissionRules) ? input.permissionRules : [],
     mcpServers: Array.isArray(input.mcpServers)
@@ -834,23 +837,34 @@ function normalizeMcpServer(server: McpServerConfig): McpServerConfig | undefine
   const now = new Date().toISOString();
   const id = typeof server.id === "string" && server.id.trim() ? server.id : undefined;
   const name = typeof server.name === "string" && server.name.trim() ? server.name.trim() : id;
+  const transport = server.transport === "http" || server.transport === "sse" ? server.transport : "stdio";
   const command = typeof server.command === "string" && server.command.trim() ? server.command.trim() : "";
-  if (!id || !name || !command) {
+  const url = typeof server.url === "string" && server.url.trim() ? server.url.trim() : undefined;
+  if (!id || !name || (transport === "stdio" && !command) || (transport !== "stdio" && !url)) {
     return undefined;
   }
   const env =
     server.env && typeof server.env === "object" && !Array.isArray(server.env)
       ? Object.fromEntries(Object.entries(server.env).filter(([key, value]) => key.trim() && typeof value === "string"))
       : undefined;
+  const headers =
+    server.headers && typeof server.headers === "object" && !Array.isArray(server.headers)
+      ? Object.fromEntries(
+          Object.entries(server.headers).filter(([key, value]) => key.trim() && typeof value === "string"),
+        )
+      : undefined;
   return {
     id,
     name,
+    transport,
     command,
     args: Array.isArray(server.args)
       ? server.args.filter((item: unknown): item is string => typeof item === "string")
       : [],
     cwd: typeof server.cwd === "string" && server.cwd.trim() ? server.cwd.trim() : undefined,
     env,
+    url,
+    headers,
     requestTimeoutMs: normalizeRequestTimeout(server.requestTimeoutMs),
     enabled: server.enabled !== false,
     autoConnect: Boolean(server.autoConnect),

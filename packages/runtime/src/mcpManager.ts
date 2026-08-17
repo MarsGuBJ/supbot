@@ -16,6 +16,7 @@ import type {
 } from "@supbot/shared";
 import { nowIso } from "@supbot/shared";
 import { inspectJsonSchema } from "./jsonSchema";
+import { createRemoteTransport, type McpRemoteTransport } from "./mcpRemoteTransport";
 import type { ToolDefinition, ToolExecutionContext, ToolExecutionResult, ToolProvider } from "./toolRegistry";
 
 type McpJsonRpcRequest = {
@@ -60,6 +61,7 @@ interface McpManagerHost {
 interface McpConnection {
   config: McpServerConfig;
   process?: ChildProcessWithoutNullStreams;
+  remote?: McpRemoteTransport;
   status: McpServerStatus;
   tools: McpToolInfo[];
   pending: Map<
@@ -195,27 +197,36 @@ export class McpManager implements ToolProvider {
     let initializeMs: number | undefined;
     let toolsListMs: number | undefined;
     try {
-      const child = spawn(server.command, server.args, {
-        cwd: server.cwd || process.cwd(),
-        env: { ...process.env, ...(server.env || {}) },
-        windowsHide: true,
-        stdio: "pipe",
-      });
-      connection.process = child;
-      child.stdout.on("data", (chunk) => this.handleData(connection, chunk));
-      child.stderr.on("data", (chunk) => {
-        const text = String(chunk).trim();
-        if (text) {
-          stderrPreview = appendPreview(stderrPreview, text, 2_000);
-        }
-      });
-      child.on("exit", (code, signal) => {
-        this.rejectPending(connection, new Error(formatExitReason(code, signal)));
-        connection.process = undefined;
-      });
-      child.on("error", (error) => {
-        this.rejectPending(connection, error);
-      });
+      if (server.transport === "stdio") {
+        const child = spawn(server.command, server.args, {
+          cwd: server.cwd || process.cwd(),
+          env: { ...process.env, ...(server.env || {}) },
+          windowsHide: true,
+          stdio: "pipe",
+        });
+        connection.process = child;
+        child.stdout.on("data", (chunk) => this.handleData(connection, chunk));
+        child.stderr.on("data", (chunk) => {
+          const text = String(chunk).trim();
+          if (text) {
+            stderrPreview = appendPreview(stderrPreview, text, 2_000);
+          }
+        });
+        child.on("exit", (code, signal) => {
+          this.rejectPending(connection, new Error(formatExitReason(code, signal)));
+          connection.process = undefined;
+        });
+        child.on("error", (error) => {
+          this.rejectPending(connection, error);
+        });
+      } else {
+        connection.remote = createRemoteTransport(server, {
+          onMessage: (json) => this.handleMessage(connection, json),
+          onError: () => undefined,
+          onClosed: (reason) => this.rejectPending(connection, new Error(reason)),
+        });
+        await connection.remote.open();
+      }
 
       const initializeStart = Date.now();
       const initializeResult = await this.request(connection, "initialize", {
@@ -224,6 +235,9 @@ export class McpManager implements ToolProvider {
         clientInfo: { name: "hbclient", version: "4.3.0" },
       });
       recordInitializeResult(connection, initializeResult);
+      if (connection.remote && connection.protocolVersion) {
+        connection.remote.protocolVersion = connection.protocolVersion;
+      }
       initializeMs = Date.now() - initializeStart;
       this.notify(connection, "notifications/initialized", {});
       const toolsStart = Date.now();
@@ -263,6 +277,9 @@ export class McpManager implements ToolProvider {
       this.rejectPending(connection, new Error("MCP diagnostic finished."));
       if (connection.process) {
         connection.process.kill();
+      }
+      if (connection.remote) {
+        await connection.remote.close();
       }
     }
   }
@@ -308,7 +325,7 @@ export class McpManager implements ToolProvider {
     if (connection.status.state === "connected") {
       return { ...connection.status };
     }
-    if (connection.process) {
+    if (connection.process || connection.remote) {
       await this.disconnect(serverId);
     }
     connection.config = cloneServer(server);
@@ -320,55 +337,67 @@ export class McpManager implements ToolProvider {
     await this.emit("Connecting MCP server", serverId, { name: server.name });
 
     try {
-      const child = spawn(server.command, server.args, {
-        cwd: server.cwd || process.cwd(),
-        env: { ...process.env, ...(server.env || {}) },
-        windowsHide: true,
-        stdio: "pipe",
-      });
-      connection.process = child;
-      this.setStatus(connection, "connecting", { pid: child.pid });
-      child.stdout.on("data", (chunk) => this.handleData(connection, chunk));
-      child.stderr.on("data", (chunk) => {
-        const text = String(chunk).trim();
-        if (text) {
-          const preview = appendPreview(connection.status.stderrPreview, text, 2_000);
-          this.setStatus(connection, connection.status.state, { stderrPreview: preview });
-          this.pushLog(connection.config.id, "warning", text.slice(0, 1_000));
-        }
-      });
-      child.on("exit", (code, signal) => {
-        const message = formatExitReason(code, signal);
-        const wasConnected = connection.status.state === "connected";
-        const manual = connection.manualDisconnect;
-        const preserveError = manual && connection.status.state === "error";
-        this.rejectPending(connection, new Error(message));
-        connection.process = undefined;
-        connection.tools = [];
-        connection.manualDisconnect = false;
-        this.setStatus(connection, preserveError ? "error" : "disconnected", {
-          toolCount: 0,
-          pid: undefined,
-          connectedAt: undefined,
-          lastExitReason: message,
-          lastError: preserveError ? connection.status.lastError : manual || wasConnected ? undefined : message,
+      if (server.transport === "stdio") {
+        const child = spawn(server.command, server.args, {
+          cwd: server.cwd || process.cwd(),
+          env: { ...process.env, ...(server.env || {}) },
+          windowsHide: true,
+          stdio: "pipe",
         });
-        if (manual) {
-          this.pushLog(serverId, "info", message, { code, signal });
-        } else {
-          void this.emit(message, serverId, { code, signal }, "warning");
-        }
-      });
-      child.on("error", (error) => {
-        this.rejectPending(connection, error);
-        this.setStatus(connection, "error", {
-          lastError: error.message,
-          lastExitReason: error.message,
-          pid: undefined,
-          toolCount: 0,
+        connection.process = child;
+        this.setStatus(connection, "connecting", { pid: child.pid });
+        child.stdout.on("data", (chunk) => this.handleData(connection, chunk));
+        child.stderr.on("data", (chunk) => {
+          const text = String(chunk).trim();
+          if (text) {
+            const preview = appendPreview(connection.status.stderrPreview, text, 2_000);
+            this.setStatus(connection, connection.status.state, { stderrPreview: preview });
+            this.pushLog(connection.config.id, "warning", text.slice(0, 1_000));
+          }
         });
-        void this.emit("MCP server failed to start", serverId, { error: error.message }, "error");
-      });
+        child.on("exit", (code, signal) => {
+          const message = formatExitReason(code, signal);
+          const wasConnected = connection.status.state === "connected";
+          const manual = connection.manualDisconnect;
+          const preserveError = manual && connection.status.state === "error";
+          this.rejectPending(connection, new Error(message));
+          connection.process = undefined;
+          connection.tools = [];
+          connection.manualDisconnect = false;
+          this.setStatus(connection, preserveError ? "error" : "disconnected", {
+            toolCount: 0,
+            pid: undefined,
+            connectedAt: undefined,
+            lastExitReason: message,
+            lastError: preserveError ? connection.status.lastError : manual || wasConnected ? undefined : message,
+          });
+          if (manual) {
+            this.pushLog(serverId, "info", message, { code, signal });
+          } else {
+            void this.emit(message, serverId, { code, signal }, "warning");
+          }
+        });
+        child.on("error", (error) => {
+          this.rejectPending(connection, error);
+          this.setStatus(connection, "error", {
+            lastError: error.message,
+            lastExitReason: error.message,
+            pid: undefined,
+            toolCount: 0,
+          });
+          void this.emit("MCP server failed to start", serverId, { error: error.message }, "error");
+        });
+      } else {
+        connection.remote = createRemoteTransport(server, {
+          onMessage: (json) => this.handleMessage(connection, json),
+          onError: (message) => {
+            this.setStatus(connection, connection.status.state, { lastError: message });
+            this.pushLog(serverId, "error", message);
+          },
+          onClosed: (reason) => this.handleRemoteClosed(connection, reason),
+        });
+        await connection.remote.open();
+      }
 
       const initializeResult = await this.request(connection, "initialize", {
         protocolVersion: "2024-11-05",
@@ -376,6 +405,9 @@ export class McpManager implements ToolProvider {
         clientInfo: { name: "hbclient", version: "4.3.0" },
       });
       recordInitializeResult(connection, initializeResult);
+      if (connection.remote && connection.protocolVersion) {
+        connection.remote.protocolVersion = connection.protocolVersion;
+      }
       this.notify(connection, "notifications/initialized", {});
       await this.refreshTools(serverId);
       const connectedAt = this.host.nowIso();
@@ -400,15 +432,38 @@ export class McpManager implements ToolProvider {
       connection.manualDisconnect = true;
       child.kill();
     }
+    if (connection.remote) {
+      const remote = connection.remote;
+      connection.remote = undefined;
+      await remote.close();
+    }
     connection.tools = [];
     this.setStatus(connection, "disconnected", { toolCount: 0, connectedAt: undefined, pid: undefined });
     await this.emit("MCP server disconnected", serverId);
     return { ...connection.status };
   }
 
+  private handleRemoteClosed(connection: McpConnection, reason: string): void {
+    this.rejectPending(connection, new Error(reason));
+    connection.remote = undefined;
+    connection.tools = [];
+    const wasConnected = connection.status.state === "connected";
+    this.setStatus(connection, "disconnected", {
+      toolCount: 0,
+      connectedAt: undefined,
+      pid: undefined,
+      lastExitReason: reason,
+      lastError: wasConnected ? undefined : reason,
+    });
+    void this.emit(reason, connection.config.id, {}, "warning");
+  }
+
   async refreshTools(serverId: string): Promise<McpToolInfo[]> {
     const connection = this.connectionFor(serverId);
-    if (!connection.process || (connection.status.state !== "connecting" && connection.status.state !== "connected")) {
+    if (
+      (!connection.process && !connection.remote) ||
+      (connection.status.state !== "connecting" && connection.status.state !== "connected")
+    ) {
       throw new Error(`MCP server is not connected: ${connection.config.name}`);
     }
     const result = await this.request(connection, "tools/list", {});
@@ -445,7 +500,7 @@ export class McpManager implements ToolProvider {
     context: ToolExecutionContext,
   ): Promise<ToolExecutionResult> {
     const connection = this.connectionFor(tool.serverId);
-    if (!connection.process || connection.status.state !== "connected") {
+    if ((!connection.process && !connection.remote) || connection.status.state !== "connected") {
       throw new Error(`MCP server is not connected: ${tool.serverName}`);
     }
     if (context.signal.aborted) {
@@ -477,13 +532,12 @@ export class McpManager implements ToolProvider {
     params?: unknown,
     signal?: AbortSignal,
   ): Promise<unknown> {
-    if (!connection.process) {
+    if (!connection.process && !connection.remote) {
       throw new Error(`MCP server is not running: ${connection.config.name}`);
     }
     const id = connection.nextRequestId++;
     const request: McpJsonRpcRequest = { jsonrpc: "2.0", id, method, params };
-    const payload = Buffer.from(JSON.stringify(request), "utf8");
-    const frame = Buffer.concat([Buffer.from(`Content-Length: ${payload.length}\r\n\r\n`, "utf8"), payload]);
+    const payload = JSON.stringify(request);
     return new Promise((resolve, reject) => {
       const timeoutMs = normalizeRequestTimeout(connection.config.requestTimeoutMs);
       const timer = setTimeout(() => {
@@ -514,26 +568,46 @@ export class McpManager implements ToolProvider {
         },
         timer,
       });
-      connection.process!.stdin.write(frame, (error) => {
-        if (error) {
-          clearTimeout(timer);
-          connection.pending.delete(id);
-          signal?.removeEventListener("abort", abort);
-          this.pushLog(connection.config.id, "error", error.message);
-          reject(error);
-        }
+      this.sendPayload(connection, payload, true).catch((error: Error) => {
+        clearTimeout(timer);
+        connection.pending.delete(id);
+        signal?.removeEventListener("abort", abort);
+        this.pushLog(connection.config.id, "error", error.message);
+        reject(error);
       });
     });
   }
 
   private notify(connection: McpConnection, method: string, params?: unknown): void {
-    if (!connection.process) {
+    if (!connection.process && !connection.remote) {
       return;
     }
-    const payload = Buffer.from(JSON.stringify({ jsonrpc: "2.0", method, params }), "utf8");
-    connection.process.stdin.write(
-      Buffer.concat([Buffer.from(`Content-Length: ${payload.length}\r\n\r\n`, "utf8"), payload]),
-    );
+    const payload = JSON.stringify({ jsonrpc: "2.0", method, params });
+    void this.sendPayload(connection, payload, false).catch((error: Error) => {
+      this.pushLog(connection.config.id, "warning", error.message);
+    });
+  }
+
+  private async sendPayload(connection: McpConnection, payload: string, expectsResponse: boolean): Promise<void> {
+    if (connection.remote) {
+      await connection.remote.send(payload, expectsResponse);
+      return;
+    }
+    if (!connection.process) {
+      throw new Error(`MCP server is not running: ${connection.config.name}`);
+    }
+    const body = Buffer.from(payload, "utf8");
+    const frame = Buffer.concat([Buffer.from(`Content-Length: ${body.length}\r\n\r\n`, "utf8"), body]);
+    const child = connection.process;
+    await new Promise<void>((resolve, reject) => {
+      child.stdin.write(frame, (error) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
+      });
+    });
   }
 
   private handleData(connection: McpConnection, chunk: Buffer): void {
@@ -676,26 +750,50 @@ function createDisconnectedConnection(server: McpServerConfig, now: string): Mcp
 
 function normalizeServerInput(input: McpServerInput, id: string, now: string, createdAt = now): McpServerConfig {
   const name = input.name.trim();
-  const command = input.command.trim();
+  const transport = input.transport === "http" || input.transport === "sse" ? input.transport : "stdio";
+  const command = (input.command || "").trim();
+  const url = input.url?.trim() || undefined;
   if (!name) {
     throw new Error("MCP server name is required.");
   }
-  if (!command) {
+  if (transport === "stdio" && !command) {
     throw new Error("MCP server command is required.");
+  }
+  if (transport !== "stdio") {
+    if (!url) {
+      throw new Error("MCP server URL is required for remote transports.");
+    }
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        throw new Error("unsupported protocol");
+      }
+    } catch {
+      throw new Error(`MCP server URL must be a valid http(s) URL: ${url}`);
+    }
   }
   const env =
     input.env && typeof input.env === "object"
       ? Object.fromEntries(Object.entries(input.env).filter(([key, value]) => key.trim() && typeof value === "string"))
       : undefined;
+  const headers =
+    input.headers && typeof input.headers === "object"
+      ? Object.fromEntries(
+          Object.entries(input.headers).filter(([key, value]) => key.trim() && typeof value === "string"),
+        )
+      : undefined;
   return {
     id: sanitizeServerId(id),
     name,
+    transport,
     command,
     args: Array.isArray(input.args)
       ? input.args.filter((item: unknown): item is string => typeof item === "string")
       : [],
     cwd: input.cwd?.trim() || undefined,
     env,
+    url,
+    headers,
     requestTimeoutMs: normalizeRequestTimeout(input.requestTimeoutMs),
     enabled: input.enabled !== false,
     autoConnect: Boolean(input.autoConnect),
@@ -710,6 +808,7 @@ function cloneServer(server: McpServerConfig): McpServerConfig {
     ...server,
     args: [...server.args],
     env: server.env ? { ...server.env } : undefined,
+    headers: server.headers ? { ...server.headers } : undefined,
     source: cloneServerSource(server.source),
   };
 }

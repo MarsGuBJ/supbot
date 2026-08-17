@@ -16,7 +16,7 @@ import { Button, Input, Popover, Space, Tag, Tooltip, Typography, message } from
 import type { TextAreaRef } from "antd/es/input/TextArea";
 import type { AgentJob, Attachment, CapabilityDefinition, Conversation, PendingToolPermission } from "@supbot/shared";
 import { buildSlashCommands, conversationTitle, statusLabel } from "@supbot/shared";
-import { Virtuoso } from "react-virtuoso";
+import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { ComposerPermissionPrompt } from "./ComposerPermissionPrompt";
 import { MessageBubble } from "./MessageBubble";
 import { readClipboardText, selectedTextWithin } from "../lib/clipboard";
@@ -51,6 +51,7 @@ export function ChatPanel({
   hasOlderMessages,
   historyLoading,
   scrollRef,
+  locateMessageRef,
   onMessageScroll,
   t,
   slashCommands,
@@ -76,6 +77,7 @@ export function ChatPanel({
   hasOlderMessages: boolean;
   historyLoading: boolean;
   scrollRef: React.RefObject<HTMLDivElement | null>;
+  locateMessageRef: React.MutableRefObject<((messageId: string) => void) | null>;
   onMessageScroll: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
   slashCommands: ReturnType<typeof buildSlashCommands>;
@@ -117,6 +119,26 @@ export function ChatPanel({
       setPrompt(text);
     }
   }, [prompt, send]);
+  const [dropActive, setDropActive] = useState(false);
+  const handleFileDrop = useCallback(
+    async (event: React.DragEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      setDropActive(false);
+      const files = Array.from(event.dataTransfer.files);
+      if (!files.length) {
+        return;
+      }
+      try {
+        const imported = await window.supbot.importDroppedAttachments(files);
+        if (imported.length) {
+          setAttachments((items) => [...items, ...imported]);
+        }
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : t("Failed to attach dropped files."));
+      }
+    },
+    [setAttachments, t],
+  );
   const availableSkills = useMemo(() => enabledSkillCapabilities(skills), [skills]);
   const insertSkill = useCallback(
     (skill: CapabilityDefinition) => {
@@ -330,6 +352,28 @@ export function ChatPanel({
 
   const messages = conversation?.messages || [];
   const firstItemIndex = Math.max(0, (conversation?.messageCount || messages.length) - messages.length);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const [highlightMessageId, setHighlightMessageId] = useState("");
+  useEffect(() => {
+    locateMessageRef.current = (messageId: string) => {
+      const index = messages.findIndex((item) => item.id === messageId);
+      if (index < 0) {
+        return;
+      }
+      virtuosoRef.current?.scrollToIndex({ index, align: "center", behavior: "smooth" });
+      setHighlightMessageId(messageId);
+    };
+    return () => {
+      locateMessageRef.current = null;
+    };
+  }, [locateMessageRef, messages]);
+  useEffect(() => {
+    if (!highlightMessageId) {
+      return;
+    }
+    const timer = window.setTimeout(() => setHighlightMessageId(""), 2000);
+    return () => window.clearTimeout(timer);
+  }, [highlightMessageId]);
   const virtuosoComponents = useMemo(
     () => ({
       List: VirtualMessageList,
@@ -428,13 +472,16 @@ export function ChatPanel({
         </div>
       ) : (
         <Virtuoso
+          ref={virtuosoRef}
           className="message-stream"
           data={messages}
           firstItemIndex={firstItemIndex}
           followOutput={(atBottom) => (atBottom ? "smooth" : false)}
           components={virtuosoComponents}
           computeItemKey={(_index, item) => item.id}
-          itemContent={(_index, item) => <MessageBubble message={item} t={t} />}
+          itemContent={(_index, item) => (
+            <MessageBubble message={item} highlighted={item.id === highlightMessageId} t={t} />
+          )}
           startReached={() => {
             if (hasOlderMessages && !historyLoading) {
               void loadOlderMessages();
@@ -507,7 +554,26 @@ export function ChatPanel({
           </button>
         </div>
       ) : null}
-      <div className="composer">
+      <div
+        className={`composer ${dropActive ? "is-drop-target" : ""}`}
+        onDragEnter={(event) => {
+          if (event.dataTransfer.types.includes("Files")) {
+            event.preventDefault();
+            setDropActive(true);
+          }
+        }}
+        onDragOver={(event) => {
+          if (event.dataTransfer.types.includes("Files")) {
+            event.preventDefault();
+          }
+        }}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+            setDropActive(false);
+          }
+        }}
+        onDrop={(event) => void handleFileDrop(event)}
+      >
         <ComposerPermissionPrompt
           permissions={composerPermissions}
           approveToolPermission={approveToolPermission}

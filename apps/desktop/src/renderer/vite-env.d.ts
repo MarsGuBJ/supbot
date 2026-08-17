@@ -120,6 +120,7 @@ declare global {
       approveToolPermission(id: string): Promise<void>;
       denyToolPermission(id: string): Promise<void>;
       setPermissionMode(mode: PermissionMode): Promise<PermissionMode>;
+      setMemoryEnabled(enabled: boolean): Promise<boolean>;
       addPermissionRule(
         rule: Omit<PermissionRule, "id" | "createdAt" | "scope"> & { id?: string },
       ): Promise<PermissionRule>;
@@ -270,7 +271,9 @@ declare global {
       updateScheduledJob(id: string, input: Partial<ScheduledJobInput>): Promise<ScheduledJob>;
       deleteScheduledJob(id: string): Promise<void>;
       pickAttachments(): Promise<Attachment[]>;
+      importDroppedAttachments(files: File[]): Promise<Attachment[]>;
       openFile(filePath: string): Promise<void>;
+      downloadFile(filePath: string, suggestedName?: string): Promise<boolean>;
       userDataPath(): Promise<string>;
       onEvent(listener: (event: SupbotEvent) => void): () => void;
     };

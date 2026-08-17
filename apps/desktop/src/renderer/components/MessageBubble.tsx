@@ -4,28 +4,64 @@ import {
   ClockCircleOutlined,
   CloseCircleOutlined,
   CompressOutlined,
+  CopyOutlined,
+  DownloadOutlined,
   DownOutlined,
   PaperClipOutlined,
   RightOutlined,
   ThunderboltOutlined,
   ToolOutlined,
 } from "@ant-design/icons";
-import { Alert, Button, Tag, Tooltip } from "antd";
-import type { ChatMessage } from "@supbot/shared";
+import { Alert, Button, message, Tag, Tooltip } from "antd";
+import type { ChatMessage, GeneratedFile } from "@supbot/shared";
 import { statusColor, statusLabel } from "@supbot/shared";
 import { formatToolPayload, shouldShowGeneratedFileInChat } from "../lib/chatFormat";
+import { writeClipboardText } from "../lib/clipboard";
 
 export const MessageBubble = memo(function MessageBubble({
   message: item,
+  highlighted = false,
   t,
 }: {
   message: ChatMessage;
+  highlighted?: boolean;
   t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
   const visibleGeneratedFiles = item.generatedFiles?.filter(shouldShowGeneratedFileInChat) || [];
+  const copyable = (item.role === "user" || item.role === "assistant") && item.text.trim().length > 0;
+  const copyMessage = async () => {
+    try {
+      await writeClipboardText(item.text);
+      message.success(t("Copied message."));
+    } catch {
+      message.error(t("Copy failed."));
+    }
+  };
+  const downloadGeneratedFile = async (file: GeneratedFile) => {
+    try {
+      const saved = await window.supbot.downloadFile(file.path, file.name);
+      if (saved) {
+        message.success(t("File saved."));
+      }
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : t("Download failed."));
+    }
+  };
   return (
-    <div className={`message-row ${item.role}`}>
+    <div className={`message-row ${item.role} ${highlighted ? "is-highlighted" : ""}`}>
       <div className="message-bubble">
+        {copyable ? (
+          <Tooltip title={t("Copy message")}>
+            <Button
+              type="text"
+              size="small"
+              className="message-copy-btn"
+              icon={<CopyOutlined />}
+              aria-label={t("Copy message")}
+              onClick={() => void copyMessage()}
+            />
+          </Tooltip>
+        ) : null}
         {item.role === "user" ? null : (
           <div className="message-meta">
             <span>{item.role === "assistant" ? "HyBot" : item.role === "tool" ? t("Tool") : t("System")}</span>
@@ -45,16 +81,27 @@ export const MessageBubble = memo(function MessageBubble({
         {visibleGeneratedFiles.length ? (
           <div className="generated-files">
             {visibleGeneratedFiles.map((file) => (
-              <button
-                className="generated-file"
-                type="button"
-                key={file.id}
-                onClick={() => void window.supbot.openFile(file.path)}
-              >
-                <PaperClipOutlined />
-                <span>{file.name}</span>
-                <small>{file.size} bytes</small>
-              </button>
+              <span className="generated-file-item" key={file.id}>
+                <button
+                  className="generated-file"
+                  type="button"
+                  onClick={() => void window.supbot.openFile(file.path)}
+                >
+                  <PaperClipOutlined />
+                  <span>{file.name}</span>
+                  <small>{file.size} bytes</small>
+                </button>
+                <Tooltip title={t("Download")}>
+                  <Button
+                    type="text"
+                    size="small"
+                    className="generated-file-download"
+                    icon={<DownloadOutlined />}
+                    aria-label={t("Download")}
+                    onClick={() => void downloadGeneratedFile(file)}
+                  />
+                </Tooltip>
+              </span>
             ))}
           </div>
         ) : null}

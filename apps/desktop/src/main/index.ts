@@ -1,8 +1,8 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell, type WebContents } from "electron";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
-import { cp, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { cp, copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { hostname, userInfo } from "node:os";
-import { isAbsolute, join, normalize, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import {
   JsonFileStorage,
   SupbotRuntime,
@@ -67,12 +67,15 @@ import {
   defaultServstationUser,
 } from "@supbot/shared";
 import { configureUserDataPath } from "./appIdentity";
+import { TrayManager, isTerminalJobStatus, jobNotificationText } from "./trayManager";
 import { HBClientUpdateManager } from "./updateManager";
 import { removeOidcLoginWindowListeners } from "./oidcLoginWindowLifecycle";
 
 let mainWindow: BrowserWindow | null = null;
 let runtime: SupbotRuntime | null = null;
 let updateManager: HBClientUpdateManager | null = null;
+let trayManager: TrayManager | null = null;
+let isQuitting = false;
 const servstationMessageEventSubscriptions = new Map<string, AbortController>();
 const servstationAutopilotEventSubscriptions = new Map<string, AbortController>();
 const isDev = !app.isPackaged;
@@ -103,6 +106,10 @@ async function createRuntime(): Promise<SupbotRuntime> {
   service.startScheduler();
   service.onEvent((event) => {
     mainWindow?.webContents.send("supbot:event", event);
+    if (event.type === "job" && isTerminalJobStatus(event.job.status)) {
+      const { title, body } = jobNotificationText(event.job.status, event.job.prompt);
+      trayManager?.notify(title, body);
+    }
   });
   return service;
 }
@@ -700,7 +707,7 @@ function isAllowedAppUrl(rawUrl: string): boolean {
 }
 
 async function createWindow(): Promise<void> {
-  runtime = await createRuntime();
+  runtime = runtime ?? (await createRuntime());
   mainWindow = new BrowserWindow({
     width: 1360,
     height: 880,
@@ -742,10 +749,26 @@ async function createWindow(): Promise<void> {
 
   void autoConnectLocalBotstation().finally(() => updateManager?.start());
 
+  mainWindow.on("close", (event) => {
+    if (!isQuitting) {
+      event.preventDefault();
+      mainWindow?.hide();
+    }
+  });
+
   mainWindow.on("closed", () => {
     updateManager?.stop();
     mainWindow = null;
   });
+}
+
+function showMainWindow(): void {
+  if (mainWindow) {
+    mainWindow.show();
+    mainWindow.focus();
+  } else {
+    void createWindow();
+  }
 }
 
 async function hbClientUpdateFeedContext(forceRefresh: boolean): Promise<{ baseUrl: string; accessToken?: string }> {
@@ -845,6 +868,12 @@ function registerIpc(): void {
   ipcMain.handle("permission:setMode", (_event, mode: PermissionMode) =>
     getRuntime().setPermissionMode(validateRendererPermissionMode(mode)),
   );
+  ipcMain.handle("memory:setEnabled", (_event, enabled: unknown) => {
+    if (typeof enabled !== "boolean") {
+      throw new Error("memory enabled flag must be a boolean.");
+    }
+    return getRuntime().setMemoryEnabled(enabled);
+  });
   ipcMain.handle(
     "permission:addRule",
     (_event, rule: Omit<PermissionRule, "id" | "createdAt" | "scope"> & { id?: string }) =>
@@ -1293,6 +1322,10 @@ function registerIpc(): void {
     }
     return Promise.all(result.filePaths.map((filePath) => getRuntime().importAttachment(filePath)));
   });
+  ipcMain.handle("attachment:importPaths", (_event, paths: unknown) => {
+    const filePaths = optionalStringArray(paths, "attachment paths") || [];
+    return Promise.all(filePaths.map((filePath) => getRuntime().importAttachment(filePath)));
+  });
   ipcMain.handle("file:open", async (_event, filePath: string) => {
     const safePath = requiredPath(filePath, "file path");
     const userDataPath = app.getPath("userData");
@@ -1301,14 +1334,29 @@ function registerIpc(): void {
     }
     await shell.openPath(safePath);
   });
+  ipcMain.handle("file:download", async (_event, filePath: string, suggestedName?: unknown) => {
+    const safePath = requiredPath(filePath, "file path");
+    const userDataPath = app.getPath("userData");
+    if (!getRuntime().isKnownSafePath(safePath) && !pathIsInside(userDataPath, safePath)) {
+      throw new Error("HyBot can only download files it created, imported, or tracks as a worktree.");
+    }
+    const defaultName =
+      typeof suggestedName === "string" && suggestedName.trim() ? suggestedName.trim() : basename(safePath);
+    const result = await dialog.showSaveDialog(mainWindow!, { defaultPath: defaultName });
+    if (result.canceled || !result.filePath) {
+      return false;
+    }
+    await copyFile(safePath, result.filePath);
+    return true;
+  });
   ipcMain.handle("path:userData", () => app.getPath("userData"));
 }
 
 function validateRendererPermissionMode(mode: PermissionMode): PermissionMode {
-  if (mode === "default" || mode === "acceptEdits" || mode === "plan") {
+  if (mode === "default" || mode === "acceptEdits" || mode === "plan" || mode === "bypassPermissions") {
     return mode;
   }
-  throw new Error("Renderer cannot enable bypassPermissions mode.");
+  throw new Error("Unsupported permission mode.");
 }
 
 function validateSendPromptInput(input: SendPromptInput): SendPromptInput {
@@ -1854,12 +1902,22 @@ function validateToolMarketQuery(input: ToolMarketQuery | undefined): ToolMarket
 
 function validateMcpServerInput(input: McpServerInput): McpServerInput {
   const value = object(input, "MCP server");
+  const transport = optionalEnum(value.transport, ["stdio", "http", "sse"], "MCP transport") || "stdio";
   return {
     name: requiredString(value.name, "MCP server name"),
-    command: requiredString(value.command, "MCP command"),
+    transport,
+    command:
+      transport === "stdio"
+        ? requiredString(value.command, "MCP command")
+        : optionalString(value.command, "MCP command"),
     args: optionalStringArray(value.args, "MCP args") || [],
     cwd: optionalSafePath(value.cwd),
     env: optionalStringRecord(value.env, "MCP env"),
+    url:
+      transport === "stdio"
+        ? optionalString(value.url, "MCP server URL")
+        : requiredString(value.url, "MCP server URL"),
+    headers: optionalStringRecord(value.headers, "MCP headers"),
     requestTimeoutMs: optionalNumber(value.requestTimeoutMs, "MCP request timeout"),
     enabled: optionalBoolean(value.enabled, "MCP enabled"),
     autoConnect: optionalBoolean(value.autoConnect, "MCP auto-connect"),
@@ -1869,10 +1927,13 @@ function validateMcpServerInput(input: McpServerInput): McpServerInput {
 function validateMcpServerUpdate(input: McpServerUpdate): McpServerUpdate {
   return validatePartialObject(input, {
     name: (value) => optionalString(value, "MCP server name"),
+    transport: (value) => optionalEnum(value, ["stdio", "http", "sse"], "MCP transport"),
     command: (value) => optionalString(value, "MCP command"),
     args: (value) => optionalStringArray(value, "MCP args"),
     cwd: (value) => optionalSafePath(value),
     env: (value) => optionalStringRecord(value, "MCP env"),
+    url: (value) => optionalString(value, "MCP server URL"),
+    headers: (value) => optionalStringRecord(value, "MCP headers"),
     requestTimeoutMs: (value) => optionalNumber(value, "MCP request timeout"),
     enabled: (value) => optionalBoolean(value, "MCP enabled"),
     autoConnect: (value) => optionalBoolean(value, "MCP auto-connect"),
@@ -2063,6 +2124,16 @@ app
   .then(async () => {
     registerIpc();
     await createWindow();
+    trayManager = new TrayManager({
+      iconPath: appIconPath,
+      displayName: appDisplayName,
+      showWindow: showMainWindow,
+      quit: () => {
+        isQuitting = true;
+        app.quit();
+      },
+    });
+    trayManager.start();
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {
         void createWindow();
@@ -2080,7 +2151,12 @@ app.on("window-all-closed", () => {
   }
 });
 
-app.on("before-quit", () => updateManager?.stop());
+app.on("before-quit", () => {
+  isQuitting = true;
+  updateManager?.stop();
+  trayManager?.dispose();
+  trayManager = null;
+});
 
 app.on("before-quit", () => {
   for (const controller of servstationMessageEventSubscriptions.values()) {

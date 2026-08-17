@@ -11,6 +11,7 @@ import {
   Segmented,
   Select,
   Space,
+  Switch,
   Tag,
   message,
 } from "antd";
@@ -256,6 +257,19 @@ export function MemoryPanel({
             {snapshot.memory.facts.length + snapshot.memory.pages.length} {t("items")}
           </Tag>
         </div>
+        {!embedded ? (
+          <div className="memory-toggle-inline">
+            <span>{t("Memory enabled")}</span>
+            <Switch
+              size="small"
+              checked={snapshot.memoryEnabled}
+              onChange={async (checked) => {
+                await window.supbot.setMemoryEnabled(checked);
+                refresh();
+              }}
+            />
+          </div>
+        ) : null}
         <div className="stat-grid">
           <div className="mini-stat">
             <span>{t("Pending")}</span>

@@ -706,6 +706,7 @@ async function materializeMcpServer(
   const config: McpServerConfig = {
     id: serverId,
     name: `${input.packageName}: ${name}`,
+    transport: "stdio",
     command,
     args,
     cwd,

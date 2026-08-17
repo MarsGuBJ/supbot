@@ -172,13 +172,18 @@ export interface ToolMarketQuery {
 
 export type McpConnectionState = "disconnected" | "connecting" | "connected" | "error";
 
+export type McpTransportType = "stdio" | "http" | "sse";
+
 export interface McpServerConfig {
   id: string;
   name: string;
+  transport: McpTransportType;
   command: string;
   args: string[];
   cwd?: string;
   env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
   requestTimeoutMs?: number;
   enabled: boolean;
   autoConnect: boolean;
@@ -234,10 +239,13 @@ export interface McpToolInfo {
 
 export interface McpServerInput {
   name: string;
-  command: string;
+  transport?: McpTransportType;
+  command?: string;
   args?: string[];
   cwd?: string;
   env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
   requestTimeoutMs?: number;
   enabled?: boolean;
   autoConnect?: boolean;
@@ -1807,6 +1815,7 @@ export interface RuntimeSnapshot {
   runtimeEvents: RuntimeEventRecord[];
   compactBoundaries: CompactBoundary[];
   memory: MemorySnapshot;
+  memoryEnabled: boolean;
   permissionMode: PermissionMode;
   permissionRules: PermissionRule[];
   mcpServers: McpServerSnapshot[];

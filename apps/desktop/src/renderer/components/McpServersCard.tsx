@@ -28,6 +28,26 @@ import type {
 import { formatDateTime } from "@supbot/shared";
 import { formatJsonSnippet } from "../lib/chatFormat";
 
+type McpServerFormValues = McpServerInput & { envText?: string; argsText?: string; headersText?: string };
+
+function formValuesToMcpInput(values: McpServerFormValues, fallbackName?: string): McpServerInput {
+  const transport = values.transport || "stdio";
+  const stdio = transport === "stdio";
+  return {
+    name: values.name || fallbackName || "",
+    transport,
+    command: stdio ? values.command : undefined,
+    args: stdio ? parseArgsText(values.argsText) : [],
+    cwd: stdio ? values.cwd : undefined,
+    env: stdio ? parseEnvText(values.envText) : undefined,
+    url: stdio ? undefined : values.url,
+    headers: stdio ? undefined : parseEnvText(values.headersText),
+    requestTimeoutMs: values.requestTimeoutMs,
+    enabled: values.enabled,
+    autoConnect: values.autoConnect,
+  };
+}
+
 export function McpServersCard({
   snapshot,
   refresh,
@@ -37,7 +57,8 @@ export function McpServersCard({
   refresh: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
-  const [form] = Form.useForm<McpServerInput & { envText?: string; argsText?: string }>();
+  const [form] = Form.useForm<McpServerFormValues>();
+  const transport = Form.useWatch("transport", form) || "stdio";
   const [editing, setEditing] = useState<McpServerSnapshot | null>(null);
   const [busyId, setBusyId] = useState("");
   const [logServer, setLogServer] = useState<McpServerSnapshot | null>(null);
@@ -55,17 +76,8 @@ export function McpServersCard({
       .then(setPresets)
       .catch(() => setPresets([]));
   }, []);
-  const save = async (values: McpServerInput & { envText?: string; argsText?: string }) => {
-    const input: McpServerInput = {
-      name: values.name,
-      command: values.command,
-      args: parseArgsText(values.argsText),
-      cwd: values.cwd,
-      env: parseEnvText(values.envText),
-      requestTimeoutMs: values.requestTimeoutMs,
-      enabled: values.enabled,
-      autoConnect: values.autoConnect,
-    };
+  const save = async (values: McpServerFormValues) => {
+    const input = formValuesToMcpInput(values);
     try {
       if (editing) {
         await window.supbot.updateMcpServer(editing.id, input);
@@ -98,10 +110,13 @@ export function McpServersCard({
     setEditing(server);
     form.setFieldsValue({
       name: server.name,
+      transport: server.transport || "stdio",
       command: server.command,
       argsText: server.args.join("\n"),
       cwd: server.cwd,
       envText: formatEnvText(server.env),
+      url: server.url,
+      headersText: formatEnvText(server.headers),
       requestTimeoutMs: server.requestTimeoutMs || 30000,
       enabled: server.enabled,
       autoConnect: server.autoConnect,
@@ -115,10 +130,13 @@ export function McpServersCard({
     setEditing(null);
     form.setFieldsValue({
       name: preset.serverInput.name,
+      transport: preset.serverInput.transport || "stdio",
       command: preset.serverInput.command,
       argsText: (preset.serverInput.args || []).join("\n"),
       cwd: preset.serverInput.cwd,
       envText: formatEnvText(preset.serverInput.env),
+      url: preset.serverInput.url,
+      headersText: formatEnvText(preset.serverInput.headers),
       requestTimeoutMs: preset.serverInput.requestTimeoutMs || 30000,
       enabled: preset.serverInput.enabled,
       autoConnect: false,
@@ -141,20 +159,10 @@ export function McpServersCard({
       messageApi.error((error as Error).message);
     }
   };
-  const valuesToMcpInput = (values: McpServerInput & { envText?: string; argsText?: string }): McpServerInput => ({
-    name: values.name || "diagnostic",
-    command: values.command,
-    args: parseArgsText(values.argsText),
-    cwd: values.cwd,
-    env: parseEnvText(values.envText),
-    requestTimeoutMs: values.requestTimeoutMs,
-    enabled: true,
-    autoConnect: false,
-  });
   const diagnoseValues = async () => {
     try {
       const values = await form.validateFields();
-      const result = await window.supbot.diagnoseMcpServer(valuesToMcpInput(values));
+      const result = await window.supbot.diagnoseMcpServer(formValuesToMcpInput(values, "diagnostic"));
       setDiagnostic(result);
       setDiagnosticOpen(true);
     } catch (error) {
@@ -201,7 +209,7 @@ export function McpServersCard({
               <ToolOutlined /> {t("MCP Servers")}
             </div>
             <div className="muted">
-              {t("Connect local stdio MCP servers. Tools are registered through HyBot permissions.")}
+              {t("Connect local stdio or remote (HTTP/SSE) MCP servers. Tools are registered through HyBot permissions.")}
             </div>
           </div>
           <Space wrap>
@@ -233,28 +241,52 @@ export function McpServersCard({
         <Form
           form={form}
           layout="vertical"
-          initialValues={{ enabled: true, autoConnect: false, requestTimeoutMs: 30000 }}
+          initialValues={{ transport: "stdio", enabled: true, autoConnect: false, requestTimeoutMs: 30000 }}
           onFinish={(values) => void save(values)}
         >
           <div className="mcp-form-grid">
             <Form.Item label={t("Name")} name="name" rules={[{ required: true }]}>
               <Input placeholder="local-files" />
             </Form.Item>
-            <Form.Item label={t("Command")} name="command" rules={[{ required: true }]}>
-              <Input placeholder="node" />
+            <Form.Item label={t("Transport")} name="transport" rules={[{ required: true }]}>
+              <Select
+                options={[
+                  { value: "stdio", label: t("Local command (stdio)") },
+                  { value: "http", label: t("Remote (streamable HTTP)") },
+                  { value: "sse", label: t("Remote (legacy SSE)") },
+                ]}
+              />
             </Form.Item>
-            <Form.Item label={t("Arguments")} name="argsText">
-              <Input.TextArea rows={3} placeholder="D:\\tools\\mcp-server.js" />
-            </Form.Item>
-            <Form.Item label={t("Working directory")} name="cwd">
-              <Input placeholder="D:\\projects\\my-server" />
-            </Form.Item>
+            {transport === "stdio" ? (
+              <>
+                <Form.Item label={t("Command")} name="command" rules={[{ required: true }]}>
+                  <Input placeholder="node" />
+                </Form.Item>
+                <Form.Item label={t("Arguments")} name="argsText">
+                  <Input.TextArea rows={3} placeholder="D:\\tools\\mcp-server.js" />
+                </Form.Item>
+                <Form.Item label={t("Working directory")} name="cwd">
+                  <Input placeholder="D:\\projects\\my-server" />
+                </Form.Item>
+              </>
+            ) : (
+              <>
+                <Form.Item label={t("Server URL")} name="url" rules={[{ required: true }]}>
+                  <Input placeholder="https://example.com/mcp" />
+                </Form.Item>
+                <Form.Item label={t("Headers")} name="headersText">
+                  <Input.TextArea rows={3} placeholder="Authorization=Bearer token" />
+                </Form.Item>
+              </>
+            )}
             <Form.Item label={t("Request timeout (ms)")} name="requestTimeoutMs">
               <InputNumber min={1000} max={120000} step={1000} style={{ width: "100%" }} />
             </Form.Item>
-            <Form.Item label={t("Environment")} name="envText">
-              <Input.TextArea rows={3} placeholder="API_KEY=value" />
-            </Form.Item>
+            {transport === "stdio" ? (
+              <Form.Item label={t("Environment")} name="envText">
+                <Input.TextArea rows={3} placeholder="API_KEY=value" />
+              </Form.Item>
+            ) : null}
             <div className="mcp-switches">
               <Form.Item label={t("Enabled")} name="enabled" valuePropName="checked">
                 <Switch />
@@ -291,10 +323,11 @@ export function McpServersCard({
                 <div>
                   <strong>{server.name}</strong>
                   <div className="muted mono">
-                    {server.command} {server.args.join(" ")}
+                    {server.transport === "stdio" ? `${server.command} ${server.args.join(" ")}` : server.url}
                   </div>
                 </div>
                 <Space wrap>
+                  <Tag>{t(server.transport || "stdio")}</Tag>
                   <Tag color={mcpStatusColor(server.status.state)}>{t(server.status.state)}</Tag>
                   <Tag>
                     {tools.length} {t("tools")}

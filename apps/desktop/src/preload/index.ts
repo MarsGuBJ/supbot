@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type {
   AutopilotStartDataRunInput,
   CapabilityUpdateInput,
@@ -64,6 +64,7 @@ const api = {
   approveToolPermission: (id: string) => ipcRenderer.invoke("tool:approve", id),
   denyToolPermission: (id: string) => ipcRenderer.invoke("tool:deny", id),
   setPermissionMode: (mode: PermissionMode) => ipcRenderer.invoke("permission:setMode", mode),
+  setMemoryEnabled: (enabled: boolean) => ipcRenderer.invoke("memory:setEnabled", enabled),
   addPermissionRule: (rule: Omit<PermissionRule, "id" | "createdAt" | "scope"> & { id?: string }) =>
     ipcRenderer.invoke("permission:addRule", rule),
   removePermissionRule: (id: string) => ipcRenderer.invoke("permission:removeRule", id),
@@ -235,7 +236,13 @@ const api = {
     ipcRenderer.invoke("schedule:update", id, input),
   deleteScheduledJob: (id: string) => ipcRenderer.invoke("schedule:delete", id),
   pickAttachments: () => ipcRenderer.invoke("attachment:pick"),
+  importDroppedAttachments: (files: File[]) => {
+    const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean);
+    return paths.length ? ipcRenderer.invoke("attachment:importPaths", paths) : Promise.resolve([]);
+  },
   openFile: (filePath: string) => ipcRenderer.invoke("file:open", filePath),
+  downloadFile: (filePath: string, suggestedName?: string) =>
+    ipcRenderer.invoke("file:download", filePath, suggestedName),
   userDataPath: () => ipcRenderer.invoke("path:userData"),
   onEvent: (listener: (event: SupbotEvent) => void) => {
     const wrapped = (_event: unknown, payload: SupbotEvent) => listener(payload);
