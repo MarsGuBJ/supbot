@@ -263,71 +263,75 @@ export function Topbar({
       </div>
       <div className="app-topbar-center" />
       <div className="app-topbar-actions">
-        <div className={`topbar-context-dropdown ${contextOpen ? "open" : ""}`} ref={contextRef}>
-          <button
-            type="button"
-            className="topbar-context-trigger"
-            onClick={() => setContextOpen((value) => !value)}
-            aria-expanded={contextOpen}
-            title={chinese ? "上下文用量" : "Context usage"}
-          >
-            <span>{chinese ? "上下文用量" : "Context"}</span>
-            <DownOutlined />
-          </button>
-          <div className="topbar-context-menu">
-            <div className="topbar-context-usage">
-              <div className="topbar-context-usage-text">
-                <span>{chinese ? "当前会话" : "Current conversation"}</span>
-                <span>
-                  {activeConversation
-                    ? `${activeConversation.messageCount || activeConversation.messages.length} ${chinese ? "条消息" : "messages"}`
-                    : chinese
-                      ? "暂无会话"
-                      : "No conversation"}
-                </span>
-              </div>
-              {compactBoundary ? (
-                <div className="topbar-context-usage-note">
-                  {chinese ? "最近压缩" : "Last compacted"}: {formatDateTime(compactBoundary.createdAt)} ·{" "}
-                  {compactBoundary.originalMessageCount} {chinese ? "条消息前" : "messages"}
-                </div>
-              ) : (
-                <div className="topbar-context-usage-note">
-                  {chinese ? "尚未压缩过上下文" : "Context has not been compacted yet"}
-                </div>
-              )}
-            </div>
-            <div className="topbar-context-divider" />
+        {view !== "server" ? (
+          <div className={`topbar-context-dropdown ${contextOpen ? "open" : ""}`} ref={contextRef}>
             <button
               type="button"
-              className="topbar-context-action"
-              disabled={!activeConversation}
-              onClick={() => {
-                setContextOpen(false);
-                void onCompact();
-              }}
+              className="topbar-context-trigger"
+              onClick={() => setContextOpen((value) => !value)}
+              aria-expanded={contextOpen}
+              title={chinese ? "上下文用量" : "Context usage"}
             >
-              {chinese ? "立即压缩上下文" : "Compact context now"}
+              <span>{chinese ? "上下文用量" : "Context"}</span>
+              <DownOutlined />
             </button>
-            <div className="topbar-context-hint">
-              {chinese
-                ? "长对话会自动压缩历史，节省 token。"
-                : "Long conversations are compacted automatically to save tokens."}
+            <div className="topbar-context-menu">
+              <div className="topbar-context-usage">
+                <div className="topbar-context-usage-text">
+                  <span>{chinese ? "当前会话" : "Current conversation"}</span>
+                  <span>
+                    {activeConversation
+                      ? `${activeConversation.messageCount || activeConversation.messages.length} ${chinese ? "条消息" : "messages"}`
+                      : chinese
+                        ? "暂无会话"
+                        : "No conversation"}
+                  </span>
+                </div>
+                {compactBoundary ? (
+                  <div className="topbar-context-usage-note">
+                    {chinese ? "最近压缩" : "Last compacted"}: {formatDateTime(compactBoundary.createdAt)} ·{" "}
+                    {compactBoundary.originalMessageCount} {chinese ? "条消息前" : "messages"}
+                  </div>
+                ) : (
+                  <div className="topbar-context-usage-note">
+                    {chinese ? "尚未压缩过上下文" : "Context has not been compacted yet"}
+                  </div>
+                )}
+              </div>
+              <div className="topbar-context-divider" />
+              <button
+                type="button"
+                className="topbar-context-action"
+                disabled={!activeConversation}
+                onClick={() => {
+                  setContextOpen(false);
+                  void onCompact();
+                }}
+              >
+                {chinese ? "立即压缩上下文" : "Compact context now"}
+              </button>
+              <div className="topbar-context-hint">
+                {chinese
+                  ? "长对话会自动压缩历史，节省 token。"
+                  : "Long conversations are compacted automatically to save tokens."}
+              </div>
             </div>
           </div>
-        </div>
-        <button
-          type="button"
-          className="topbar-text-btn"
-          onClick={() => {
-            setNotifyOpen(false);
-            openManage();
-          }}
-          title={chinese ? "管理" : "Manage"}
-        >
-          {chinese ? "管理" : "Manage"}
-          <SettingOutlined />
-        </button>
+        ) : null}
+        {view !== "server" ? (
+          <button
+            type="button"
+            className="topbar-text-btn"
+            onClick={() => {
+              setNotifyOpen(false);
+              openManage();
+            }}
+            title={chinese ? "管理" : "Manage"}
+          >
+            {chinese ? "管理" : "Manage"}
+            <SettingOutlined />
+          </button>
+        ) : null}
         <div className={`topbar-notify-dropdown ${notifyOpen ? "open" : ""}`} ref={notifyRef}>
           <button
             type="button"
@@ -398,24 +402,26 @@ export function Topbar({
             </div>
           </div>
         </div>
-        <div className="topbar-lang-toggle" role="group" aria-label={chinese ? "语言" : "Language"}>
-          <button
-            type="button"
-            className={language === "zh" ? "active" : ""}
-            aria-pressed={language === "zh"}
-            onClick={() => setLanguage("zh")}
-          >
-            中文
-          </button>
-          <button
-            type="button"
-            className={language === "en" ? "active" : ""}
-            aria-pressed={language === "en"}
-            onClick={() => setLanguage("en")}
-          >
-            EN
-          </button>
-        </div>
+        {view !== "server" ? (
+          <div className="topbar-lang-toggle" role="group" aria-label={chinese ? "语言" : "Language"}>
+            <button
+              type="button"
+              className={language === "zh" ? "active" : ""}
+              aria-pressed={language === "zh"}
+              onClick={() => setLanguage("zh")}
+            >
+              中文
+            </button>
+            <button
+              type="button"
+              className={language === "en" ? "active" : ""}
+              aria-pressed={language === "en"}
+              onClick={() => setLanguage("en")}
+            >
+              EN
+            </button>
+          </div>
+        ) : null}
         <Tooltip title={chinese ? "版本信息" : "Version information"}>
           <button
             type="button"
@@ -426,16 +432,18 @@ export function Topbar({
             <span className="topbar-version-glyph">HyBot</span>
           </button>
         </Tooltip>
-        <Tooltip title={translate(language, rightCollapsed ? "Open right panel" : "Close right panel")}>
-          <button
-            type="button"
-            className="topbar-icon-btn"
-            onClick={() => setRightCollapsed((value) => !value)}
-            aria-label={translate(language, "Toggle right panel")}
-          >
-            {rightCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-          </button>
-        </Tooltip>
+        {view !== "server" ? (
+          <Tooltip title={translate(language, rightCollapsed ? "Open right panel" : "Close right panel")}>
+            <button
+              type="button"
+              className="topbar-icon-btn"
+              onClick={() => setRightCollapsed((value) => !value)}
+              aria-label={translate(language, "Toggle right panel")}
+            >
+              {rightCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+            </button>
+          </Tooltip>
+        ) : null}
       </div>
     </header>
   );
