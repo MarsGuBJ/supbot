@@ -6048,11 +6048,6 @@ textarea.ant-input::placeholder {
   opacity: 1;
 }
 
-.message-row.user .message-copy-btn {
-  right: auto;
-  left: 4px;
-}
-
 .message-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
