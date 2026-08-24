@@ -405,7 +405,7 @@ async function loginServstationOidc(input: ServstationA2AOidcLoginInput): Promis
     process.env.HBCLIENT_BOTSTATION_USERNAME ||
     defaultServstationUser;
   const savedPassword = await service.servstationA2AStaffAgentPassword();
-  const autoLogin = localBotstationAutoLogin(
+  const autoLogin = botstationAutoLogin(
     issuerUrl,
     loginHint,
     input.password || savedPassword || process.env.HBCLIENT_BOTSTATION_PASSWORD,
@@ -490,9 +490,13 @@ function openOidcLoginWindow(
   autoLogin?: OidcAutoLogin,
 ): Promise<OidcCodeResult> {
   return new Promise((resolve, reject) => {
+    // With credentials available the window runs hidden while the login form
+    // is autofilled; it is only revealed when the autofill cannot run (e.g.
+    // the issuer does not serve the Botstation login form).
     const authWindow = new BrowserWindow({
-      parent: mainWindow || undefined,
-      modal: Boolean(mainWindow),
+      parent: autoLogin ? undefined : mainWindow || undefined,
+      modal: !autoLogin && Boolean(mainWindow),
+      show: !autoLogin,
       width: 540,
       height: 760,
       minWidth: 480,
@@ -521,6 +525,13 @@ function openOidcLoginWindow(
       if (!authWindow.isDestroyed()) {
         authWindow.close();
       }
+    };
+    const revealAuthWindow = (): void => {
+      if (settled || authWindow.isDestroyed()) {
+        return;
+      }
+      authWindow.show();
+      authWindow.focus();
     };
     const maybeComplete = (rawUrl: string, event?: Electron.Event): void => {
       if (!rawUrl.startsWith(redirectUri)) {
@@ -553,13 +564,13 @@ function openOidcLoginWindow(
     const onWillNavigate = (event: Electron.Event, url: string): void => maybeComplete(url, event);
     const onDidNavigate = (_event: Electron.Event, url: string): void => maybeComplete(url);
     let autoSubmitted = false;
-    const onDidFinishLoad = (): void => {
+    const tryAutofill = (): boolean => {
       if (!autoLogin || autoSubmitted || authWindow.isDestroyed()) {
-        return;
+        return false;
       }
       const currentUrl = authWindow.webContents.getURL();
-      if (!isLocalBotstationLoginUrl(currentUrl, autoLogin.issuerOrigin)) {
-        return;
+      if (!isBotstationLoginUrl(currentUrl, autoLogin.issuerOrigin)) {
+        return false;
       }
       autoSubmitted = true;
       const script = `
@@ -574,7 +585,36 @@ function openOidcLoginWindow(
           return true;
         })()
       `;
-      authWindow.webContents.executeJavaScript(script, true).catch(() => undefined);
+      authWindow.webContents
+        .executeJavaScript(script, true)
+        .then((filled) => {
+          if (!filled) {
+            revealAuthWindow();
+          }
+        })
+        .catch(() => revealAuthWindow());
+      return true;
+    };
+    const onDidFinishLoad = (): void => {
+      if (autoSubmitted) {
+        // Post-submit navigation: the completion handler closes the window
+        // on the redirect. Reveal only as a last resort so a wrong-credential
+        // error page cannot strand an invisible window.
+        return;
+      }
+      if (tryAutofill()) {
+        setTimeout(() => {
+          if (!settled && !authWindow.isDestroyed()) {
+            revealAuthWindow();
+          }
+        }, 12_000);
+        return;
+      }
+      setTimeout(() => {
+        if (!autoSubmitted && !settled && !tryAutofill()) {
+          revealAuthWindow();
+        }
+      }, 800);
     };
     const onClosed = (): void => {
       if (!settled) {
@@ -601,7 +641,7 @@ function openOidcLoginWindow(
   });
 }
 
-function localBotstationAutoLogin(
+function botstationAutoLogin(
   issuerUrl: string,
   userId: string | undefined,
   password: string | undefined,
@@ -610,9 +650,6 @@ function localBotstationAutoLogin(
     return undefined;
   }
   const issuer = new URL(issuerUrl);
-  if (!isLoopbackHost(issuer.hostname)) {
-    return undefined;
-  }
   const resolvedPassword =
     password?.trim() || (isDev && userId.trim() === defaultServstationUser ? defaultBotstationPassword : "");
   if (!resolvedPassword) {
@@ -625,7 +662,7 @@ function localBotstationAutoLogin(
   };
 }
 
-function isLocalBotstationLoginUrl(rawUrl: string, issuerOrigin: string): boolean {
+function isBotstationLoginUrl(rawUrl: string, issuerOrigin: string): boolean {
   try {
     const url = new URL(rawUrl);
     return url.origin === issuerOrigin && url.pathname === "/oauth2/login";
