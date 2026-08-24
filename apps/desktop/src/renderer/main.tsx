@@ -192,7 +192,7 @@ function App() {
   const [language, setLanguageState] = useState<Language>(() => loadLanguage());
   const [snapshot, setSnapshot] = useState<RuntimeSnapshot | null>(null);
   const [view, setView] = useState<WorkspaceView>("chat");
-  const [detailPanel, setDetailPanel] = useState<DetailPanel>("memory");
+  const [detailPanel, setDetailPanel] = useState<DetailPanel>("tasks");
   const [activeConversationId, setActiveConversationId] = useState("");
   const [activeProjectId, setActiveProjectId] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);

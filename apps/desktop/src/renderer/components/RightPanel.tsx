@@ -73,7 +73,7 @@ export function RightPanel({
   return (
     <aside className={`activity-panel ${collapsed ? "is-collapsed" : ""}`}>
       <Tabs
-        activeKey={panel || "memory"}
+        activeKey={panel || "tasks"}
         onChange={(key) => setPanel(key as DetailPanel)}
         items={[
           {
