@@ -4731,13 +4731,14 @@ function summarizeConversationForManualCompact(messages: ChatMessage[]): string 
   const recent = messages
     .filter((message) => message.role !== "system")
     .slice(-12)
-    .map((message) => `${message.role}: ${message.text.replace(/\s+/g, " ").slice(0, 280)}`)
+    .map((message) => {
+      const role = message.role === "user" ? "用户" : message.role === "assistant" ? "助手" : message.role;
+      return `- ${role}：${message.text.replace(/\s+/g, " ").trim().slice(0, 280)}`;
+    })
     .join("\n");
   return [
-    "Manual compact summary:",
-    recent || "No prior messages.",
-    "",
-    "Continue from this summary and the preserved recent messages. Do not treat this as permanent memory.",
+    `已压缩此前 ${messages.length} 条消息 / Compacted ${messages.length} earlier messages:`,
+    recent || "无历史消息 / No prior messages.",
   ].join("\n");
 }
 

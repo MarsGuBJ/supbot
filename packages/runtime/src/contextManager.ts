@@ -96,7 +96,9 @@ function buildSystemPrompt(
     toolUseGuidance(),
     "You may call tools when they help. Explain tool outcomes concisely after they complete. If a tool is denied or times out, adjust your answer without repeating the same request.",
     "Prefer reading available project instructions before making assumptions about local workflow.",
-    input.compactBoundary ? `<conversation_summary>\n${input.compactBoundary.summary}\n</conversation_summary>` : "",
+    input.compactBoundary
+      ? `<conversation_summary>\nEarlier messages in this conversation are summarized below. Continue from this summary and the recent messages that follow it. Do not treat this as permanent memory.\n${input.compactBoundary.summary}\n</conversation_summary>`
+      : "",
     input.memoryBlock
       ? `${input.memoryBlock}\nUse memory as user-approved long-term context. Current user instructions override memory when they conflict.`
       : "",
