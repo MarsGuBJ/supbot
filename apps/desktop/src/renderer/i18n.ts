@@ -803,6 +803,24 @@ const zh: Record<string, string> = {
   "No run records": "还没有运行记录",
   AUTOPILOT: "自动驾驶",
   "Autopilot runs": "自动驾驶运行",
+  // Enterprise workspace login page
+  "Enterprise workspace sign in": "企业工作区登录",
+  "Back to personal space": "返回个人空间",
+  "Welcome back": "欢迎回来",
+  "Log in to your HyBot account to continue smart workflows": "登录你的 HyBot 账户，继续智能工作流",
+  Username: "用户名",
+  Password: "密码",
+  "Enter username": "请输入用户名",
+  "Enter password": "请输入密码",
+  "Show password": "显示密码",
+  "Hide password": "隐藏密码",
+  "Remember me": "记住我",
+  "Forgot password?": "忘记密码？",
+  "Log in": "登 录",
+  "Signing in…": "登录中…",
+  "Please enter your username.": "请输入用户名。",
+  "Password reset is not available yet.": "密码重置功能开发中",
+  "HyBot © 2026 · Intelligent work platform": "中诚信和逸科技 © 2026 HyBot · 智能工作平台",
 };
 
 export function translate(language: Language, key: string, vars?: Record<string, string | number>): string {

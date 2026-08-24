@@ -115,7 +115,8 @@ import {
   clearPendingPermission,
 } from "./lib/snapshotApply";
 import type { DetailPanel, PromptContextMenu, SelectionContextMenu, Translator, WorkspaceView } from "./lib/types";
-import { connectServstationAgent } from "./servstationConnection";
+import { connectServstationAgent, hasUsableServstationOidcSession } from "./servstationConnection";
+import { EnterpriseLoginOverlay } from "./components/EnterpriseLoginOverlay";
 import { ConfigWorkspace } from "./views/ConfigWorkspace";
 import { ManagePanel, type ManagePanelTab } from "./views/ManagePanel";
 import { MarketWorkspace } from "./views/MarketWorkspace";
@@ -822,6 +823,7 @@ function App() {
                 snapshot={snapshot}
                 refreshRuntime={refresh}
                 copySelectedText={copySelectedText}
+                onBackToPersonal={() => setView("chat")}
                 t={t}
               />
             ) : view === "config" ? (
@@ -917,11 +919,13 @@ function ServerAgentWorkspace({
   snapshot,
   refreshRuntime,
   copySelectedText,
+  onBackToPersonal,
   t,
 }: {
   snapshot: RuntimeSnapshot;
   refreshRuntime: () => Promise<void>;
   copySelectedText: (text: string) => Promise<void>;
+  onBackToPersonal: () => void;
   t: Translator;
 }) {
   const [remote, setRemote] = useState<ServstationClientSnapshot | null>(null);
@@ -946,6 +950,10 @@ function ServerAgentWorkspace({
   const [messageApi, contextHolder] = message.useMessage();
   const reverseStatus = snapshot.servstationA2A.config.reverse?.status || "disconnected";
   const connected = reverseStatus === "connected";
+  const needsEnterpriseLogin =
+    snapshot.servstationA2A.config.authMode === "oidc" &&
+    !connected &&
+    !hasUsableServstationOidcSession(snapshot.servstationA2A.config);
   const activeConversation = draftConversation
     ? undefined
     : remote?.conversations.find((item) => item.id === activeConversationId) || remote?.conversations[0];
@@ -1587,6 +1595,9 @@ function ServerAgentWorkspace({
           ) : null}
         </div>
       </Modal>
+      {needsEnterpriseLogin ? (
+        <EnterpriseLoginOverlay snapshot={snapshot} refreshRuntime={refreshRuntime} onBack={onBackToPersonal} t={t} />
+      ) : null}
     </section>
   );
 }

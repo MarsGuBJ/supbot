@@ -408,7 +408,7 @@ async function loginServstationOidc(input: ServstationA2AOidcLoginInput): Promis
   const autoLogin = localBotstationAutoLogin(
     issuerUrl,
     loginHint,
-    savedPassword || process.env.HBCLIENT_BOTSTATION_PASSWORD,
+    input.password || savedPassword || process.env.HBCLIENT_BOTSTATION_PASSWORD,
   );
   const discovery = await discoverOidcDocument(issuerUrl);
   if (!discovery.authorization_endpoint || !discovery.token_endpoint) {
@@ -817,6 +817,16 @@ async function autoConnectLocalBotstation(): Promise<void> {
   }
   try {
     if (!hasUsableBotstationOidcSession(config)) {
+      const userId = config.staffAgentAccount || process.env.HBCLIENT_BOTSTATION_USERNAME || defaultServstationUser;
+      const savedPassword = await service.servstationA2AStaffAgentPassword();
+      const password =
+        savedPassword ||
+        process.env.HBCLIENT_BOTSTATION_PASSWORD ||
+        (isDev && userId === defaultServstationUser ? defaultBotstationPassword : "");
+      if (!password) {
+        // No stored credentials: let the user sign in through the workspace login page.
+        return;
+      }
       const login = await loginServstationOidc({});
       if (login.status === "canceled") {
         return;
@@ -1554,6 +1564,7 @@ function validateServstationA2AOidcLoginInput(
     scope: optionalString(value.scope, "servstation OIDC scope"),
     redirectUri: optionalString(value.redirectUri, "servstation OIDC redirect URI"),
     loginHint: optionalString(value.loginHint, "servstation OIDC login hint"),
+    password: optionalString(value.password, "servstation OIDC login password"),
   });
 }
 

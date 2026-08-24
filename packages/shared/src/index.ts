@@ -1087,6 +1087,7 @@ export interface ServstationA2AOidcLoginInput {
   scope?: string;
   redirectUri?: string;
   loginHint?: string;
+  password?: string;
 }
 
 export type ServstationA2AOidcLoginResult =
