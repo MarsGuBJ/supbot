@@ -258,7 +258,7 @@ export function Topbar({
 
   return (
     <header className="app-topbar">
-      <div className="app-topbar-left">
+      <div className={`app-topbar-left ${view === "server" ? "standalone" : ""}`}>
         <VersionDropdown view={view} setView={setView} chinese={chinese} />
       </div>
       <div className="app-topbar-center" />

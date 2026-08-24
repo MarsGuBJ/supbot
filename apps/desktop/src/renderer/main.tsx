@@ -752,19 +752,21 @@ function App() {
           onCompact={compactActiveConversation}
         />
         <div className="app-below">
-          <LeftPanel
-            snapshot={snapshot}
-            view={view}
-            setView={setView}
-            activeConversationId={activeConversation?.id || ""}
-            setActiveConversationId={setActiveConversationId}
-            activeProjectId={activeProjectId}
-            setActiveProjectId={setActiveProjectId}
-            refresh={refresh}
-            startNewConversation={startNewConversation}
-            startUpdate={startHBClientUpdate}
-            t={t}
-          />
+          {view === "server" ? null : (
+            <LeftPanel
+              snapshot={snapshot}
+              view={view}
+              setView={setView}
+              activeConversationId={activeConversation?.id || ""}
+              setActiveConversationId={setActiveConversationId}
+              activeProjectId={activeProjectId}
+              setActiveProjectId={setActiveProjectId}
+              refresh={refresh}
+              startNewConversation={startNewConversation}
+              startUpdate={startHBClientUpdate}
+              t={t}
+            />
+          )}
           <section className="main">
             {view === "chat" ? (
               <div className={`main-chat-split ${rightCollapsed ? "right-collapsed" : ""}`}>

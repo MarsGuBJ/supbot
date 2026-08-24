@@ -3896,6 +3896,13 @@ textarea.ant-input::placeholder {
   flex-shrink: 0;
 }
 
+.app-topbar-left.standalone {
+  width: auto;
+  min-width: 0;
+  background: #ffffff;
+  border-right: 1px solid var(--line);
+}
+
 .app-topbar-center {
   flex: 1;
   min-width: 0;
