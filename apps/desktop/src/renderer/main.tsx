@@ -55,6 +55,7 @@ import type {
   Attachment,
   ChatMessage,
   HBClientUpdateState,
+  PermissionMode,
   Project,
   RuntimeSnapshot,
   ScheduledJobInput,
@@ -116,31 +117,35 @@ import {
 import type { DetailPanel, PromptContextMenu, SelectionContextMenu, Translator, WorkspaceView } from "./lib/types";
 import { connectServstationAgent } from "./servstationConnection";
 import { ConfigWorkspace } from "./views/ConfigWorkspace";
+import { ManagePanel, type ManagePanelTab } from "./views/ManagePanel";
 import { MarketWorkspace } from "./views/MarketWorkspace";
+import { AutopilotMenuView, ScheduleMenuView } from "./views/MenuWorkspaces";
 import { ServerAgentFlowWorkspace, ServerAgentFlows } from "./views/ServerAgentFlows";
 import { ServerAgentMailWorkspace } from "./views/ServerAgentMailWorkspace";
 import { RemoteScheduleModal } from "./views/ServerAgentWorkspace";
 
 const theme = {
   token: {
-    colorPrimary: "#D4750A",
-    colorInfo: "#D4750A",
+    colorPrimary: "#3b82f6",
+    colorInfo: "#3b82f6",
     colorSuccess: "#10b981",
     colorWarning: "#f59e0b",
     colorError: "#ef4444",
-    colorBgBase: "#FFFAF5",
+    colorBgBase: "#ffffff",
     colorTextBase: "#1a1d23",
     colorBorder: "#dde0e5",
-    borderRadius: 8,
-    fontFamily: "Aptos, Bahnschrift, Segoe UI, sans-serif",
+    colorBorderSecondary: "#edf0f5",
+    borderRadius: 10,
+    fontFamily: `-apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif`,
   },
   components: {
-    Button: { borderRadius: 8, primaryShadow: "0 8px 22px rgba(212, 117, 10, 0.16)" },
-    Input: { borderRadius: 8, activeBorderColor: "#D4750A", hoverBorderColor: "#FFD6A8" },
-    Select: { optionSelectedBg: "#FFEFE0" },
-    Segmented: { itemSelectedBg: "#FFEFE0", itemSelectedColor: "#B8650A" },
+    Button: { borderRadius: 8, primaryShadow: "0 8px 22px rgba(59, 130, 246, 0.16)" },
+    Input: { borderRadius: 8, activeBorderColor: "#3b82f6", hoverBorderColor: "#dbeafe" },
+    Select: { optionSelectedBg: "#eff6ff" },
+    Segmented: { itemSelectedBg: "#eff6ff", itemSelectedColor: "#2563eb" },
     Tag: { borderRadiusSM: 6 },
-    Card: { borderRadius: 8 },
+    Card: { borderRadius: 10 },
+    Modal: { borderRadiusLG: 16 },
   },
 };
 
@@ -192,8 +197,9 @@ function App() {
   const [activeProjectId, setActiveProjectId] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [sending, setSending] = useState(false);
-  const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(true);
+  const [manageOpen, setManageOpen] = useState(false);
+  const [manageTab, setManageTab] = useState<ManagePanelTab>("model");
   const [subagentOpen, setSubagentOpen] = useState(false);
   const [editingSubagent, setEditingSubagent] = useState<SubagentConfig | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -525,6 +531,37 @@ function App() {
     setView("config");
   };
 
+  const selectProject = async (projectId: string) => {
+    if (!projectId) {
+      return;
+    }
+    const conversationInProject = snapshot?.conversations.find((item) => item.projectId === projectId);
+    if (conversationInProject) {
+      setActiveConversationId(conversationInProject.id);
+      setActiveProjectId(projectId);
+    } else {
+      await startNewConversation(projectId);
+    }
+  };
+
+  const changePermissionMode = async (mode: PermissionMode) => {
+    try {
+      await window.supbot.setPermissionMode(mode);
+      await refresh();
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    }
+  };
+
+  const changeModelProvider = async (providerId: string) => {
+    try {
+      await window.supbot.setActiveModelProvider(providerId);
+      await refresh();
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    }
+  };
+
   const runSlashAction = async (text: string): Promise<boolean> => {
     const command = resolveSlashCommand(text);
     if (!command) {
@@ -533,7 +570,6 @@ function App() {
     if (command.action === "new" || command.action === "clear") {
       await startNewConversation();
     } else if (command.action === "history") {
-      setLeftCollapsed(false);
       setView("chat");
     } else if (command.action === "config") {
       openConfig("model");
@@ -699,112 +735,148 @@ function App() {
     <ConfigProvider theme={theme} locale={language === "zh" ? zhCN : enUS}>
       {contextHolder}
       {modalContextHolder}
-      <main className="workspace-shell">
+      <div className="app-root">
         <Topbar
           snapshot={snapshot}
           view={view}
           setView={setView}
-          refresh={refresh}
           language={language}
           setLanguage={setLanguage}
-          leftCollapsed={leftCollapsed}
           rightCollapsed={rightCollapsed}
-          setLeftCollapsed={setLeftCollapsed}
           setRightCollapsed={setRightCollapsed}
           updateState={updateState}
           startUpdate={startHBClientUpdate}
           showVersionInfo={showHBClientVersion}
+          openManage={() => setManageOpen(true)}
+          onCompact={compactActiveConversation}
         />
-        {view === "chat" ? (
-          <section
-            className={`workspace-grid ${leftCollapsed ? "left-collapsed" : ""} ${rightCollapsed ? "right-collapsed" : ""}`}
-          >
-            <LeftPanel
-              snapshot={snapshot}
-              activeConversationId={activeConversation?.id || ""}
-              setActiveConversationId={setActiveConversationId}
-              activeProjectId={activeProjectId}
-              setActiveProjectId={setActiveProjectId}
-              collapsed={leftCollapsed}
-              refresh={refresh}
-              startNewConversation={startNewConversation}
-              t={t}
-            />
-            <ChatPanel
-              conversation={activeConversation}
-              attachments={attachments}
-              setAttachments={setAttachments}
-              sending={sending}
-              runningJob={runningJob}
-              pendingToolPermissions={snapshot.pendingToolPermissions}
-              approveToolPermission={approveToolPermission}
-              denyToolPermission={denyToolPermission}
-              send={send}
-              stopRunning={stopRunning}
-              pickAttachments={pickAttachments}
-              copyLatest={copyLatest}
-              copySelectedText={copySelectedText}
-              addSelectedTextToMemory={addSelectedTextToMemory}
-              compactConversation={compactActiveConversation}
-              loadTranscript={loadActiveTranscript}
-              loadOlderMessages={loadOlderMessages}
-              hasOlderMessages={hasOlderMessages}
-              historyLoading={historyLoading}
-              scrollRef={scrollRef}
-              locateMessageRef={locateMessageRef}
-              onMessageScroll={updateMessageStickiness}
-              t={t}
-              slashCommands={slashCommandList}
-              skills={snapshot.capabilities}
-            />
-            <RightPanel
-              snapshot={snapshot}
-              activeConversationId={activeConversation?.id || ""}
-              panel={detailPanel}
-              setPanel={setDetailPanel}
-              collapsed={rightCollapsed}
-              refresh={refresh}
-              t={t}
-              openSchedule={() => setScheduleOpen(true)}
-              onLocateJob={locateJobMessage}
-            />
+        <div className="app-below">
+          <LeftPanel
+            snapshot={snapshot}
+            view={view}
+            setView={setView}
+            activeConversationId={activeConversation?.id || ""}
+            setActiveConversationId={setActiveConversationId}
+            activeProjectId={activeProjectId}
+            setActiveProjectId={setActiveProjectId}
+            refresh={refresh}
+            startNewConversation={startNewConversation}
+            startUpdate={startHBClientUpdate}
+            t={t}
+          />
+          <section className="main">
+            {view === "chat" ? (
+              <div className={`main-chat-split ${rightCollapsed ? "right-collapsed" : ""}`}>
+                <ChatPanel
+                  conversation={activeConversation}
+                  attachments={attachments}
+                  setAttachments={setAttachments}
+                  sending={sending}
+                  runningJob={runningJob}
+                  pendingToolPermissions={snapshot.pendingToolPermissions}
+                  approveToolPermission={approveToolPermission}
+                  denyToolPermission={denyToolPermission}
+                  send={send}
+                  stopRunning={stopRunning}
+                  pickAttachments={pickAttachments}
+                  copyLatest={copyLatest}
+                  copySelectedText={copySelectedText}
+                  addSelectedTextToMemory={addSelectedTextToMemory}
+                  compactConversation={compactActiveConversation}
+                  loadTranscript={loadActiveTranscript}
+                  loadOlderMessages={loadOlderMessages}
+                  hasOlderMessages={hasOlderMessages}
+                  historyLoading={historyLoading}
+                  scrollRef={scrollRef}
+                  locateMessageRef={locateMessageRef}
+                  onMessageScroll={updateMessageStickiness}
+                  t={t}
+                  slashCommands={slashCommandList}
+                  skills={snapshot.capabilities}
+                  projects={snapshot.projects}
+                  activeProjectId={activeProjectId}
+                  onSelectProject={(projectId) => void selectProject(projectId)}
+                  permissionMode={snapshot.permissionMode}
+                  onPermissionModeChange={(mode) => void changePermissionMode(mode)}
+                  modelProviders={snapshot.modelProviders}
+                  activeModelProviderId={snapshot.activeModelProviderId}
+                  currentModelLabel={`${snapshot.modelConfig.providerName} / ${snapshot.modelConfig.model}`}
+                  onModelProviderChange={(providerId) => void changeModelProvider(providerId)}
+                  onOpenModelConfig={() => openConfig("model")}
+                  onOpenSkillView={() => setView("skill")}
+                />
+                <RightPanel
+                  snapshot={snapshot}
+                  activeConversationId={activeConversation?.id || ""}
+                  panel={detailPanel}
+                  setPanel={setDetailPanel}
+                  collapsed={rightCollapsed}
+                  refresh={refresh}
+                  t={t}
+                  openSchedule={() => setScheduleOpen(true)}
+                  onLocateJob={locateJobMessage}
+                />
+              </div>
+            ) : view === "server" ? (
+              <ServerAgentWorkspace
+                snapshot={snapshot}
+                refreshRuntime={refresh}
+                copySelectedText={copySelectedText}
+                t={t}
+              />
+            ) : view === "config" ? (
+              <ConfigWorkspace
+                snapshot={snapshot}
+                userDataPath={userDataPath}
+                focusTab={focusConfigTab}
+                setFocusTab={setFocusConfigTab}
+                refresh={refresh}
+                t={t}
+                openSubagent={(subagent) => {
+                  setEditingSubagent(subagent);
+                  setSubagentOpen(true);
+                }}
+              />
+            ) : view === "skill" ? (
+              <MarketWorkspace
+                refresh={refresh}
+                snapshot={snapshot}
+                openMarketConfig={() => {
+                  setFocusConfigTab("market");
+                  setView("config");
+                }}
+                openMcpConfig={() => {
+                  setFocusConfigTab("mcp");
+                  setView("config");
+                }}
+                t={t}
+              />
+            ) : view === "schedule" ? (
+              <ScheduleMenuView
+                snapshot={snapshot}
+                refresh={refresh}
+                onCreateSchedule={() => setScheduleOpen(true)}
+                t={t}
+              />
+            ) : (
+              <AutopilotMenuView snapshot={snapshot} refresh={refresh} t={t} />
+            )}
           </section>
-        ) : view === "server" ? (
-          <ServerAgentWorkspace
-            snapshot={snapshot}
-            refreshRuntime={refresh}
-            copySelectedText={copySelectedText}
-            t={t}
-          />
-        ) : view === "config" ? (
-          <ConfigWorkspace
-            snapshot={snapshot}
-            userDataPath={userDataPath}
-            focusTab={focusConfigTab}
-            setFocusTab={setFocusConfigTab}
-            refresh={refresh}
-            t={t}
-            openSubagent={(subagent) => {
-              setEditingSubagent(subagent);
-              setSubagentOpen(true);
-            }}
-          />
-        ) : (
-          <MarketWorkspace
-            refresh={refresh}
-            snapshot={snapshot}
-            openMarketConfig={() => {
-              setFocusConfigTab("market");
-              setView("config");
-            }}
-            openMcpConfig={() => {
-              setFocusConfigTab("mcp");
-              setView("config");
-            }}
-            t={t}
-          />
-        )}
-      </main>
+        </div>
+      </div>
+      <ManagePanel
+        open={manageOpen}
+        tab={manageTab}
+        setTab={setManageTab}
+        snapshot={snapshot}
+        refresh={refresh}
+        openSubagent={(subagent) => {
+          setEditingSubagent(subagent);
+          setSubagentOpen(true);
+        }}
+        onClose={() => setManageOpen(false)}
+        t={t}
+      />
       <SubagentModal
         open={subagentOpen}
         subagent={editingSubagent}

@@ -5,16 +5,29 @@ import {
   CompressOutlined,
   CopyOutlined,
   FileTextOutlined,
+  FileSearchOutlined,
+  FolderOpenOutlined,
+  HistoryOutlined,
   PaperClipOutlined,
   RobotOutlined,
+  SearchOutlined,
   SendOutlined,
   StarOutlined,
   StopOutlined,
   ToolOutlined,
 } from "@ant-design/icons";
-import { Button, Input, Popover, Space, Tag, Tooltip, Typography, message } from "antd";
-import type { TextAreaRef } from "antd/es/input/TextArea";
-import type { AgentJob, Attachment, CapabilityDefinition, Conversation, PendingToolPermission } from "@supbot/shared";
+import { Popover, Tag, Tooltip, message } from "antd";
+import type {
+  AgentJob,
+  Attachment,
+  CapabilityDefinition,
+  ChatMessage,
+  Conversation,
+  ModelProviderConfig,
+  PendingToolPermission,
+  PermissionMode,
+  Project,
+} from "@supbot/shared";
 import { buildSlashCommands, conversationTitle, statusLabel } from "@supbot/shared";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { ComposerPermissionPrompt } from "./ComposerPermissionPrompt";
@@ -29,6 +42,27 @@ const VirtualMessageList = React.forwardRef<HTMLDivElement, React.HTMLAttributes
   ),
 );
 VirtualMessageList.displayName = "VirtualMessageList";
+
+type CornerPopup = "search" | "history" | "files" | null;
+
+const permissionOptions: { value: PermissionMode; titleKey: string; descKey: string }[] = [
+  { value: "default", titleKey: "Ask every time", descKey: "Every action that needs confirmation pops up a dialog." },
+  {
+    value: "acceptEdits",
+    titleKey: "Auto-approve routine actions",
+    descKey: "Safe, user-specified actions are allowed automatically; only high-impact actions ask.",
+  },
+  {
+    value: "bypassPermissions",
+    titleKey: "Bypass all",
+    descKey: "Everything is allowed except destructive blocked actions.",
+  },
+  {
+    value: "plan",
+    titleKey: "Plan mode",
+    descKey: "The agent plans steps first and waits for confirmation before executing.",
+  },
+];
 
 export function ChatPanel({
   conversation,
@@ -56,6 +90,17 @@ export function ChatPanel({
   t,
   slashCommands,
   skills,
+  projects,
+  activeProjectId,
+  onSelectProject,
+  permissionMode,
+  onPermissionModeChange,
+  modelProviders,
+  activeModelProviderId,
+  currentModelLabel,
+  onModelProviderChange,
+  onOpenModelConfig,
+  onOpenSkillView,
 }: {
   conversation?: Conversation;
   attachments: Attachment[];
@@ -82,15 +127,31 @@ export function ChatPanel({
   t: (key: string, vars?: Record<string, string | number>) => string;
   slashCommands: ReturnType<typeof buildSlashCommands>;
   skills: CapabilityDefinition[];
+  projects: Project[];
+  activeProjectId: string;
+  onSelectProject: (projectId: string) => void;
+  permissionMode: PermissionMode;
+  onPermissionModeChange: (mode: PermissionMode) => void;
+  modelProviders: ModelProviderConfig[];
+  activeModelProviderId?: string;
+  currentModelLabel: string;
+  onModelProviderChange: (providerId: string) => void;
+  onOpenModelConfig: () => void;
+  onOpenSkillView: () => void;
 }) {
   const selectionMenuRef = useRef<HTMLDivElement | null>(null);
   const promptMenuRef = useRef<HTMLDivElement | null>(null);
-  const promptInputRef = useRef<TextAreaRef | null>(null);
+  const promptInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const cornerRef = useRef<HTMLDivElement | null>(null);
+  const permissionRef = useRef<HTMLDivElement | null>(null);
   const [selectionMenu, setSelectionMenu] = useState<SelectionContextMenu | null>(null);
   const [selectionAction, setSelectionAction] = useState<"copy" | "memory" | null>(null);
   const [promptMenu, setPromptMenu] = useState<PromptContextMenu | null>(null);
   const [promptAction, setPromptAction] = useState<"copy" | "paste" | null>(null);
   const [skillsOpen, setSkillsOpen] = useState(false);
+  const [permissionOpen, setPermissionOpen] = useState(false);
+  const [cornerPopup, setCornerPopup] = useState<CornerPopup>(null);
+  const [searchQuery, setSearchQuery] = useState("");
   const [prompt, setPrompt] = useState("");
   const promptRef = useRef(prompt);
   promptRef.current = prompt;
@@ -107,7 +168,23 @@ export function ChatPanel({
     }
     previousConversationIdRef.current = nextId;
     setPrompt(nextId ? conversationDraftsRef.current.get(nextId) || "" : "");
+    setSearchQuery("");
+    setCornerPopup(null);
   }, [conversation?.id]);
+
+  const resizeTextarea = useCallback(() => {
+    const textarea = promptInputRef.current;
+    if (!textarea) {
+      return;
+    }
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 280)}px`;
+  }, []);
+
+  useEffect(() => {
+    resizeTextarea();
+  }, [prompt, resizeTextarea]);
+
   const handleSend = useCallback(async () => {
     const text = prompt.trim();
     if (!text) {
@@ -119,6 +196,7 @@ export function ChatPanel({
       setPrompt(text);
     }
   }, [prompt, send]);
+
   const [dropActive, setDropActive] = useState(false);
   const handleFileDrop = useCallback(
     async (event: React.DragEvent<HTMLDivElement>) => {
@@ -139,11 +217,12 @@ export function ChatPanel({
     },
     [setAttachments, t],
   );
+
   const availableSkills = useMemo(() => enabledSkillCapabilities(skills), [skills]);
   const insertSkill = useCallback(
     (skill: CapabilityDefinition) => {
       const directive = formatSkillPromptDirective(skill);
-      const textArea = promptInputRef.current?.resizableTextArea?.textArea;
+      const textArea = promptInputRef.current;
       const currentValue = textArea?.value ?? prompt;
       const fallbackPosition = currentValue.length;
       const start = Math.max(0, Math.min(textArea?.selectionStart ?? fallbackPosition, currentValue.length));
@@ -153,13 +232,15 @@ export function ChatPanel({
       setPrompt(nextPrompt);
       setSkillsOpen(false);
       window.requestAnimationFrame(() => {
-        const nextTextArea = promptInputRef.current?.resizableTextArea?.textArea;
+        const nextTextArea = promptInputRef.current;
         nextTextArea?.focus();
         nextTextArea?.setSelectionRange(caret, caret);
+        resizeTextarea();
       });
     },
-    [prompt],
+    [prompt, resizeTextarea],
   );
+
   const filteredCommands = useMemo(() => {
     if (!prompt.startsWith("/")) {
       return [];
@@ -167,6 +248,7 @@ export function ChatPanel({
     const query = prompt.trim().toLowerCase();
     return slashCommands.filter((item) => item.command.startsWith(query));
   }, [prompt, slashCommands]);
+
   const composerPermissions = useMemo(() => {
     const conversationId = conversation?.id || "";
     return pendingToolPermissions.filter((permission) => {
@@ -266,9 +348,10 @@ export function ChatPanel({
         setPrompt(nextPrompt);
         closePromptMenu();
         window.requestAnimationFrame(() => {
-          const textarea = promptInputRef.current?.resizableTextArea?.textArea;
+          const textarea = promptInputRef.current;
           textarea?.focus();
           textarea?.setSelectionRange(caret, caret);
+          resizeTextarea();
         });
         message.success(t("已粘贴剪贴板内容。"));
       } catch (error) {
@@ -277,7 +360,7 @@ export function ChatPanel({
         setPromptAction(null);
       }
     },
-    [closePromptMenu, copySelectedText, prompt, promptMenu, setPrompt, t],
+    [closePromptMenu, copySelectedText, prompt, promptMenu, resizeTextarea, t],
   );
 
   useEffect(() => {
@@ -333,6 +416,29 @@ export function ChatPanel({
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [closePromptMenu, promptMenu]);
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (cornerRef.current && !cornerRef.current.contains(event.target as Node)) {
+        setCornerPopup(null);
+      }
+      if (permissionRef.current && !permissionRef.current.contains(event.target as Node)) {
+        setPermissionOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setCornerPopup(null);
+        setPermissionOpen(false);
+      }
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, []);
 
   useEffect(() => {
     const stream = scrollRef.current;
@@ -411,16 +517,102 @@ export function ChatPanel({
     </div>
   );
 
+  // Corner popup data
+  const searchResults = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) {
+      return [];
+    }
+    const results: { message: ChatMessage; snippet: string }[] = [];
+    for (const item of messages) {
+      const text = item.text || "";
+      if (!text.toLowerCase().includes(query)) {
+        continue;
+      }
+      const index = text.toLowerCase().indexOf(query);
+      const start = Math.max(0, index - 40);
+      const end = Math.min(text.length, index + query.length + 60);
+      results.push({
+        message: item,
+        snippet: `${start > 0 ? "…" : ""}${text.slice(start, end)}${end < text.length ? "…" : ""}`,
+      });
+    }
+    return results.slice(0, 30);
+  }, [messages, searchQuery]);
+
+  const userMessages = useMemo(
+    () =>
+      [...messages]
+        .filter((item) => item.role === "user")
+        .reverse()
+        .slice(0, 20),
+    [messages],
+  );
+
+  const conversationFiles = useMemo(() => {
+    const files: { key: string; name: string; path?: string }[] = [];
+    for (const item of messages) {
+      for (const file of item.generatedFiles || []) {
+        files.push({ key: `gen-${item.id}-${file.name}`, name: file.name, path: file.path });
+      }
+      for (const attachment of item.attachments || []) {
+        files.push({ key: `att-${item.id}-${attachment.name}`, name: attachment.name, path: attachment.path });
+      }
+    }
+    return files;
+  }, [messages]);
+
+  const highlightMatch = (text: string, query: string) => {
+    const index = text.toLowerCase().indexOf(query.toLowerCase());
+    if (index < 0) {
+      return text;
+    }
+    return (
+      <>
+        {text.slice(0, index)}
+        <mark>{text.slice(index, index + query.length)}</mark>
+        {text.slice(index + query.length)}
+      </>
+    );
+  };
+
+  const activePermission = permissionOptions.find((item) => item.value === permissionMode) || permissionOptions[0];
+  const modelSelectValue = activeModelProviderId || (modelProviders.length ? "" : "__current__");
+
   return (
     <section className="chat-panel">
-      <div className="chat-banner">
-        <div>
-          <div className="chat-banner-label">{t("Conversation")}</div>
-          <div className="chat-banner-text">
-            {conversation ? conversationTitle(conversation, t("New conversation")) : t("No conversation yet")}
-          </div>
-        </div>
-        <Space>
+      {conversation && messages.length ? (
+        <div className="main-corner-toolbar" ref={cornerRef}>
+          <Tooltip title={t("Search in conversation")}>
+            <button
+              type="button"
+              className={`main-corner-btn ${cornerPopup === "search" ? "active" : ""}`}
+              onClick={() => setCornerPopup(cornerPopup === "search" ? null : "search")}
+              aria-label={t("Search in conversation")}
+            >
+              <SearchOutlined />
+            </button>
+          </Tooltip>
+          <Tooltip title={t("Recent prompts")}>
+            <button
+              type="button"
+              className={`main-corner-btn ${cornerPopup === "history" ? "active" : ""}`}
+              onClick={() => setCornerPopup(cornerPopup === "history" ? null : "history")}
+              aria-label={t("Recent prompts")}
+            >
+              <HistoryOutlined />
+            </button>
+          </Tooltip>
+          <Tooltip title={t("Files in conversation")}>
+            <button
+              type="button"
+              className={`main-corner-btn ${cornerPopup === "files" ? "active" : ""}`}
+              onClick={() => setCornerPopup(cornerPopup === "files" ? null : "files")}
+              aria-label={t("Files in conversation")}
+            >
+              <FolderOpenOutlined />
+            </button>
+          </Tooltip>
           <Popover
             title={t("Skills")}
             content={skillsContent}
@@ -430,23 +622,46 @@ export function ChatPanel({
             onOpenChange={setSkillsOpen}
             overlayClassName="chat-skill-overlay"
           >
-            <Button icon={<ToolOutlined />}>{t("Skills")}</Button>
+            <Tooltip title={t("Skills")}>
+              <button type="button" className="main-corner-btn" aria-label={t("Skills")}>
+                <ToolOutlined />
+              </button>
+            </Tooltip>
           </Popover>
           <Tooltip title={t("Compact conversation")}>
-            <Button
-              icon={<CompressOutlined />}
+            <button
+              type="button"
+              className="main-corner-btn"
               onClick={compactConversation}
               disabled={!conversation?.messages.length}
-            />
+              aria-label={t("Compact conversation")}
+            >
+              <CompressOutlined />
+            </button>
           </Tooltip>
           <Tooltip title={t("Load transcript")}>
-            <Button icon={<FileTextOutlined />} onClick={loadTranscript} disabled={!conversation} />
+            <button
+              type="button"
+              className="main-corner-btn"
+              onClick={loadTranscript}
+              disabled={!conversation}
+              aria-label={t("Load transcript")}
+            >
+              <FileTextOutlined />
+            </button>
           </Tooltip>
           <Tooltip title={t("Copy latest response")}>
-            <Button icon={<CopyOutlined />} onClick={copyLatest} />
+            <button
+              type="button"
+              className="main-corner-btn"
+              onClick={copyLatest}
+              aria-label={t("Copy latest response")}
+            >
+              <CopyOutlined />
+            </button>
           </Tooltip>
           {runningJob ? (
-            <Tag color="cyan">
+            <Tag color="blue">
               <ClockCircleOutlined /> {statusLabel(runningJob.status, t)}
             </Tag>
           ) : (
@@ -454,19 +669,171 @@ export function ChatPanel({
               <CheckCircleOutlined /> {t("Ready")}
             </Tag>
           )}
-        </Space>
+
+          {cornerPopup === "search" ? (
+            <div className="main-corner-popup">
+              <div className="main-corner-popup-search">
+                <SearchOutlined />
+                <input
+                  type="text"
+                  autoFocus
+                  value={searchQuery}
+                  placeholder={t("Search in the current conversation…")}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                />
+                <button
+                  type="button"
+                  className="main-corner-popup-close"
+                  onClick={() => setCornerPopup(null)}
+                  aria-label={t("Close")}
+                >
+                  ×
+                </button>
+              </div>
+              <div className="main-corner-popup-body">
+                {searchResults.map((result) => (
+                  <button
+                    type="button"
+                    className="corner-search-result"
+                    key={result.message.id}
+                    onClick={() => {
+                      locateMessageRef.current?.(result.message.id);
+                      setCornerPopup(null);
+                    }}
+                  >
+                    <div className="corner-search-result-title">
+                      {result.message.role === "user" ? t("You") : t("HyBot")}:{" "}
+                      {(result.message.text || "").slice(0, 40)}
+                    </div>
+                    <div className="corner-search-result-snippet">{highlightMatch(result.snippet, searchQuery)}</div>
+                  </button>
+                ))}
+                {searchQuery && !searchResults.length ? (
+                  <div className="main-corner-popup-empty">{t("No matching messages")}</div>
+                ) : null}
+                {!searchQuery ? (
+                  <div className="main-corner-popup-empty">{t("Type keywords to search this conversation.")}</div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          {cornerPopup === "history" ? (
+            <div className="main-corner-popup">
+              <div className="main-corner-popup-header">
+                <span>{t("Recent prompts")}</span>
+                <button
+                  type="button"
+                  className="main-corner-popup-close"
+                  onClick={() => setCornerPopup(null)}
+                  aria-label={t("Close")}
+                >
+                  ×
+                </button>
+              </div>
+              <div className="main-corner-popup-body">
+                {userMessages.map((item) => (
+                  <button
+                    type="button"
+                    className="corner-history-item"
+                    key={item.id}
+                    onClick={() => {
+                      locateMessageRef.current?.(item.id);
+                      setCornerPopup(null);
+                    }}
+                  >
+                    <span className="corner-history-item-icon">
+                      <HistoryOutlined />
+                    </span>
+                    <span className="corner-history-item-body">
+                      <span className="corner-history-item-title">
+                        {(item.text || "").slice(0, 80) || t("Empty message")}
+                      </span>
+                    </span>
+                  </button>
+                ))}
+                {!userMessages.length ? (
+                  <div className="main-corner-popup-empty">{t("No prompts in this conversation")}</div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          {cornerPopup === "files" ? (
+            <div className="main-corner-popup">
+              <div className="main-corner-popup-header">
+                <span>{t("Files in conversation")}</span>
+                <button
+                  type="button"
+                  className="main-corner-popup-close"
+                  onClick={() => setCornerPopup(null)}
+                  aria-label={t("Close")}
+                >
+                  ×
+                </button>
+              </div>
+              <div className="main-corner-popup-body">
+                {conversationFiles.map((file) => (
+                  <button
+                    type="button"
+                    className="corner-file-item"
+                    key={file.key}
+                    onClick={() => {
+                      if (file.path) {
+                        void window.supbot.downloadFile(file.path, file.name);
+                      }
+                    }}
+                    disabled={!file.path}
+                  >
+                    <FileSearchOutlined />
+                    <span>{file.name}</span>
+                  </button>
+                ))}
+                {!conversationFiles.length ? (
+                  <div className="main-corner-popup-empty">{t("No files in this conversation")}</div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="chat-title-bar">
+        <strong>{conversation ? conversationTitle(conversation, t("New conversation")) : t("New conversation")}</strong>
       </div>
+
       {!conversation || messages.length === 0 ? (
         <div className="message-stream" ref={scrollRef} onContextMenu={openSelectionMenu}>
           <div className="message-stack">
-            <div className="chat-empty">
-              <div className="brand-mark">
+            <div className="main-hero" id="mainHero">
+              <div className="main-hero-logo">
                 <RobotOutlined />
               </div>
-              <Typography.Title level={3}>{t("HyBot is ready")}</Typography.Title>
-              <p className="muted">
-                {t("Ask a question, attach local files, use /commands, or mention @research and @builder.")}
+              <h1>{t("Hi, let's get started")}</h1>
+              <p className="main-hero-sub">
+                {t(
+                  "I can help you solve problems, manage your computer, create and run skills, and keep growing with long-term memory.",
+                )}
               </p>
+              {availableSkills.length ? (
+                <div className="skill-tags" role="list">
+                  {availableSkills.slice(0, 12).map((skill) => (
+                    <button
+                      type="button"
+                      className="skill-tag"
+                      key={skill.id}
+                      role="listitem"
+                      onClick={() => insertSkill(skill)}
+                    >
+                      <ToolOutlined />
+                      <span>{skill.name}</span>
+                    </button>
+                  ))}
+                  <button type="button" className="skill-tag skill-tag-more" onClick={onOpenSkillView}>
+                    {t("More")} →
+                  </button>
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
@@ -555,7 +922,7 @@ export function ChatPanel({
         </div>
       ) : null}
       <div
-        className={`composer ${dropActive ? "is-drop-target" : ""}`}
+        className={`input-bar ${dropActive ? "is-drop-target" : ""}`}
         onDragEnter={(event) => {
           if (event.dataTransfer.types.includes("Files")) {
             event.preventDefault();
@@ -581,69 +948,154 @@ export function ChatPanel({
           t={t}
         />
         {attachments.length ? (
-          <div className="attachment-row">
+          <div className="attach-strip">
             {attachments.map((attachment) => (
-              <Tag
-                key={attachment.id}
-                closable
-                onClose={() => setAttachments((items) => items.filter((item) => item.id !== attachment.id))}
-              >
+              <span className="attach-chip" key={attachment.id}>
                 <PaperClipOutlined /> {attachment.name}
-              </Tag>
+                <button
+                  type="button"
+                  aria-label={t("Remove attachment")}
+                  onClick={() => setAttachments((items) => items.filter((item) => item.id !== attachment.id))}
+                >
+                  ×
+                </button>
+              </span>
             ))}
           </div>
         ) : null}
-        <div className="composer-body">
-          <Tooltip title={t("Attach files")}>
-            <Button icon={<PaperClipOutlined />} onClick={pickAttachments} />
-          </Tooltip>
-          <div className="composer-input-shell">
-            <Input.TextArea
-              ref={promptInputRef}
-              value={prompt}
-              onChange={(event) => setPrompt(event.target.value)}
-              onContextMenu={openPromptMenu}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  if (runningJob) {
-                    void stopRunning();
-                  } else {
-                    void handleSend();
-                  }
+        <div className="input-wrapper">
+          <textarea
+            ref={promptInputRef}
+            value={prompt}
+            rows={1}
+            placeholder={t("What can I help you with today? @ to reference files, / for skills and commands")}
+            onChange={(event) => setPrompt(event.target.value)}
+            onContextMenu={openPromptMenu}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                if (runningJob) {
+                  void stopRunning();
+                } else {
+                  void handleSend();
                 }
-              }}
-              autoSize={{ minRows: 2, maxRows: 6 }}
-              placeholder={t("Message HyBot, use /config, or mention @research...")}
-            />
-            {filteredCommands.length ? (
-              <div className="slash-menu">
-                {filteredCommands.map((command) => (
-                  <button
-                    key={command.command}
-                    type="button"
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => setPrompt(command.command)}
-                  >
-                    <span className="mono">{command.command}</span>
-                    <span>
-                      <strong>{command.title}</strong>
-                      <small>{command.description}</small>
-                    </span>
-                  </button>
-                ))}
+              }
+            }}
+          />
+          {filteredCommands.length ? (
+            <div className="slash-menu">
+              {filteredCommands.map((command) => (
+                <button
+                  key={command.command}
+                  type="button"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => setPrompt(command.command)}
+                >
+                  <span className="mono">{command.command}</span>
+                  <span>
+                    <strong>{command.title}</strong>
+                    <small>{command.description}</small>
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <div className="input-footer">
+            <div className="input-footer-left">
+              <Tooltip title={t("Attach files")}>
+                <button type="button" className="attach-btn" onClick={pickAttachments} aria-label={t("Attach files")}>
+                  <PaperClipOutlined />
+                </button>
+              </Tooltip>
+              <div className="project-selector">
+                <select
+                  value={activeProjectId}
+                  aria-label={t("Choose project")}
+                  onChange={(event) => onSelectProject(event.target.value)}
+                >
+                  <option value="">{t("Choose project")}</option>
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id} disabled={project.status === "archived"}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
               </div>
-            ) : null}
+              <div className="permission-selector permission-dropdown" ref={permissionRef}>
+                <button
+                  type="button"
+                  className="permission-dropdown-trigger"
+                  onClick={() => setPermissionOpen((value) => !value)}
+                  aria-expanded={permissionOpen}
+                >
+                  <span>{t(activePermission.titleKey)}</span>
+                </button>
+                {permissionOpen ? (
+                  <div className="permission-dropdown-menu">
+                    {permissionOptions.map((option) => (
+                      <button
+                        type="button"
+                        className={`permission-option ${option.value === permissionMode ? "selected" : ""}`}
+                        key={option.value}
+                        onClick={() => {
+                          onPermissionModeChange(option.value);
+                          setPermissionOpen(false);
+                        }}
+                      >
+                        <span className="permission-option-info">
+                          <span className="permission-option-title">
+                            {t(option.titleKey)}
+                            {option.value === permissionMode ? (
+                              <span className="permission-option-check">✓</span>
+                            ) : null}
+                          </span>
+                          <span className="permission-option-desc">{t(option.descKey)}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+            <div className="input-footer-right">
+              <div className="model-selector">
+                <select
+                  value={modelSelectValue}
+                  aria-label={t("Choose model")}
+                  onChange={(event) => {
+                    if (event.target.value === "__custom__") {
+                      onOpenModelConfig();
+                      return;
+                    }
+                    onModelProviderChange(event.target.value);
+                  }}
+                >
+                  {!activeModelProviderId ? (
+                    <option value="__current__" disabled>
+                      {currentModelLabel}
+                    </option>
+                  ) : null}
+                  {modelProviders.map((provider) => (
+                    <option key={provider.id} value={provider.id}>
+                      {provider.providerName} / {provider.model}
+                    </option>
+                  ))}
+                  <option value="__custom__">{t("Configure custom model…")}</option>
+                </select>
+              </div>
+              <Tooltip title={runningJob ? t("Stop") : t("Send")}>
+                <button
+                  type="button"
+                  className={`send-btn ${runningJob ? "is-stop" : ""}`}
+                  disabled={(!prompt.trim() && !runningJob) || sending}
+                  aria-label={runningJob ? t("Stop") : t("Send")}
+                  onClick={runningJob ? stopRunning : () => void handleSend()}
+                >
+                  {runningJob ? <StopOutlined /> : <SendOutlined />}
+                </button>
+              </Tooltip>
+            </div>
           </div>
-          <Button
-            type="primary"
-            icon={runningJob ? <StopOutlined /> : <SendOutlined />}
-            loading={sending}
-            danger={Boolean(runningJob)}
-            onClick={runningJob ? stopRunning : () => void handleSend()}
-          >
-            {runningJob ? t("Stop") : t("Send")}
-          </Button>
         </div>
       </div>
     </section>

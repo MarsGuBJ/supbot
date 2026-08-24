@@ -9,6 +9,8 @@ import {
   DownOutlined,
   PaperClipOutlined,
   RightOutlined,
+  ShareAltOutlined,
+  SoundOutlined,
   ThunderboltOutlined,
   ToolOutlined,
 } from "@ant-design/icons";
@@ -47,62 +49,123 @@ export const MessageBubble = memo(function MessageBubble({
       message.error(error instanceof Error ? error.message : t("Download failed."));
     }
   };
+  const speakMessage = () => {
+    if (!("speechSynthesis" in window)) {
+      message.info(t("Read aloud is not supported."));
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(item.text.slice(0, 4000));
+    utterance.lang = document.documentElement.lang === "en" ? "en-US" : "zh-CN";
+    window.speechSynthesis.speak(utterance);
+  };
+  const shareMessage = async () => {
+    try {
+      await writeClipboardText(item.text);
+      message.success(t("Copied message."));
+    } catch {
+      message.error(t("Copy failed."));
+    }
+  };
+  const messageContent = (
+    <>
+      {copyable ? (
+        <Tooltip title={t("Copy message")}>
+          <Button
+            type="text"
+            size="small"
+            className="message-copy-btn"
+            icon={<CopyOutlined />}
+            aria-label={t("Copy message")}
+            onClick={() => void copyMessage()}
+          />
+        </Tooltip>
+      ) : null}
+      <MessageBlocks message={item} t={t} />
+      {item.attachments?.length ? (
+        <div className="attachment-row">
+          {item.attachments.map((attachment) => (
+            <Tag key={attachment.id}>
+              <PaperClipOutlined /> {attachment.name}
+            </Tag>
+          ))}
+        </div>
+      ) : null}
+      {visibleGeneratedFiles.length ? (
+        <div className="generated-files">
+          {visibleGeneratedFiles.map((file) => (
+            <span className="generated-file-item" key={file.id}>
+              <button className="generated-file" type="button" onClick={() => void window.supbot.openFile(file.path)}>
+                <PaperClipOutlined />
+                <span>{file.name}</span>
+                <small>{file.size} bytes</small>
+              </button>
+              <Tooltip title={t("Download")}>
+                <Button
+                  type="text"
+                  size="small"
+                  className="generated-file-download"
+                  icon={<DownloadOutlined />}
+                  aria-label={t("Download")}
+                  onClick={() => void downloadGeneratedFile(file)}
+                />
+              </Tooltip>
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </>
+  );
+  if (item.role === "user") {
+    return (
+      <div className={`message-row ${item.role} ${highlighted ? "is-highlighted" : ""}`}>
+        <div className="message-bubble">{messageContent}</div>
+        <div className="msg-avatar msg-avatar-user" aria-hidden="true">
+          {t("You").charAt(0)}
+        </div>
+      </div>
+    );
+  }
   return (
     <div className={`message-row ${item.role} ${highlighted ? "is-highlighted" : ""}`}>
-      <div className="message-bubble">
+      <div className="msg-avatar msg-avatar-ai" aria-hidden="true">
+        Hy
+      </div>
+      <div className="msg-body">
+        <div className="msg-header">
+          <span className="msg-header-name">
+            {item.role === "assistant" ? "HyBot" : item.role === "tool" ? t("Tool") : t("System")}
+          </span>
+          {item.status ? <Tag color={statusColor(item.status)}>{statusLabel(item.status, t)}</Tag> : null}
+        </div>
+        <div className="message-bubble">{messageContent}</div>
         {copyable ? (
-          <Tooltip title={t("Copy message")}>
-            <Button
-              type="text"
-              size="small"
-              className="message-copy-btn"
-              icon={<CopyOutlined />}
-              aria-label={t("Copy message")}
-              onClick={() => void copyMessage()}
-            />
-          </Tooltip>
-        ) : null}
-        {item.role === "user" ? null : (
-          <div className="message-meta">
-            <span>{item.role === "assistant" ? "HyBot" : item.role === "tool" ? t("Tool") : t("System")}</span>
-            {item.status ? <Tag color={statusColor(item.status)}>{statusLabel(item.status, t)}</Tag> : null}
-          </div>
-        )}
-        <MessageBlocks message={item} t={t} />
-        {item.attachments?.length ? (
-          <div className="attachment-row">
-            {item.attachments.map((attachment) => (
-              <Tag key={attachment.id}>
-                <PaperClipOutlined /> {attachment.name}
-              </Tag>
-            ))}
-          </div>
-        ) : null}
-        {visibleGeneratedFiles.length ? (
-          <div className="generated-files">
-            {visibleGeneratedFiles.map((file) => (
-              <span className="generated-file-item" key={file.id}>
-                <button
-                  className="generated-file"
-                  type="button"
-                  onClick={() => void window.supbot.openFile(file.path)}
-                >
-                  <PaperClipOutlined />
-                  <span>{file.name}</span>
-                  <small>{file.size} bytes</small>
-                </button>
-                <Tooltip title={t("Download")}>
-                  <Button
-                    type="text"
-                    size="small"
-                    className="generated-file-download"
-                    icon={<DownloadOutlined />}
-                    aria-label={t("Download")}
-                    onClick={() => void downloadGeneratedFile(file)}
-                  />
-                </Tooltip>
-              </span>
-            ))}
+          <div className="msg-actions">
+            <Tooltip title={t("Copy message")}>
+              <button
+                type="button"
+                className="msg-action-icon"
+                aria-label={t("Copy message")}
+                onClick={() => void copyMessage()}
+              >
+                <CopyOutlined />
+              </button>
+            </Tooltip>
+            <Tooltip title={t("Read aloud")}>
+              <button type="button" className="msg-action-icon" aria-label={t("Read aloud")} onClick={speakMessage}>
+                <SoundOutlined />
+              </button>
+            </Tooltip>
+            <Tooltip title={t("Share")}>
+              <button
+                type="button"
+                className="msg-action-icon"
+                aria-label={t("Share")}
+                onClick={() => void shareMessage()}
+              >
+                <ShareAltOutlined />
+              </button>
+            </Tooltip>
           </div>
         ) : null}
       </div>

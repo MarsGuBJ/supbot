@@ -1,5 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AppstoreOutlined,
+  CalendarOutlined,
+  CarOutlined,
   CloseOutlined,
   DeleteOutlined,
   DownOutlined,
@@ -9,34 +12,42 @@ import {
   FolderOutlined,
   InboxOutlined,
   PlusOutlined,
+  PoweroffOutlined,
   PushpinOutlined,
   RightOutlined,
+  SettingOutlined,
+  UpCircleOutlined,
 } from "@ant-design/icons";
 import { Button, Dropdown, Form, Input, Modal, Popconfirm, Tooltip, message } from "antd";
 import type { Conversation, Project, ProjectUpdateInput, RuntimeSnapshot } from "@supbot/shared";
-import { conversationTitle } from "@supbot/shared";
+import { conversationTitle, formatDateTime } from "@supbot/shared";
+import type { WorkspaceView } from "../lib/types";
 
 export const projectConversationPreviewLimit = 5;
 
 export function LeftPanel({
   snapshot,
+  view,
+  setView,
   activeConversationId,
   setActiveConversationId,
   activeProjectId,
   setActiveProjectId,
-  collapsed,
   refresh,
   startNewConversation,
+  startUpdate,
   t,
 }: {
   snapshot: RuntimeSnapshot;
+  view: WorkspaceView;
+  setView: (view: WorkspaceView) => void;
   activeConversationId: string;
   setActiveConversationId: (id: string) => void;
   activeProjectId: string;
   setActiveProjectId: (id: string) => void;
-  collapsed: boolean;
   refresh: () => void;
   startNewConversation: (projectId?: string | null) => Promise<void>;
+  startUpdate: () => void | Promise<void>;
   t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
   const [newConversationOpen, setNewConversationOpen] = useState(false);
@@ -48,8 +59,31 @@ export function LeftPanel({
   const [savingProject, setSavingProject] = useState(false);
   const [projectAction, setProjectAction] = useState("");
   const [editProjectForm] = Form.useForm<{ name: string }>();
+  const [projectsCollapsed, setProjectsCollapsed] = useState(false);
+  const [projectPopupOpen, setProjectPopupOpen] = useState(false);
+  const [accountPopupOpen, setAccountPopupOpen] = useState(false);
   const [messageApi, messageContextHolder] = message.useMessage();
   const [modalApi, modalContextHolder] = Modal.useModal();
+  const projectPopupRef = useRef<HTMLDivElement | null>(null);
+  const accountRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const onDown = (event: MouseEvent) => {
+      if (projectPopupRef.current && !projectPopupRef.current.contains(event.target as Node)) {
+        setProjectPopupOpen(false);
+      }
+      if (accountRef.current && !accountRef.current.contains(event.target as Node)) {
+        setAccountPopupOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, []);
+
+  const identity = snapshot.identityContext;
+  const displayName = identity?.userId || snapshot.agentName;
+  const avatarLetter = (displayName.trim().charAt(0) || "H").toUpperCase();
+  const oidcLoggedIn = Boolean(snapshot.servstationA2A.config.oidc?.refreshTokenSaved);
 
   const resetNewConversationForm = () => {
     setProjectName("");
@@ -62,6 +96,21 @@ export function LeftPanel({
       const folder = await window.supbot.pickProjectFolder();
       if (folder) {
         setProjectFolder(folder);
+      }
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    } finally {
+      setPickingProjectFolder(false);
+    }
+  };
+
+  const pickExistingFolderAndCreate = async () => {
+    setPickingProjectFolder(true);
+    try {
+      const folder = await window.supbot.pickProjectFolder();
+      if (folder) {
+        const project = await window.supbot.createProjectFromFolder({ rootPath: folder });
+        await startNewConversation(project.id);
       }
     } catch (error) {
       messageApi.error((error as Error).message);
@@ -190,60 +239,282 @@ export function LeftPanel({
     });
   };
 
+  const logoutServstation = async () => {
+    setAccountPopupOpen(false);
+    try {
+      await window.supbot.logoutServstationOidc();
+      await refresh();
+      messageApi.success(t("Logged out of the server agent."));
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    }
+  };
+
+  const recentConversations = useMemo(
+    () => [...snapshot.conversations].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 50),
+    [snapshot.conversations],
+  );
+
+  const menuItems = [
+    {
+      id: "newtask",
+      label: t("New conversation"),
+      icon: <PlusOutlined />,
+      active: view === "chat" && !activeConversationId,
+      action: () => void startNewConversation(null),
+    },
+    {
+      id: "project",
+      label: t("Projects"),
+      icon: <FolderOutlined />,
+      active: view === "chat" && Boolean(activeConversationId),
+      action: () => setView("chat"),
+    },
+    {
+      id: "skill",
+      label: t("Experts, skills & plugins"),
+      icon: <AppstoreOutlined />,
+      active: view === "skill",
+      action: () => setView("skill"),
+    },
+    {
+      id: "schedule",
+      label: t("Scheduled tasks"),
+      icon: <CalendarOutlined />,
+      active: view === "schedule",
+      action: () => setView("schedule"),
+    },
+    {
+      id: "autodrive",
+      label: t("Autopilot"),
+      icon: <CarOutlined />,
+      active: view === "autodrive",
+      action: () => setView("autodrive"),
+    },
+  ];
+
   return (
     <>
       {messageContextHolder}
       {modalContextHolder}
-      <aside className={`side-panel ${collapsed ? "is-collapsed" : ""}`}>
-        <div className="panel-scroll">
-          <section className="panel-section">
-            <div className="panel-heading">
-              <div className="section-title">
-                <FolderOpenOutlined /> {t("Projects")}
-              </div>
-              <Tooltip title={t("New conversation")}>
-                <Button
-                  size="small"
-                  type="primary"
-                  icon={<PlusOutlined />}
-                  aria-label={t("New conversation")}
-                  onClick={() => setNewConversationOpen(true)}
-                />
-              </Tooltip>
+      <aside className="history-sidebar">
+        <div className="sidebar-menu">
+          {menuItems.map((item) => (
+            <div
+              className={`menu-item ${item.active ? "active" : ""}`}
+              key={item.id}
+              role="button"
+              tabIndex={0}
+              onClick={item.action}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  item.action();
+                }
+              }}
+            >
+              <span className="menu-item-icon" aria-hidden="true">
+                {item.icon}
+              </span>
+              <span className="menu-item-label">{item.label}</span>
+              {item.id === "project" ? (
+                <div className="menu-item-add-wrap" ref={projectPopupRef}>
+                  <button
+                    type="button"
+                    className="menu-item-add"
+                    aria-label={t("New project")}
+                    title={t("New project")}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setProjectPopupOpen((value) => !value);
+                    }}
+                  >
+                    <PlusOutlined />
+                  </button>
+                  {projectPopupOpen ? (
+                    <div className="new-project-popup">
+                      <div
+                        className="new-project-popup-item"
+                        onClick={() => {
+                          setProjectPopupOpen(false);
+                          setNewConversationOpen(true);
+                        }}
+                      >
+                        <PlusOutlined />
+                        <span>{t("New blank project")}</span>
+                      </div>
+                      <div
+                        className="new-project-popup-item"
+                        onClick={() => {
+                          setProjectPopupOpen(false);
+                          void pickExistingFolderAndCreate();
+                        }}
+                      >
+                        <FolderOpenOutlined />
+                        <span>{t("Use existing folder")}</span>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
-            <HistoryPanel
-              conversations={snapshot.conversations}
-              projects={snapshot.projects}
-              activeConversationId={activeConversationId}
-              setActiveConversationId={setActiveConversationId}
-              activeProjectId={activeProjectId}
-              setActiveProjectId={setActiveProjectId}
-              refresh={refresh}
-              startNewConversation={startNewConversation}
-              projectAction={projectAction}
-              onPinProject={(project) =>
-                updateProject(
-                  project,
-                  { pinned: !project.pinnedAt },
-                  "pin",
-                  project.pinnedAt ? "Project unpinned." : "Project pinned.",
-                )
-              }
-              onOpenProject={(project) => void openProjectFolder(project)}
-              onEditProject={openProjectEditor}
-              onArchiveProject={(project) =>
-                updateProject(
-                  project,
-                  { status: project.status === "archived" ? "active" : "archived" },
-                  "archive",
-                  project.status === "archived" ? "Project restored." : "Project archived.",
-                )
-              }
-              onRemoveProject={confirmRemoveProject}
-              t={t}
-              embedded
-            />
-          </section>
+          ))}
+        </div>
+
+        <div className={`sidebar-projects ${projectsCollapsed ? "is-collapsed" : ""}`}>
+          <button
+            type="button"
+            className="sidebar-projects-header"
+            onClick={() => setProjectsCollapsed((value) => !value)}
+            aria-expanded={!projectsCollapsed}
+          >
+            {projectsCollapsed ? (
+              <RightOutlined className="sidebar-projects-caret" />
+            ) : (
+              <DownOutlined className="sidebar-projects-caret" />
+            )}
+            <span>{t("Projects")}</span>
+          </button>
+          {!projectsCollapsed ? (
+            <div className="sidebar-projects-list">
+              <HistoryPanel
+                conversations={snapshot.conversations}
+                projects={snapshot.projects}
+                activeConversationId={activeConversationId}
+                setActiveConversationId={setActiveConversationId}
+                activeProjectId={activeProjectId}
+                setActiveProjectId={setActiveProjectId}
+                refresh={refresh}
+                startNewConversation={startNewConversation}
+                projectAction={projectAction}
+                onPinProject={(project) =>
+                  updateProject(
+                    project,
+                    { pinned: !project.pinnedAt },
+                    "pin",
+                    project.pinnedAt ? "Project unpinned." : "Project pinned.",
+                  )
+                }
+                onOpenProject={(project) => void openProjectFolder(project)}
+                onEditProject={openProjectEditor}
+                onArchiveProject={(project) =>
+                  updateProject(
+                    project,
+                    { status: project.status === "archived" ? "active" : "archived" },
+                    "archive",
+                    project.status === "archived" ? "Project restored." : "Project archived.",
+                  )
+                }
+                onRemoveProject={confirmRemoveProject}
+                t={t}
+                embedded
+              />
+            </div>
+          ) : null}
+        </div>
+
+        <div className="sidebar-history">
+          <div className="sidebar-history-header">
+            <span>{t("Conversation list")}</span>
+          </div>
+          <div className="sidebar-history-list">
+            {recentConversations.map((conversation) => (
+              <div
+                className={`sidebar-history-item ${conversation.id === activeConversationId ? "is-active" : ""}`}
+                key={conversation.id}
+              >
+                <button
+                  type="button"
+                  className="sidebar-history-item-content"
+                  onClick={() => {
+                    setActiveProjectId(conversation.projectId || "");
+                    setActiveConversationId(conversation.id);
+                    setView("chat");
+                  }}
+                >
+                  <strong title={conversationTitle(conversation, t("New conversation"))}>
+                    {conversationTitle(conversation, t("New conversation"))}
+                  </strong>
+                  <span className="sidebar-history-item-time">{formatDateTime(conversation.updatedAt)}</span>
+                </button>
+                <Popconfirm
+                  title={t("Delete conversation?")}
+                  onConfirm={async () => {
+                    await window.supbot.deleteConversation(conversation.id);
+                    await refresh();
+                  }}
+                >
+                  <Button
+                    className="sidebar-history-item-delete"
+                    size="small"
+                    type="text"
+                    danger
+                    icon={<DeleteOutlined />}
+                    aria-label={t("Delete conversation?")}
+                  />
+                </Popconfirm>
+              </div>
+            ))}
+            {!recentConversations.length ? (
+              <div className="sidebar-history-empty">{t("No conversations yet")}</div>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="sidebar-account-wrapper" ref={accountRef}>
+          <button
+            type="button"
+            className="sidebar-account"
+            onClick={() => setAccountPopupOpen((value) => !value)}
+            aria-expanded={accountPopupOpen}
+          >
+            <span className="sidebar-account-avatar">{avatarLetter}</span>
+            <span className="sidebar-account-info">
+              <span className="sidebar-account-name">{displayName}</span>
+              <span className="sidebar-account-role">{snapshot.status === "running" ? t("Online") : t("Ready")}</span>
+            </span>
+          </button>
+          {accountPopupOpen ? (
+            <div className="account-popup">
+              <div className="account-popup-header">
+                <div className="account-popup-avatar">{avatarLetter}</div>
+                <div className="account-popup-header-info">
+                  <div className="account-popup-name">{displayName}</div>
+                  <div className="account-popup-version">HyBot</div>
+                </div>
+                <span className="account-popup-status" />
+              </div>
+              <button
+                type="button"
+                className="account-popup-row"
+                onClick={() => {
+                  setAccountPopupOpen(false);
+                  setView("config");
+                }}
+              >
+                <SettingOutlined className="account-popup-row-icon" />
+                <span className="account-popup-row-label">{t("Config")}</span>
+              </button>
+              <div className="account-popup-divider" />
+              <button
+                type="button"
+                className="account-popup-row"
+                onClick={() => {
+                  setAccountPopupOpen(false);
+                  void startUpdate();
+                }}
+              >
+                <UpCircleOutlined className="account-popup-row-icon" />
+                <span className="account-popup-row-label">{t("Upgrade to new version")}</span>
+              </button>
+              {oidcLoggedIn ? (
+                <button type="button" className="account-popup-row logout" onClick={() => void logoutServstation()}>
+                  <PoweroffOutlined className="account-popup-row-icon" />
+                  <span className="account-popup-row-label">{t("Log out")}</span>
+                </button>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </aside>
       <Modal
