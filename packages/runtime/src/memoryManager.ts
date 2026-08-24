@@ -685,10 +685,14 @@ function mergeContent(current: string, next: string): string {
 function extractCandidateFacts(summary: string): string[] {
   const cleaned = summary
     .split(/\r?\n/)
+    .filter(
+      (line) =>
+        !/^(?:conversation compacted|compacted \d+ messages|已压缩|recent pre-compact highlights)/i.test(line.trim()),
+    )
     .map((line) =>
       line
         .replace(/^\s*(?:[-*]|\d+[.)])\s*/, "")
-        .replace(/^(?:user|assistant|system):\s*/i, "")
+        .replace(/^(?:user|assistant|system|用户|助手)[:：]\s*/i, "")
         .trim(),
     )
     .filter(Boolean)
