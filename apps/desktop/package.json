@@ -1,6 +1,6 @@
 {
   "name": "hbclient",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Local single-user desktop agent.",
   "author": "HyBot contributors",
   "desktopName": "hbclient.desktop",

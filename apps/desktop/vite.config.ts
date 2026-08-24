@@ -17,5 +17,11 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: false,
+    watch: {
+      // Release artifacts are (re)built while the dev server may be running;
+      // watching them holds directory handles that make electron-builder's
+      // win-unpacked.tmp -> win-unpacked rename fail with EPERM on Windows.
+      ignored: ["**/release/**"],
+    },
   },
 });
