@@ -332,76 +332,78 @@ export function Topbar({
             <SettingOutlined />
           </button>
         ) : null}
-        <div className={`topbar-notify-dropdown ${notifyOpen ? "open" : ""}`} ref={notifyRef}>
-          <button
-            type="button"
-            className="topbar-icon-btn"
-            onClick={() => setNotifyOpen((value) => !value)}
-            aria-expanded={notifyOpen}
-            title={chinese ? "消息通知" : "Notifications"}
-            aria-label={chinese ? "消息通知" : "Notifications"}
-          >
-            <BellOutlined />
-            {unreadCount ? <span className="topbar-icon-badge" /> : null}
-          </button>
-          <div className="topbar-notify-panel">
-            <div className="topbar-notify-header">
-              <span className="topbar-notify-title">{chinese ? "消息通知" : "Notifications"}</span>
-              <button type="button" className="topbar-notify-action" onClick={markAllRead}>
-                {chinese ? "全部已读" : "Mark all read"}
-              </button>
-            </div>
-            <div className="topbar-notify-list">
-              {notifications.map((item) => (
-                <div
-                  className={`topbar-notify-item ${Date.parse(item.time) > readAt ? "unread" : ""}`}
-                  key={item.id}
-                  onClick={item.onAction ? item.onAction : undefined}
-                >
-                  <span className={`topbar-notify-icon ${notifyIcon(item.kind)}`}>
-                    {item.kind === "update" ? (
-                      <GlobalOutlined />
-                    ) : item.kind === "alert" ? (
-                      <BellOutlined />
-                    ) : (
-                      <CheckOutlined />
-                    )}
-                  </span>
-                  <div className="topbar-notify-body">
-                    <div className="topbar-notify-row">
-                      <strong>{item.title}</strong>
-                      <span className="topbar-notify-time">{formatDateTime(item.time)}</span>
+        {view !== "server" ? (
+          <div className={`topbar-notify-dropdown ${notifyOpen ? "open" : ""}`} ref={notifyRef}>
+            <button
+              type="button"
+              className="topbar-icon-btn"
+              onClick={() => setNotifyOpen((value) => !value)}
+              aria-expanded={notifyOpen}
+              title={chinese ? "消息通知" : "Notifications"}
+              aria-label={chinese ? "消息通知" : "Notifications"}
+            >
+              <BellOutlined />
+              {unreadCount ? <span className="topbar-icon-badge" /> : null}
+            </button>
+            <div className="topbar-notify-panel">
+              <div className="topbar-notify-header">
+                <span className="topbar-notify-title">{chinese ? "消息通知" : "Notifications"}</span>
+                <button type="button" className="topbar-notify-action" onClick={markAllRead}>
+                  {chinese ? "全部已读" : "Mark all read"}
+                </button>
+              </div>
+              <div className="topbar-notify-list">
+                {notifications.map((item) => (
+                  <div
+                    className={`topbar-notify-item ${Date.parse(item.time) > readAt ? "unread" : ""}`}
+                    key={item.id}
+                    onClick={item.onAction ? item.onAction : undefined}
+                  >
+                    <span className={`topbar-notify-icon ${notifyIcon(item.kind)}`}>
+                      {item.kind === "update" ? (
+                        <GlobalOutlined />
+                      ) : item.kind === "alert" ? (
+                        <BellOutlined />
+                      ) : (
+                        <CheckOutlined />
+                      )}
+                    </span>
+                    <div className="topbar-notify-body">
+                      <div className="topbar-notify-row">
+                        <strong>{item.title}</strong>
+                        <span className="topbar-notify-time">{formatDateTime(item.time)}</span>
+                      </div>
+                      <div className="topbar-notify-desc">{item.desc}</div>
+                      {item.actionLabel ? (
+                        <button
+                          type="button"
+                          className="topbar-notify-item-action"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            item.onAction?.();
+                          }}
+                        >
+                          {item.actionLabel}
+                        </button>
+                      ) : null}
                     </div>
-                    <div className="topbar-notify-desc">{item.desc}</div>
-                    {item.actionLabel ? (
-                      <button
-                        type="button"
-                        className="topbar-notify-item-action"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          item.onAction?.();
-                        }}
-                      >
-                        {item.actionLabel}
-                      </button>
-                    ) : null}
+                    {Date.parse(item.time) > readAt ? <span className="topbar-notify-dot" /> : null}
                   </div>
-                  {Date.parse(item.time) > readAt ? <span className="topbar-notify-dot" /> : null}
-                </div>
-              ))}
-              {!notifications.length ? (
-                <div className="topbar-notify-empty">{chinese ? "暂无通知" : "No notifications"}</div>
-              ) : null}
-            </div>
-            <div className="topbar-notify-footer">
-              <span className="topbar-notify-count">
-                {chinese
-                  ? `共 ${notifications.length} 条通知，${unreadCount} 条未读`
-                  : `${notifications.length} notifications, ${unreadCount} unread`}
-              </span>
+                ))}
+                {!notifications.length ? (
+                  <div className="topbar-notify-empty">{chinese ? "暂无通知" : "No notifications"}</div>
+                ) : null}
+              </div>
+              <div className="topbar-notify-footer">
+                <span className="topbar-notify-count">
+                  {chinese
+                    ? `共 ${notifications.length} 条通知，${unreadCount} 条未读`
+                    : `${notifications.length} notifications, ${unreadCount} unread`}
+                </span>
+              </div>
             </div>
           </div>
-        </div>
+        ) : null}
         {view !== "server" ? (
           <div className="topbar-lang-toggle" role="group" aria-label={chinese ? "语言" : "Language"}>
             <button
