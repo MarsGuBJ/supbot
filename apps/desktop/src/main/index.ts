@@ -727,6 +727,20 @@ async function createWindow(): Promise<void> {
     },
   });
   hardenWebContents(mainWindow.webContents);
+  if (isDev) {
+    mainWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+      console.log(`[renderer:${level}] ${message} (${sourceId}:${line})`);
+    });
+    mainWindow.webContents.on("render-process-gone", (_event, details) => {
+      console.error("[renderer] process gone:", JSON.stringify(details));
+    });
+    mainWindow.webContents.on("preload-error", (_event, preloadPath, error) => {
+      console.error("[preload] error:", preloadPath, error.message);
+    });
+    mainWindow.webContents.on("did-fail-load", (_event, code, description, url) => {
+      console.error("[renderer] did-fail-load:", code, description, url);
+    });
+  }
   updateManager?.stop();
   updateManager = new HBClientUpdateManager({
     getFeedContext: hbClientUpdateFeedContext,
@@ -1915,9 +1929,7 @@ function validateMcpServerInput(input: McpServerInput): McpServerInput {
     cwd: optionalSafePath(value.cwd),
     env: optionalStringRecord(value.env, "MCP env"),
     url:
-      transport === "stdio"
-        ? optionalString(value.url, "MCP server URL")
-        : requiredString(value.url, "MCP server URL"),
+      transport === "stdio" ? optionalString(value.url, "MCP server URL") : requiredString(value.url, "MCP server URL"),
     headers: optionalStringRecord(value.headers, "MCP headers"),
     requestTimeoutMs: optionalNumber(value.requestTimeoutMs, "MCP request timeout"),
     enabled: optionalBoolean(value.enabled, "MCP enabled"),

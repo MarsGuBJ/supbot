@@ -5,6 +5,11 @@ export default defineConfig({
   plugins: [react()],
   base: "./",
   root: ".",
+  optimizeDeps: {
+    // @supbot/shared is a linked CJS workspace package; pre-bundle it so
+    // named imports work in the dev server.
+    include: ["@supbot/shared"],
+  },
   build: {
     outDir: "dist/renderer",
     emptyOutDir: false,
