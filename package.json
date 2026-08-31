@@ -9,7 +9,8 @@
   "workspaces": [
     "apps/desktop",
     "packages/shared",
-    "packages/runtime"
+    "packages/runtime",
+    "packages/kennyharness"
   ],
   "scripts": {
     "build": "npm run build -w @supbot/shared && npm run build -w @supbot/runtime && npm run build -w hbclient",

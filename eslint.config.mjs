@@ -4,7 +4,14 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["**/dist/**", "**/release/**", "**/build/**", "**/node_modules/**", "**/.vite/**"],
+    ignores: [
+      "**/dist/**",
+      "**/release/**",
+      "**/build/**",
+      "**/node_modules/**",
+      "**/.vite/**",
+      "packages/kennyharness/**",
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

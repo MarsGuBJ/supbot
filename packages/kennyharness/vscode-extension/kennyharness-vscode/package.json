@@ -1,0 +1,179 @@
+{
+  "name": "kennyharness-vscode",
+  "displayName": "KennyHarness",
+  "description": "Practical VS Code companion for KennyHarness with project-aware launch behavior and a real Control Center.",
+  "version": "0.2.0",
+  "publisher": "devnull-bootloader",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Themes",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:kennyharness.start",
+    "onCommand:kennyharness.startInWorkspaceRoot",
+    "onCommand:kennyharness.openDocs",
+    "onCommand:kennyharness.openSetupDocs",
+    "onCommand:kennyharness.openWorkspaceProfile",
+    "onCommand:kennyharness.openControlCenter",
+    "onCommand:kennyharness.newChat",
+    "onCommand:kennyharness.openChat",
+    "onCommand:kennyharness.resumeSession",
+    "onCommand:kennyharness.abortChat",
+    "onView:kennyharness.controlCenter",
+    "onView:kennyharness.chat"
+  ],
+  "main": "./src/extension.js",
+  "files": [
+    "README.md",
+    "media/**",
+    "src/extension.js",
+    "src/presentation.js",
+    "src/state.js",
+    "src/chat/**",
+    "themes/**"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "kennyharness.start",
+        "title": "KennyHarness: Launch in Terminal",
+        "category": "KennyHarness"
+      },
+      {
+        "command": "kennyharness.startInWorkspaceRoot",
+        "title": "KennyHarness: Launch in Workspace Root",
+        "category": "KennyHarness"
+      },
+      {
+        "command": "kennyharness.openDocs",
+        "title": "KennyHarness: Open Repository",
+        "category": "KennyHarness"
+      },
+      {
+        "command": "kennyharness.openSetupDocs",
+        "title": "KennyHarness: Open Setup Guide",
+        "category": "KennyHarness"
+      },
+      {
+        "command": "kennyharness.openWorkspaceProfile",
+        "title": "KennyHarness: Open Workspace Profile",
+        "category": "KennyHarness"
+      },
+      {
+        "command": "kennyharness.openControlCenter",
+        "title": "KennyHarness: Open Control Center",
+        "category": "KennyHarness"
+      },
+      {
+        "command": "kennyharness.newChat",
+        "title": "KennyHarness: New Chat",
+        "category": "KennyHarness"
+      },
+      {
+        "command": "kennyharness.openChat",
+        "title": "KennyHarness: Open Chat Panel",
+        "category": "KennyHarness"
+      },
+      {
+        "command": "kennyharness.resumeSession",
+        "title": "KennyHarness: Resume Session",
+        "category": "KennyHarness"
+      },
+      {
+        "command": "kennyharness.abortChat",
+        "title": "KennyHarness: Abort Generation",
+        "category": "KennyHarness"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "kennyharness",
+          "title": "KennyHarness",
+          "icon": "media/kennyharness.svg"
+        }
+      ]
+    },
+    "views": {
+      "kennyharness": [
+        {
+          "id": "kennyharness.chat",
+          "name": "Chat",
+          "type": "webview"
+        },
+        {
+          "id": "kennyharness.controlCenter",
+          "name": "Control Center",
+          "type": "webview"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "kennyharness.openChat",
+        "key": "ctrl+shift+l",
+        "mac": "cmd+shift+l"
+      }
+    ],
+    "configuration": {
+      "title": "KennyHarness",
+      "properties": {
+        "kennyharness.launchCommand": {
+          "type": "string",
+          "default": "kennyharness",
+          "description": "Command run in the integrated terminal when launching KennyHarness."
+        },
+        "kennyharness.terminalName": {
+          "type": "string",
+          "default": "KennyHarness",
+          "description": "Integrated terminal tab name for KennyHarness sessions."
+        },
+        "kennyharness.useOpenAIShim": {
+          "type": "boolean",
+          "default": false,
+          "description": "Optionally set CLAUDE_CODE_USE_OPENAI=1 in launched KennyHarness terminals."
+        },
+        "kennyharness.permissionMode": {
+          "type": "string",
+          "default": "acceptEdits",
+          "enum": ["default", "acceptEdits", "bypassPermissions", "plan"],
+          "enumDescriptions": [
+            "Prompt for permission on each tool use (requires manual approval)",
+            "Auto-approve file edits, prompt for other operations (recommended)",
+            "Auto-approve all operations without prompting",
+            "Read-only mode — no file modifications allowed"
+          ],
+          "description": "Permission mode for chat sessions. Controls which tool operations are auto-approved."
+        }
+      }
+    },
+    "themes": [
+      {
+        "label": "KennyHarness Terminal Black",
+        "uiTheme": "vs-dark",
+        "path": "./themes/KennyHarness-Terminal-Black.json"
+      }
+    ]
+  },
+  "scripts": {
+    "test": "node --test ./src/*.test.js",
+    "lint": "node scripts/lint.js",
+    "package": "npx @vscode/vsce package --no-dependencies"
+  },
+  "keywords": [
+    "kennyharness",
+    "terminal",
+    "theme",
+    "cli",
+    "llm"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Gitlawb/kennyharness"
+  },
+  "license": "MIT"
+}
