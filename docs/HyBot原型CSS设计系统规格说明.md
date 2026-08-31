@@ -10,36 +10,36 @@
 
 ### 1.1 CSS 变量（第 9–38 行 `:root`）
 
-| 变量 | 值 | 用途 |
-|---|---|---|
-| `--bg-main` | `#ffffff` | 主背景（白） |
-| `--bg-card` | `#ffffff` | 卡片背景（白） |
-| `--bg-input` | `#f0f2f5` | 输入/分段控件底色 |
-| `--bg-hover` | `#e6e9f0` | 通用 hover 底色 |
-| `--bg-tertiary` | `#edf0f5` | 三级背景（场景提示条等） |
-| `--border-color` | `#dde0e5` | 常规边框 |
-| `--border-light` | `#ccd0d8` | 更浅/更明显的分隔边框 |
-| `--text-primary` | `#1a1d23` | 主文本（近黑） |
-| `--text-secondary` | `#5a6070` | 次级文本 |
-| `--text-muted` | `#8e94a0` | 弱化文本 |
-| `--accent` | `#3b82f6` | 主题蓝（主色） |
-| `--accent-hover` | `#2563eb` | 主色 hover |
-| `--accent-bg` | `#eff6ff` | 主色浅底（选中/激活态） |
-| `--accent-light` | `#dbeafe` | 主色更浅（边框/图标底） |
-| `--accent-glow` | `rgba(59,130,246,0.12)` | 焦点光环/发光 |
-| `--success` | `#10b981` | 成功（绿） |
-| `--warning` | `#f59e0b` | 警告（琥珀） |
-| `--danger` | `#ef4444` | 危险（红） |
-| `--user-bubble` | `#eff6ff` | 用户气泡底色 |
-| `--ai-bubble` | `#f0f2f5` | AI 气泡底色（原型中 AI 气泡实际为透明） |
-| `--radius-sm` | `6px` | 小圆角 |
-| `--radius-md` | `10px` | 中圆角 |
-| `--radius-lg` | `16px` | 大圆角（输入框） |
-| `--radius-xl` | `24px` | 超大圆角（弹窗/胶囊） |
-| `--shadow-sm` | `0 1px 3px rgba(0,0,0,0.06)` | 卡片轻阴影 |
-| `--shadow-md` | `0 4px 12px rgba(0,0,0,0.08)` | 场景卡片阴影 |
-| `--shadow-glow` | `0 0 20px var(--accent-glow)` | 蓝色发光（发送按钮 hover） |
-| `--transition` | `0.2s cubic-bezier(0.4,0,0.2,1)` | 统一过渡曲线 |
+| 变量               | 值                               | 用途                                    |
+| ------------------ | -------------------------------- | --------------------------------------- |
+| `--bg-main`        | `#ffffff`                        | 主背景（白）                            |
+| `--bg-card`        | `#ffffff`                        | 卡片背景（白）                          |
+| `--bg-input`       | `#f0f2f5`                        | 输入/分段控件底色                       |
+| `--bg-hover`       | `#e6e9f0`                        | 通用 hover 底色                         |
+| `--bg-tertiary`    | `#edf0f5`                        | 三级背景（场景提示条等）                |
+| `--border-color`   | `#dde0e5`                        | 常规边框                                |
+| `--border-light`   | `#ccd0d8`                        | 更浅/更明显的分隔边框                   |
+| `--text-primary`   | `#1a1d23`                        | 主文本（近黑）                          |
+| `--text-secondary` | `#5a6070`                        | 次级文本                                |
+| `--text-muted`     | `#8e94a0`                        | 弱化文本                                |
+| `--accent`         | `#3b82f6`                        | 主题蓝（主色）                          |
+| `--accent-hover`   | `#2563eb`                        | 主色 hover                              |
+| `--accent-bg`      | `#eff6ff`                        | 主色浅底（选中/激活态）                 |
+| `--accent-light`   | `#dbeafe`                        | 主色更浅（边框/图标底）                 |
+| `--accent-glow`    | `rgba(59,130,246,0.12)`          | 焦点光环/发光                           |
+| `--success`        | `#10b981`                        | 成功（绿）                              |
+| `--warning`        | `#f59e0b`                        | 警告（琥珀）                            |
+| `--danger`         | `#ef4444`                        | 危险（红）                              |
+| `--user-bubble`    | `#eff6ff`                        | 用户气泡底色                            |
+| `--ai-bubble`      | `#f0f2f5`                        | AI 气泡底色（原型中 AI 气泡实际为透明） |
+| `--radius-sm`      | `6px`                            | 小圆角                                  |
+| `--radius-md`      | `10px`                           | 中圆角                                  |
+| `--radius-lg`      | `16px`                           | 大圆角（输入框）                        |
+| `--radius-xl`      | `24px`                           | 超大圆角（弹窗/胶囊）                   |
+| `--shadow-sm`      | `0 1px 3px rgba(0,0,0,0.06)`     | 卡片轻阴影                              |
+| `--shadow-md`      | `0 4px 12px rgba(0,0,0,0.08)`    | 场景卡片阴影                            |
+| `--shadow-glow`    | `0 0 20px var(--accent-glow)`    | 蓝色发光（发送按钮 hover）              |
+| `--transition`     | `0.2s cubic-bezier(0.4,0,0.2,1)` | 统一过渡曲线                            |
 
 **注意**：`.menu-item-icon`（548 行）引用了 `var(--desktop-icon)`、`.menu-item.active .menu-item-icon`（550 行）引用 `var(--desktop-icon-active)`，但 `:root` 中**未定义**这两个变量（原型遗留 bug），浏览器会回退到继承色。移植时应在 `:root` 补上，例如 `--desktop-icon: #5a6070; --desktop-icon-active: var(--accent);`。
 
@@ -51,14 +51,14 @@
 
 字号层级（px）：
 
-| 用途 | 字号 | 行号示例 |
-|---|---|---|
-| Hero 大标题 h1 / 面板大标题 | 22px / 700 | 1211、981、3608 |
-| 弹窗标题 | 15–16px / 600 | 1567、1802、2300、2653 |
-| 页面/卡片标题 | 13–14px / 500–600 | 158、490、1037、2420 |
-| 正文/输入 | 13–14px | 4491、495、1666 |
-| 次级/描述 | 12–12.5px | 166、1927、2513 |
-| 辅助/时间/元信息 | 10–11.5px | 163、397、641、4749 |
+| 用途                        | 字号              | 行号示例               |
+| --------------------------- | ----------------- | ---------------------- |
+| Hero 大标题 h1 / 面板大标题 | 22px / 700        | 1211、981、3608        |
+| 弹窗标题                    | 15–16px / 600     | 1567、1802、2300、2653 |
+| 页面/卡片标题               | 13–14px / 500–600 | 158、490、1037、2420   |
+| 正文/输入                   | 13–14px           | 4491、495、1666        |
+| 次级/描述                   | 12–12.5px         | 166、1927、2513        |
+| 辅助/时间/元信息            | 10–11.5px         | 163、397、641、4749    |
 
 ### 1.3 间距规律
 
@@ -68,39 +68,39 @@
 
 ### 1.4 动效与关键帧
 
-| 动画 | 定义行 | 使用处 |
-|---|---|---|
-| `fadeIn`（opacity 0→1, translateY(10px)→0） | 1197 | 遮罩、下拉、弹窗 overlay |
-| `msgIn`（opacity 0→1, translateY(8px)→0, 0.3s） | 4375 | 消息入场 |
-| `flyoutSlide`（translateX(-6px)→0, 0.18s ease-out） | 948–951 | 左侧 flyout 面板 |
-| `toastFade`（2.4s 淡入淡出） | 952–957 | Toast |
-| `configModalIn`（translateY(8px) scale(0.98)→1, 0.22s cubic-bezier(0.4,0,0.2,1)） | 1555–1558 | 所有居中弹窗 |
-| `subAgentModalIn`（translateY(12px) scale(0.97)→1, 0.22s） | 1793–1796 | 子智能体弹窗 |
-| `loginFadeIn`（translateY(20px) scale(0.97)→1, 0.5s） | 4907–4910 | 登录卡片 |
+| 动画                                                                              | 定义行    | 使用处                   |
+| --------------------------------------------------------------------------------- | --------- | ------------------------ |
+| `fadeIn`（opacity 0→1, translateY(10px)→0）                                       | 1197      | 遮罩、下拉、弹窗 overlay |
+| `msgIn`（opacity 0→1, translateY(8px)→0, 0.3s）                                   | 4375      | 消息入场                 |
+| `flyoutSlide`（translateX(-6px)→0, 0.18s ease-out）                               | 948–951   | 左侧 flyout 面板         |
+| `toastFade`（2.4s 淡入淡出）                                                      | 952–957   | Toast                    |
+| `configModalIn`（translateY(8px) scale(0.98)→1, 0.22s cubic-bezier(0.4,0,0.2,1)） | 1555–1558 | 所有居中弹窗             |
+| `subAgentModalIn`（translateY(12px) scale(0.97)→1, 0.22s）                        | 1793–1796 | 子智能体弹窗             |
+| `loginFadeIn`（translateY(20px) scale(0.97)→1, 0.5s）                             | 4907–4910 | 登录卡片                 |
 
 ### 1.5 z-index 层级表（重要）
 
-| 层级 | 元素 | 行号 |
-|---|---|---|
-| 10000 | 登录页 overlay | 4897 |
-| 5000 | IT 便利贴 | 1358 |
-| 900 | Toast | 961 |
-| 999 | model-select-menu（自定义模型下拉） | 2767 |
-| 345 | 新建自动驾驶流程弹窗 | 3269 |
-| 340 | 添加模型 / 添加自动化弹窗 | 2080、3166 |
-| 335 | 文件夹选择器 | 2987 |
-| 330 | 创建项目弹窗 | 2833 |
-| 320 | 导入记忆 / 自定义模型弹窗 | 2276、2629 |
-| 300 | Agent 配置 / 子智能体弹窗 | 1537、1777 |
-| 230 | 管理面板（右侧滑入） | 212 |
-| 220 | 通知/上下文/版本下拉 | 107、376、465 |
-| 200 | overlay-backdrop（技能市场/项目） | 1259 |
-| 110 | 主区域右上角三弹窗 | 1410 |
-| 100 | main-corner-toolbar / new-project-popup | 1368、584 |
-| 60 | permission / action 下拉 | 4537、3654 |
-| 30 | flyout / doc-panel-toggle | 941、3551 |
-| 20 | sentiment-event overlay / history-sidebar | 4768、517 |
-| 10 | input-bar | 4475 |
+| 层级  | 元素                                      | 行号          |
+| ----- | ----------------------------------------- | ------------- |
+| 10000 | 登录页 overlay                            | 4897          |
+| 5000  | IT 便利贴                                 | 1358          |
+| 900   | Toast                                     | 961           |
+| 999   | model-select-menu（自定义模型下拉）       | 2767          |
+| 345   | 新建自动驾驶流程弹窗                      | 3269          |
+| 340   | 添加模型 / 添加自动化弹窗                 | 2080、3166    |
+| 335   | 文件夹选择器                              | 2987          |
+| 330   | 创建项目弹窗                              | 2833          |
+| 320   | 导入记忆 / 自定义模型弹窗                 | 2276、2629    |
+| 300   | Agent 配置 / 子智能体弹窗                 | 1537、1777    |
+| 230   | 管理面板（右侧滑入）                      | 212           |
+| 220   | 通知/上下文/版本下拉                      | 107、376、465 |
+| 200   | overlay-backdrop（技能市场/项目）         | 1259          |
+| 110   | 主区域右上角三弹窗                        | 1410          |
+| 100   | main-corner-toolbar / new-project-popup   | 1368、584     |
+| 60    | permission / action 下拉                  | 4537、3654    |
+| 30    | flyout / doc-panel-toggle                 | 941、3551     |
+| 20    | sentiment-event overlay / history-sidebar | 4768、517     |
+| 10    | input-bar                                 | 4475          |
 
 ---
 
@@ -127,17 +127,17 @@
 
 ### 2.2 关键精确尺寸
 
-| 区域 | 尺寸/颜色/边框 |
-|---|---|
-| 顶栏 | 高 56px、纯白 `#FFFFFF` |
-| 顶栏左侧 | 宽 260px、背景 `#f7f8fa`（与侧栏同色，视觉上连成一片） |
-| 顶栏中央 | `flex:1`、右对齐、padding `0 20px`、gap `18px` |
-| 顶栏右侧动作区 | gap `4px`、padding `0 12px`、`margin-left:auto` |
-| 左侧栏 | 宽 260px、`#f7f8fa`、`border` 无（靠色差分隔） |
-| 主区域 | `flex:1`、白底、`position:relative`（右上角工具条定位锚点） |
-| 右侧面板 | 宽 300px、白底、`border-left: 1px solid var(--border-color)`（4721–4727，原型中无对应 HTML，遗留） |
-| Word 文档面板 | 宽 520px、白底、`border-left: 1px solid var(--border-light)`、带 `::before` 拖拽热区（9px 宽 col-resize）（3364–3384） |
-| flyout 面板 | `left:255px; top:0; width:calc(100vw - 300px - 255px); bottom:170px;` 背景 `#fafafa`（939–946） |
+| 区域           | 尺寸/颜色/边框                                                                                                         |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| 顶栏           | 高 56px、纯白 `#FFFFFF`                                                                                                |
+| 顶栏左侧       | 宽 260px、背景 `#f7f8fa`（与侧栏同色，视觉上连成一片）                                                                 |
+| 顶栏中央       | `flex:1`、右对齐、padding `0 20px`、gap `18px`                                                                         |
+| 顶栏右侧动作区 | gap `4px`、padding `0 12px`、`margin-left:auto`                                                                        |
+| 左侧栏         | 宽 260px、`#f7f8fa`、`border` 无（靠色差分隔）                                                                         |
+| 主区域         | `flex:1`、白底、`position:relative`（右上角工具条定位锚点）                                                            |
+| 右侧面板       | 宽 300px、白底、`border-left: 1px solid var(--border-color)`（4721–4727，原型中无对应 HTML，遗留）                     |
+| Word 文档面板  | 宽 520px、白底、`border-left: 1px solid var(--border-light)`、带 `::before` 拖拽热区（9px 宽 col-resize）（3364–3384） |
+| flyout 面板    | `left:255px; top:0; width:calc(100vw - 300px - 255px); bottom:170px;` 背景 `#fafafa`（939–946）                        |
 
 ### 2.3 响应式断点（4688–4718）
 
@@ -153,13 +153,17 @@
 ### 3.1 顶栏
 
 #### 3.1.1 通用图标按钮 `.topbar-icon-btn`（70–91）
+
 34×34px、无边框透明底、圆角 6px、`color: var(--text-secondary)`；hover：`background: rgba(0,0,0,0.06)`、文字变 `--text-primary`；`.topbar-icon-badge`：8×8px 红点 `#ef4444`、`border: 2px solid #eef0f3`，定位 `top:6px; right:8px`。
 
 #### 3.1.2 模式切换 `.mode-toggle`（1149–1166）
+
 `display:flex`、`background: var(--bg-input)`、`border: 1px solid var(--border-light)`、圆角 `--radius-sm`。按钮 `.mode-toggle-btn`：`padding: 6px 14px`、12px/500、`--text-muted`；`.active`：`background:#e5e7eb`、`color:--text-primary`、`box-shadow: 0 1px 2px rgba(0,0,0,0.04)`；hover（非 active）：`--bg-hover`。
+
 > 注：原型 HTML 中未实际渲染 mode-toggle（仅 CSS 与媒体查询引用 61、4704、4715 行），为遗留样式；移植时可保留作为分段控件模板。
 
 #### 3.1.3 消息通知下拉（93–200）
+
 - 容器 `.topbar-notify-dropdown`：`position:relative`；`.open` 时按钮高亮 `rgba(0,0,0,0.06)`，红点边框变白
 - 面板 `.topbar-notify-panel`（97–113）：绝对定位 `top:calc(100% + 6px); right:0`，宽 360px、`max-height:480px`，白底、`border:1px solid var(--border-light)`、圆角 10px、`box-shadow: 0 12px 32px rgba(0,0,0,0.16)`、`z-index:220`、`display:none` + `fadeIn 0.16s`；`.open` 时 `display:flex`
 - 头部：`padding:12px 16px`、下边框 `--border-light`；标题 14px/600；"全部已读" 12px `--accent`
@@ -169,6 +173,7 @@
 - 底部 footer：`padding:8px 16px`、`background: var(--bg-hover)`、计数 11px
 
 #### 3.1.4 管理面板（右侧栏滑入，202–349 + HTML 12172–12270）
+
 - 触发按钮 `.topbar-text-btn`（185–200）：`padding:6px 12px`、12.5px、`--text-secondary`、hover `rgba(0,0,0,0.06)`
 - 面板 `.topbar-manage-panel`（205–222）：`position:fixed; top:0; right:0; bottom:0;` 宽 **480px**、白底、`border-left:1px solid var(--border-color)`、`box-shadow: -8px 0 24px rgba(0,0,0,0.10)`、`z-index:230`、`transform:translateX(100%)` 隐藏，`.open` 时 `translateX(0)`，**`transition: transform 0.24s ease`**（右滑入动画）
 - 头部 `.topbar-manage-panel-header`：`padding:6px`、`background:var(--bg-hover)`、下边框
@@ -177,6 +182,7 @@
 - 内容复用：模型 tab 用 `mem-intro-title + mcp-config-btn + mdl-list`（12188–12195）；MCP tab 用 `mcp-pane/mcp-header/mcp-search/mcp-empty/mcp-cards`（12199–12230）；子智能体 tab 用 `mdl-list`（12258–12266）
 
 #### 3.1.5 上下文压缩下拉（351–432）
+
 - 触发 `.topbar-context-trigger`：`padding:6px 10px`、12px、hover/`.open` 高亮 `rgba(0,0,0,0.06)`
 - 菜单 `.topbar-context-menu`（367–380）：`top:calc(100% + 6px); right:0; min-width:240px`、白底、圆角 8px、`box-shadow: 0 8px 24px rgba(0,0,0,0.14)`、`padding:4px`、`z-index:220`、`fadeIn 0.16s`
 - 选项 `.topbar-context-option`：`padding:8px 10px`、圆角 5px、hover `--bg-hover`、`.selected` `--accent-light`；标题 13px/500、描述 11px `--text-muted`、选中勾 `--accent` 12px/700
@@ -184,11 +190,13 @@
 - 分隔线 `.topbar-context-divider`：1px `--border-light`，`margin:4px 6px`
 
 #### 3.1.6 HyBot 版本下拉（个人版/企业版，434–499）
+
 - 按钮 `.hb-version-btn`：`padding:5px 8px`、13px、`--text-primary`、hover `rgba(0,0,0,0.06)`；caret 旋转 180°（`.open`）
 - 菜单 `.hb-version-menu`（455–469）：`top:calc(100% + 6px); left:0; min-width:220px`，样式同上下文菜单
 - 条目 `.hb-version-item`：`padding:8px 10px`、圆角 5px、hover `--bg-hover`；图标 28×28 圆角 6px `--accent-bg/--accent`；标题 13px/500、描述 11px `--text-muted`；`.active .hb-version-item-check`（✓ `--accent` 14px/600）显示
 
 #### 3.1.7 账号弹窗（764–936）
+
 - 底部条 `.sidebar-account`（769–777）：`padding:10px 12px`、`background:#eaecf0`、`border-top:1px solid var(--border-color)`、hover `--bg-hover`；头像 32×32 渐变 `linear-gradient(135deg, var(--accent), #6366f1)` 白字
 - 弹窗 `.account-popup`（798–812）：**向上展开** `position:absolute; bottom:calc(100% + 8px); left:8px; right:8px;`、白底、圆角 12px、`box-shadow: 0 12px 32px rgba(15,23,42,0.22)`、`z-index:80`、`display:none`，`.open` 显示
 - 头部：`padding:12px 12px 10px`、下边框；头像 36×36 同渐变；在线绿点 8px `#10b981`；版本号 11px `--text-muted`
@@ -198,6 +206,7 @@
 ### 3.2 左侧历史栏（513–936）
 
 #### 3.2.1 主菜单 `.sidebar-menu`（527–598）
+
 - 容器：`padding:8px 10px 4px`
 - `.menu-item`（533–540）：`padding:11px 10px`、圆角 6px、13px/400、`color:#374151`、`position:relative`；hover `#eceff3`；`.active` `background:#e7edf7; color:#111827; font-weight:600`
 - 图标 18×18，svg 17×17；`.menu-item[data-menu="newtask"]` 去除 gap（554 行）
@@ -205,6 +214,7 @@
 - `.new-project-popup`（573–598）：`position:absolute; top:50%; right:0; transform:translate(4px,-50%);`、`min-width:160px`、白底圆角 8px、`box-shadow: 0 8px 24px rgba(0,0,0,0.18)`、`z-index:100`
 
 #### 3.2.2 会话列表（600–689）
+
 - `.sidebar-history`：`flex:1; min-height:0; padding:20px 6px 4px;`
 - 标题行 `.sidebar-history-header`：11px/600 `--text-muted`、`letter-spacing:0.4px; text-transform:uppercase;`；搜索图标 hover 高亮
 - 列表 `.sidebar-history-list`：`flex:1; overflow-y:auto; padding:0 4px 6px;`，滚动条 5px、thumb `#d1d5db`（625–627）
@@ -214,6 +224,7 @@
 - 项目项激活态 `.sidebar-history-item-project.active`（665–669）：`--accent-bg/--accent/500`
 
 #### 3.2.3 项目分组（660–762）
+
 - `.sidebar-projects`：`flex-shrink:0; padding:8px 6px 4px;`，`.collapsed` 时隐藏列表、caret 旋转 -90°
 - 组头 `.sidebar-projects-header`：11px/600 `--text-muted`、`letter-spacing:0.04em; text-transform:uppercase;`
 - 计数徽章 `.sidebar-projects-count`：`background:#f0f2f5`、10.5px、圆角 100px
@@ -222,6 +233,7 @@
 #### 3.2.4 账号区（764–795）见 3.1.7
 
 #### 3.2.5 Flyout 面板（技能页风格，938–1091）
+
 - 容器 `.hs-flyout`（939–946）：`position:absolute; left:255px; top:0; width:calc(100vw - 300px - 255px); bottom:170px;`、`#fafafa`、`z-index:30`、`animation: flyoutSlide 0.18s ease-out`
 - 头部 `.hs-flyout-header`（973–976）：`padding:24px 28px 16px`、白底、`border-bottom:1px solid var(--border-color)`；标题 22px/600 `letter-spacing:-0.01em`
 - Tab 行 `.hs-flyout-tabs`（988–998）：`padding:0 28px`、白底、下边框；Tab `padding:11px 16px`、13px/500、`#6b7280`、`border-bottom:2px solid transparent`；`.active`：`--text-primary` + 2px `--accent` 底边
@@ -234,6 +246,7 @@
 ### 3.3 主区域
 
 #### 3.3.1 结构（1093–1142）
+
 - `.main`：`flex:1; height:100%; flex-direction:column; min-width:0; background:#ffffff; position:relative;`
 - `.main-body`：`flex:1; flex-direction:column; overflow:hidden;`
   - `.idle-mode`：内容**垂直水平居中**，hero `flex:0 0 auto; padding:0 20px 12px; justify-content:center`，输入栏 `flex:0 0 auto; position:static; width:94%; max-width:1050px; padding:12px 5vw 24px; margin:0 auto`（1104–1124）
@@ -242,19 +255,23 @@
 - `.main-topbar`（1144–1147）：48px、白底、`justify-content:flex-end; padding:0 20px`（遗留，未在 HTML 使用）
 
 #### 3.3.2 Hero 居中标题（1191–1212）
+
 - `.main-hero`：`flex-direction:column; align-items:center; justify-content:flex-end; padding:0 20px 30px; min-height:30vh;`
 - Logo svg：140×44；h1：22px/700 `--text-primary`；副标题 13px `--text-secondary`
 
 #### 3.3.3 技能标签 `.skill-tags / .skill-tag`（1215–1231）
+
 - 容器：`display:flex; gap:8px; flex-wrap:nowrap;`
 - 标签：`padding:6px 14px`、圆角 `--radius-xl`（24px 胶囊）、12px、白底、`border:1px solid var(--border-color)`、`--text-secondary`；hover：`--accent-bg` 底 + `--accent` 边框/文字 + `translateY(-1px)` + `box-shadow: 0 2px 8px rgba(59,130,246,0.1)`；`.active`：`#e5e7eb` 底、`--text-primary`
 
 #### 3.3.4 技能轮播 Carousel（1233–1255）
+
 - `.skill-carousel-wrap`：`display:flex; align-items:center; gap:4px; padding:0 4px 10px; max-width:66.6%; margin:0 auto;`
 - 箭头 `.skill-carousel-arrow`：28×28 圆形、`border:1px solid var(--border-color)`、白底、`box-shadow:var(--shadow-sm)`；hover `--bg-hover` + `--accent`；`:active { transform: scale(0.93); }`
 - `.skill-carousel-track`：`display:flex; gap:8px; transition: transform 0.32s cubic-bezier(0.22,0.61,0.36,1);`
 
 #### 3.3.5 技能市场 + 项目覆盖面板（1256–1308）
+
 - 遮罩 `.overlay-backdrop`（1257–1263）：`position:fixed; inset:0; background:rgba(0,0,0,0.35); z-index:200; display:flex; align-items:center; justify-content:center; animation:fadeIn 0.2s;`，`.hidden` 隐藏
 - 面板 `.skills-panel / .projects-panel`（1264–1269）：白底、圆角 `--radius-xl`、`max-width:780px; width:90vw; max-height:80vh; overflow-y:auto; box-shadow: 0 20px 60px rgba(0,0,0,0.25); padding:28px 24px 24px;`
 - `.panel-header`（1270–1275）：`margin-bottom:20px; padding-bottom:14px; border-bottom:1px solid var(--border-color)`；h2 18px/700
@@ -263,6 +280,7 @@
 - 卡 `.skill-card/.project-card`（1287–1308）：`padding:14px 16px`、圆角 `--radius-md`、`border:1px solid var(--border-color)`；hover：`--accent` 边框 + `--accent-bg` 底 + `translateY(-1px)`；状态徽章：active `#dcfce7/#166534`、planning `#fef3c7/#92400e`、done `#f0f2f5/#5a6070`
 
 #### 3.3.6 菜单面板 `.menu-panel`（1322–1326、3603–3699）
+
 - 容器：`flex:1; padding:24px 32px; overflow-y:auto; background:var(--bg-main);`
 - 头部 `.menu-panel-header`：`display:flex; justify-content:space-between; margin-bottom:18px;`；标题 22px/600、副标题 13px `--text-muted`
 - 动作按钮 `.menu-panel-action-btn`（3621–3639）：`padding:7px 14px`、圆角 6px、13px/500、白底 + `--border-light` 边框；`.primary`：`#e5e7eb` 底 `#d1d5db` 边框，hover `#d1d5db` + 轻阴影
@@ -270,10 +288,12 @@
 - 动作下拉 `.action-dropdown-menu`（3642–3667）：`top:calc(100% + 4px); min-width:160px`、白底圆角 8px、`box-shadow: 0 8px 24px rgba(0,0,0,0.14)`、`z-index:60`
 
 #### 3.3.7 IT 便利贴/标注覆盖层（1332–1361）
+
 - `.dev-sticky-note`（1343–1361）：`position:fixed; top:88px; right:32px; width:280px; min-height:56px; padding:10px 12px; background:rgba(251,146,60,0.92); color:#1f2937; 12.5px/600; border:1px solid rgba(234,88,12,0.6); border-radius:4px; z-index:5000; pointer-events:none;` —— 开发标注，正式版应删除
 - `.account-popup-row-tip`（1333–1342）：右上角小橙色提示胶囊（`#b45309/#fef3c7/#fde68a`）
 
 #### 3.3.8 右上角三个图标工具栏（1363–1531）
+
 - `.main-corner-toolbar`（1364–1369）：`position:absolute; top:12px; right:16px; display:flex; gap:2px; z-index:100;`
 - `.main-corner-btn`：32×32、圆角 6px、hover `rgba(0,0,0,0.06)`、`.active` `--accent-bg/--accent`
 - 徽章 `.main-corner-badge`（1388–1400）：`min-width:14px; height:14px; border-radius:7px; background:#ef4444; color:#fff; font-size:9px; border:1.5px solid #fff;`（右上角计数）
@@ -318,12 +338,15 @@
 ### 3.6 右侧面板 / Word 文档面板 / 能力市场 / 定时任务 / 舆情事件
 
 #### 3.6.1 右侧面板 `.right-panel`（4720–4763）
+
 - 宽 300px、白底、`border-left:1px solid var(--border-color)`、`transition:width 0.3s ease`；`.collapsed` 宽 0
 - 标题 `.right-panel-section-title`：11px/600 `--text-muted`、`padding:6px 14px`、`text-transform:uppercase; letter-spacing:0.5px`
 - 项 `.right-panel-item`：`padding:10px 14px`、圆角 `--radius-sm`、13px、hover `--bg-hover`
+
 > 原型 HTML 中无 right-panel 实体（遗留样式，未启用）。
 
 #### 3.6.2 Word 文档面板（3363–3601）
+
 - `.doc-panel`：**520px**、白底、`border-left:1px solid var(--border-light)`、`transition:width 0.3s ease, min-width 0.3s ease`；`:not(.collapsed)::before` 生成 9px 宽 `col-resize` 拖拽热区（`left:-5px`）；`.resizing` 关闭过渡；`.collapsed` 宽 0
 - 头部（3391–3432）：`padding:12px 18px`、下边框；图标 32×32 圆角 6px `#eff6ff/--accent`；标题 13px/600、元信息 11px；动作按钮 30×30 圆角 6px
 - Body `.doc-panel-body`（3434–3438）：`flex:1; overflow-y:auto; background:#eef0f3; padding:20px 24px;`
@@ -332,6 +355,7 @@
 - 重新打开按钮 `.doc-panel-toggle-btn`（3550–3563）：`position:fixed; right:16px; bottom:100px; z-index:30;` 40×40 圆形白底带阴影，`.show` 才显示
 
 #### 3.6.3 能力市场面板（3707–4065）
+
 - 头部 `.ability-market-header`：标题 18px/600、副标题 12.5px `--text-muted`
 - Tab `.ability-market-tabs`（3718–3743）：`display:inline-flex; background:#f0f2f5; border-radius:8px; padding:3px; margin-top:32px;`；`.ability-tab` `padding:6px 22px`、13px，`.active` 白底 + 轻阴影
 - 筛选 chips `.ability-chip`（3749–3765）：`padding:4px 12px`、12px、白底 `--border-light` 边框、圆角 100px；hover/`.active` 深色边框
@@ -341,6 +365,7 @@
 - 卡片 `.ability-card`（4004–4065）：`padding:14px;` 白底、`border:1px solid var(--border-light)`、圆角 8px、hover 蓝色边 + 轻阴影；图标 36×36 `#f0f2f5` 灰化 `filter:grayscale(100%) brightness(1.4)`；标签 `.ability-card-tag` 10.5px `#f0f2f5`；安装标记 `.ability-card-install-tag`（右上角胶囊，`.installed` 绿色 `#f0fdf4/#166534/#bbf7d0`）
 
 #### 3.6.4 定时任务（3812–3977、4067–4341）
+
 - Tab `.schedule-tabs`（3813–3839）：同能力市场 Tab 风格（`#f0f2f5` 底、padding 3px、白底 active）
 - 日志卡 `.schedule-log-card`（3844–3855）：白底、`border:1px solid var(--border-light)`、圆角 10px、`padding:14px 18px`、hover 蓝色轻阴影；`.unread` 左侧 3px `--accent` 竖条、标题 700
 - 徽章：`.schedule-log-badge.unread` `--accent-bg/--accent`、`.read` `#f0f2f5/--text-muted`；状态 `status-success/warning/failed`（3891–3893）
@@ -350,6 +375,7 @@
 - 菜单面板卡片 `.menu-panel-card`（4303–4340）：`repeat(auto-fill, minmax(280px,1fr)); gap:14px`，hover `--accent` 边框
 
 #### 3.6.5 舆情事件弹窗（4765–4801）
+
 - 遮罩 `.sentiment-event-overlay`：`background:rgba(0,0,0,0.45); z-index:20;`
 - 模态 `.sentiment-event-modal`：白底圆角 12px、`max-width:560px; width:90%; max-height:80vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,0.25);`
 - 头部 `padding:16px 20px` + 下边框 `#e5e7eb`；h3 15px `#1a1a2e`
@@ -360,6 +386,7 @@
 所有弹窗统一模式：**overlay（fixed inset:0 + 半透明遮罩 + fadeIn）→ modal（白底圆角 12px + configModalIn 动画）→ header / tabs / body / footer**。
 
 #### 3.7.1 Agent 配置弹窗（1533–2007）
+
 - 遮罩 `.config-modal-overlay`（1534–1542）：`background:rgba(15,23,42,0.45); z-index:300; display:none; align-items:center; justify-content:center;`，`.show` 显示
 - 模态 `.config-modal`（1543–1554）：**800px 宽、高 580px**（`max-width:92vw; max-height:86vh`）、圆角 12px、`box-shadow: 0 24px 64px rgba(15,23,42,0.28)`、`animation: configModalIn 0.22s cubic-bezier(0.4,0,0.2,1)`
 - 头部（1559–1585）：`padding:16px 22px`、下边框；标题 16px/600 + 图标 30×30 圆角 8px `--accent-bg/--accent`；关闭按钮 32×32 圆角 6px
@@ -376,6 +403,7 @@
 - MCP 服务卡 `.mcp-card`（1893–1956）：`padding:12px 14px; border:1px solid var(--border-light); border-radius:8px;` hover `--accent-light` 边框；图标 36×36 `--accent-bg` 灰化；状态徽章 connected `#dcfce7/#166534`、disconnected `#fef3c7/#92400e`；测试按钮白底边框 hover 变蓝
 
 #### 3.7.2 子智能体弹窗（1775–1870）
+
 - 遮罩 `.subagent-modal-overlay`：`z-index:300`、`fadeIn 0.18s`
 - 模态 `.subagent-modal`：**480px**、圆角 12px、`animation: subAgentModalIn 0.22s`（1793–1796）
 - 头部 `padding:16px 22px`；body `padding:18px 22px; gap:14px; max-height:60vh; overflow-y:auto;`
@@ -383,12 +411,14 @@
 - Footer `padding:12px 22px`；`.subagent-btn-primary` `--accent` 蓝底白字 500，`.subagent-btn-secondary` `--bg-hover` 底
 
 #### 3.7.3 Model Tab（2009–2074，管理面板内）
+
 - `.mdl-localfile`（2014–2029）：`background:#f7f8fa; border-radius:8px; padding:16px 18px; margin-bottom:26px;` 标题 13.5px/600
 - `.mdl-item`（2044–2049）：`background:#f7f8fa; border-radius:8px; padding:13px 16px; gap:14px;` 名称 13px/600、描述 12px
 - `.mdl-icon-btn`（2064–2074）：28×28 圆角 6px，`.danger:hover` `#fee2e2/#ef4444`
 - `.mdl-add-btn`（2030–2042）：白底边框 12.5px
 
 #### 3.7.4 添加模型弹窗（2076–2198）
+
 - 遮罩 `z-index:340`；模态 `.addmodel-modal` **470px**
 - 头部 `padding:18px 22px 8px`（**无边框**）；标题 15.5px/600
 - body `padding:8px 22px 4px`；`.addmodel-row` `margin-bottom:16px`
@@ -398,12 +428,14 @@
 - Footer `padding:14px 22px 18px`；**`.addmodel-btn-primary`：`background:#1a1a1a; color:#fff;`**（黑色主按钮，与其它弹窗的灰色不同）
 
 #### 3.7.5 Memory Tab（2200–2270，Agent 配置内）
+
 - `.mem-intro`（2201–2205）：`padding-bottom:16px; border-bottom:1px solid var(--border-light); margin-bottom:20px;` 标题 19px/600
 - `.mem-block`（2218–2230）：`display:flex; gap:20px; margin-bottom:16px;` 标题 13.5px/600、描述 12.5px `--text-secondary` 行高 1.7
 - `.mem-card`（2244–2270）：`border:1px solid var(--border-light); border-radius:8px; padding:14px 16px; margin-bottom:26px;` 文本两行截断、右侧 meta 宽 132px 右对齐
 - `.mem-import-link`（2231–2243）：13px 文字按钮，hover `--accent/--accent-bg`
 
 #### 3.7.6 导入记忆弹窗（2272–2400）
+
 - 遮罩 `z-index:320`；模态 `.import-memory-modal`：**760px、max-height:88vh**、**背景 `#f7f8fa`**（与其它白底不同）
 - 头部 `padding:18px 24px 14px`（白底）；标题 16px/600
 - body `padding:4px 24px 20px; gap:16px; background:#fff;`
@@ -415,6 +447,7 @@
 - Footer `padding:14px 24px`（白底），复用 `config-btn-*`
 
 #### 3.7.7 MCP Pane（2402–2623）
+
 - `.mcp-pane`：`flex-direction:column; flex:1; min-height:0;`
 - `.mcp-header`（2406–2445）：`gap:12px; padding-bottom:14px; border-bottom:1px solid var(--border-light); margin-bottom:14px;` 图标 32×32 `#eef1f5`；标题 14px/600、副标题 12px；`.mcp-config-btn` 白底边框 12.5px
 - 搜索框 `.mcp-search`（2448–2466）：高 34px、白底 `--border-light` 边框圆角 7px、`:focus-within` `--accent` 边框
@@ -425,6 +458,7 @@
 - 路径 code（2555–2563）：`background:#f0f2f6; padding:1px 5px; border-radius:4px;`
 
 #### 3.7.8 自定义模型弹窗（2625–2827）
+
 - 遮罩 `z-index:320`；模态 `.custom-model-modal` **480px**
 - 头部 `padding:18px 22px 14px`；标题 16px/600；body `padding:8px 22px 18px; gap:14px;`
 - 行 `.custom-model-row`：`gap:12px;`；标签宽 **70px** 右对齐
@@ -433,6 +467,7 @@
 - Footer `padding:14px 22px; background:#fafbfc;`；按钮同 config-btn 灰系（`#e5e7eb/#d1d5db`）
 
 #### 3.7.9 创建项目弹窗（2829–2981）
+
 - 遮罩 `z-index:330`；模态 `.create-project-modal` **460px**
 - 头部 `padding:18px 22px 14px`；标题 16px/600；body `padding:4px 22px 20px; gap:16px;`
 - 行 `.create-project-row`：标签宽 **100px** 右对齐；输入同 config-input
@@ -441,6 +476,7 @@
 - 保存按钮 `.create-project-btn-primary`：默认**禁用态** `#e5e7eb/#9ca3af` `cursor:not-allowed`，`.active` 才可点（hover `#d1d5db`）
 
 #### 3.7.10 文件夹选择器（2983–3160）
+
 - 遮罩 `z-index:335`；模态 `.folder-picker-modal`：**720px、高 520px**（`max-height:86vh`）
 - 头部 `padding:14px 22px 10px` + 下边框；标题 15px/600
 - 面包屑 `.folder-picker-breadcrumb`（3021–3039）：`padding:8px 22px; background:#fafbfc;` 12.5px，crumb hover `--bg-hover`
@@ -449,6 +485,7 @@
 - Footer `padding:12px 18px; background:#fafbfc;` 左显示已选路径、右侧动作按钮（复用 create-project-btn-*）
 
 #### 3.7.11 添加自动化任务弹窗（3162–3263）
+
 - 遮罩 `z-index:340`；模态 `.add-automation-modal` **640px、max-height:88vh**
 - 头部 `padding:14px 22px` + 下边框；标题 15px/600；body `padding:18px 22px 22px; gap:16px; overflow-y:auto;`
 - 字段 `.add-automation-field`：`flex-direction:column; gap:6px;` 标签在上（12.5px/500）
@@ -456,6 +493,7 @@
 - 频率行 `.add-automation-freq-fields`：`gap:10px`，周期 select `flex:1`、时间 input `flex:0 0 140px`
 
 #### 3.7.12 新建自动驾驶流程弹窗（3265–3361）
+
 - 遮罩 `z-index:345`；模态 `.autodrive-flow-modal` **520px、max-height:88vh**
 - 头部 `padding:14px 22px`；标题带图标 `.autodrive-flow-title-icon` 26×26 圆角 6px `#eff6ff/#3b82f6`
 - body 复用 `add-automation-field/input/textarea`；footer `padding:14px 22px; background:#fafbfc; border-radius:0 0 12px 12px;`
@@ -498,22 +536,22 @@
 
 对比 `apps/desktop/src/renderer/styles.css`（3832 行）与原型：
 
-| 维度 | 当前应用 styles.css | 原型 V5 |
-|---|---|---|
-| **主题色** | 暖橙/奶油色系：`--bg:#fffaf5`、`--panel:rgba(255,255,255,0.86)`、主色 `--teal:#d4750a`（橙）、`--cyan:#b8650a` | 冷蓝白系：`--bg-main:#ffffff`、`--accent:#3b82f6`（蓝）、`--accent-hover:#2563eb`、蓝浅底 `#eff6ff/#dbeafe` |
-| **字体** | `Aptos, Bahnschrift, "Segoe UI", sans-serif`（12–30 行） | `-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif`（505 行） |
-| **背景** | body 带格子纸渐变（`linear-gradient` 网格 + 径向光晕，34–48 行） | 纯白 `#ffffff`，侧栏/顶栏左 `#f7f8fa` |
-| **顶栏** | 72px 高、`grid-template-columns:1fr auto 1fr`、`backdrop-filter:blur(18px)`、半透明米白（73–82） | 56px、三段式（左 260px 与侧栏同底、中 flex、右 actions），纯白 |
-| **布局** | `.workspace-shell` grid：`72px + 1fr`；`.workspace-grid` 三列 `312px / minmax(420px,1fr) / clamp(280px,25vw,380px)`，左右可折叠为 52px rail（67–71、266–284） | `.app-root` flex column + `.app-below` flex row；侧栏固定 260px、右面板 300px（遗留）、文档面板 520px |
-| **组件体系** | 大量使用 **antd**（`.ant-btn/.ant-select/.ant-modal/.ant-tabs/.ant-alert` 等），并整体重写 antd 主题（3621–3732 行） | 纯手写 HTML/CSS：自定义 modal overlay、dropdown、toggle、segmented、tooltip |
-| **消息气泡** | `.message-row` + `.message-bubble`：白底 1px 边框盒、用户气泡橙色底 `rgba(255,239,224,0.92)`、hover 右上角复制按钮（641–677） | `.message.user` 蓝底 `--user-bubble`/`--accent-light` 边框 + 3px 小角；AI 透明气泡 + `msg-header`（Hy 徽标）+ 下方复制/朗读/分享图标栏 + CSS tooltip |
-| **输入栏** | `.composer`：顶部渐变 + 底部 1px 边框、`backdrop-filter:blur(18px)`、`box-shadow:0 -18px 46px`（849–860） | `.input-wrapper` 卡片式：`border + radius-lg + :focus-within 蓝环`，底部一行选择器（模型/项目/权限/思考模式），发送按钮圆形发光 |
-| **弹窗** | antd Modal（`ant-modal-content` 等） | 自绘 13 套 modal（见 3.7），统一 `configModalIn` 动画 |
-| **消息间距/宽度** | `width:min(760px,88%)`、`margin:14px 0` | `.message` `max-width:80%`（user 70%、ai 100%），`.message.ai .msg-body` 内 `max-width:960px` |
-| **卡片/边框** | 半透明 `rgba(255,255,255,0.72~0.92)` + `rgba(212,117,10,0.18~0.42)` 橙色边框 | 实色白底 + `--border-light #ccd0d8` / `--border-color #dde0e5` |
-| **选中/高亮色** | 橙 `rgba(212,117,10,0.1~0.16)` | 蓝 `--accent-bg #eff6ff`、`#e7edf7`（侧栏菜单 active） |
-| **响应式** | `@media(max-width:980px)` 整体改为单列堆叠（3734–3831） | `@media(max-width:900px)` 隐藏侧栏/右栏；1280/1500 两档收窄尺寸 |
-| **hover 反馈** | `rgba(212,117,10,0.36)` 橙边、`box-shadow:inset 3px 0 0 var(--teal)` | `rgba(0,0,0,0.06)` 灰底、蓝色 `--accent` 边框/阴影 |
+| 维度              | 当前应用 styles.css                                                                                                                                           | 原型 V5                                                                                                                                              |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **主题色**        | 暖橙/奶油色系：`--bg:#fffaf5`、`--panel:rgba(255,255,255,0.86)`、主色 `--teal:#d4750a`（橙）、`--cyan:#b8650a`                                                | 冷蓝白系：`--bg-main:#ffffff`、`--accent:#3b82f6`（蓝）、`--accent-hover:#2563eb`、蓝浅底 `#eff6ff/#dbeafe`                                          |
+| **字体**          | `Aptos, Bahnschrift, "Segoe UI", sans-serif`（12–30 行）                                                                                                      | `-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif`（505 行）                                                          |
+| **背景**          | body 带格子纸渐变（`linear-gradient` 网格 + 径向光晕，34–48 行）                                                                                              | 纯白 `#ffffff`，侧栏/顶栏左 `#f7f8fa`                                                                                                                |
+| **顶栏**          | 72px 高、`grid-template-columns:1fr auto 1fr`、`backdrop-filter:blur(18px)`、半透明米白（73–82）                                                              | 56px、三段式（左 260px 与侧栏同底、中 flex、右 actions），纯白                                                                                       |
+| **布局**          | `.workspace-shell` grid：`72px + 1fr`；`.workspace-grid` 三列 `312px / minmax(420px,1fr) / clamp(280px,25vw,380px)`，左右可折叠为 52px rail（67–71、266–284） | `.app-root` flex column + `.app-below` flex row；侧栏固定 260px、右面板 300px（遗留）、文档面板 520px                                                |
+| **组件体系**      | 大量使用 **antd**（`.ant-btn/.ant-select/.ant-modal/.ant-tabs/.ant-alert` 等），并整体重写 antd 主题（3621–3732 行）                                          | 纯手写 HTML/CSS：自定义 modal overlay、dropdown、toggle、segmented、tooltip                                                                          |
+| **消息气泡**      | `.message-row` + `.message-bubble`：白底 1px 边框盒、用户气泡橙色底 `rgba(255,239,224,0.92)`、hover 右上角复制按钮（641–677）                                 | `.message.user` 蓝底 `--user-bubble`/`--accent-light` 边框 + 3px 小角；AI 透明气泡 + `msg-header`（Hy 徽标）+ 下方复制/朗读/分享图标栏 + CSS tooltip |
+| **输入栏**        | `.composer`：顶部渐变 + 底部 1px 边框、`backdrop-filter:blur(18px)`、`box-shadow:0 -18px 46px`（849–860）                                                     | `.input-wrapper` 卡片式：`border + radius-lg + :focus-within 蓝环`，底部一行选择器（模型/项目/权限/思考模式），发送按钮圆形发光                      |
+| **弹窗**          | antd Modal（`ant-modal-content` 等）                                                                                                                          | 自绘 13 套 modal（见 3.7），统一 `configModalIn` 动画                                                                                                |
+| **消息间距/宽度** | `width:min(760px,88%)`、`margin:14px 0`                                                                                                                       | `.message` `max-width:80%`（user 70%、ai 100%），`.message.ai .msg-body` 内 `max-width:960px`                                                        |
+| **卡片/边框**     | 半透明 `rgba(255,255,255,0.72~0.92)` + `rgba(212,117,10,0.18~0.42)` 橙色边框                                                                                  | 实色白底 + `--border-light #ccd0d8` / `--border-color #dde0e5`                                                                                       |
+| **选中/高亮色**   | 橙 `rgba(212,117,10,0.1~0.16)`                                                                                                                                | 蓝 `--accent-bg #eff6ff`、`#e7edf7`（侧栏菜单 active）                                                                                               |
+| **响应式**        | `@media(max-width:980px)` 整体改为单列堆叠（3734–3831）                                                                                                       | `@media(max-width:900px)` 隐藏侧栏/右栏；1280/1500 两档收窄尺寸                                                                                      |
+| **hover 反馈**    | `rgba(212,117,10,0.36)` 橙边、`box-shadow:inset 3px 0 0 var(--teal)`                                                                                          | `rgba(0,0,0,0.06)` 灰底、蓝色 `--accent` 边框/阴影                                                                                                   |
 
 **结论**：当前应用是「暖橙奶油 + antd + 三栏 grid + 半透明卡片」风格，原型是「冷蓝白 + 手写组件 + 顶栏侧栏一体 + 实色卡片」风格。改造本质上是**主题令牌替换 + 布局结构对齐 + 组件视觉统一**，不是局部微调。
 
@@ -525,45 +563,45 @@
 
 ### 5.1 直接复制（无改动）
 
-| # | 内容 | 原型行号 | 说明 |
-|---|---|---|---|
-| 1 | `:root` 全部设计令牌 + `*` reset | 9–40 | 需先改名避免与现有 `:root` 冲突（如并到现有 :root） |
-| 2 | body / `.app-root` / `.app-topbar` 系 / `.app-below` | 43–69、500–511 | 顶栏三明治布局骨架 |
-| 3 | `.topbar-icon-btn`、badge、`.topbar-text-btn` | 70–91、185–200 | 通用顶栏按钮 |
-| 4 | 通知下拉全套 | 93–200 | |
-| 5 | 管理面板全套（滑入右侧栏 + tab + segmented） | 202–349 | 依赖 `mem-intro/mdl-list/mcp-*`（见 19/21） |
-| 6 | 上下文压缩下拉全套 | 351–432 | 含进度条 |
-| 7 | 版本下拉全套 | 434–499 | |
-| 8 | 历史侧栏全套（菜单、项目、会话、账号、账号弹窗） | 513–936 | 补 `--desktop-icon` 变量 |
-| 9 | Flyout 面板全套 + `flyoutSlide` | 938–1091 | |
-| 10 | 主区域骨架 + idle/scene 模式 + `:has()` 规则 + `.main-topbar` | 1093–1147 | 需 Chromium≥105（Electron 22+） |
-| 11 | mode-toggle / 用户区 | 1148–1180 | |
-| 12 | `.main-hero` 全套 + `fadeIn` | 1191–1212 | |
-| 13 | `.skill-tags` / `.skill-carousel` 全套 | 1215–1255 | |
-| 14 | overlay-backdrop + skills/projects panel + 卡片网格 | 1256–1308 | |
-| 15 | 右上角 corner 工具栏 + 三个弹窗 + 搜索/历史/文件项 | 1363–1531 | |
-| 16 | **Agent 配置弹窗全套**（含 toggle/slider/input 体系、config-btn、mcp-card、config-add-btn） | 1533–2007 | 这是整个表单/弹窗体系的基座，复用度最高 |
-| 17 | 子智能体弹窗全套 | 1775–1870 | |
-| 18 | Model Tab（mdl-*）+ 添加模型弹窗 | 2009–2198 | |
-| 19 | Memory Tab + 导入记忆弹窗 | 2200–2400 | |
-| 20 | MCP Pane（含 JSON 编辑器 + 语法高亮） | 2402–2623 | |
-| 21 | 自定义模型弹窗（含 model-select-menu） | 2625–2827 | |
-| 22 | 创建项目弹窗 | 2829–2981 | |
-| 23 | 文件夹选择器 | 2983–3160 | |
-| 24 | 添加自动化任务弹窗 | 3162–3263 | |
-| 25 | 新建自动驾驶流程弹窗 | 3265–3361 | |
-| 26 | Word 文档面板（doc-panel/doc-paper/chat-doc-link/toggle） | 3363–3601 | |
-| 27 | 菜单面板 + action-dropdown + segmented + 能力市场全套 | 3603–4065 | |
-| 28 | 定时任务 + 任务卡 + 任务 hero/模板网格 + 菜单面板卡片 | 3812–4341 | 注意 3812–3977 与 3603–4065 部分重叠，复制时合并去重 |
-| 29 | 聊天区（messages/msg-bubble/msg-actions/tooltip） | 4370–4470 | 需与 React 现有 `.message-*` 类名协调（见 5.4） |
-| 30 | 输入栏全套（input-bar/wrapper/footer/选择器/附件/发送） | 4472–4685 | |
-| 31 | 右侧面板（遗留，可选） | 4720–4763 | |
-| 32 | 舆情事件弹窗 | 4765–4801 | |
-| 33 | 流程编排页全套 | 4803–4877 | 含 orch 预览聊天 |
-| 34 | 登录页全套 + `loginFadeIn` | 4895–4978 | |
-| 35 | Toast（`.hy-toast` + `toastFade`） | 952–970 | |
-| 36 | 响应式断点 | 4688–4718 | 与当前 980px 断点策略不同，移植时取舍 |
-| 37 | 全部关键帧：`fadeIn`/`msgIn`/`flyoutSlide`/`toastFade`/`configModalIn`/`subAgentModalIn`/`loginFadeIn` | 948–957、1197、1555–1558、1793–1796、4375、4907–4910 | 一次性复制 |
+| #   | 内容                                                                                                   | 原型行号                                             | 说明                                                 |
+| --- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- | ---------------------------------------------------- |
+| 1   | `:root` 全部设计令牌 + `*` reset                                                                       | 9–40                                                 | 需先改名避免与现有 `:root` 冲突（如并到现有 :root）  |
+| 2   | body / `.app-root` / `.app-topbar` 系 / `.app-below`                                                   | 43–69、500–511                                       | 顶栏三明治布局骨架                                   |
+| 3   | `.topbar-icon-btn`、badge、`.topbar-text-btn`                                                          | 70–91、185–200                                       | 通用顶栏按钮                                         |
+| 4   | 通知下拉全套                                                                                           | 93–200                                               |                                                      |
+| 5   | 管理面板全套（滑入右侧栏 + tab + segmented）                                                           | 202–349                                              | 依赖 `mem-intro/mdl-list/mcp-*`（见 19/21）          |
+| 6   | 上下文压缩下拉全套                                                                                     | 351–432                                              | 含进度条                                             |
+| 7   | 版本下拉全套                                                                                           | 434–499                                              |                                                      |
+| 8   | 历史侧栏全套（菜单、项目、会话、账号、账号弹窗）                                                       | 513–936                                              | 补 `--desktop-icon` 变量                             |
+| 9   | Flyout 面板全套 + `flyoutSlide`                                                                        | 938–1091                                             |                                                      |
+| 10  | 主区域骨架 + idle/scene 模式 + `:has()` 规则 + `.main-topbar`                                          | 1093–1147                                            | 需 Chromium≥105（Electron 22+）                      |
+| 11  | mode-toggle / 用户区                                                                                   | 1148–1180                                            |                                                      |
+| 12  | `.main-hero` 全套 + `fadeIn`                                                                           | 1191–1212                                            |                                                      |
+| 13  | `.skill-tags` / `.skill-carousel` 全套                                                                 | 1215–1255                                            |                                                      |
+| 14  | overlay-backdrop + skills/projects panel + 卡片网格                                                    | 1256–1308                                            |                                                      |
+| 15  | 右上角 corner 工具栏 + 三个弹窗 + 搜索/历史/文件项                                                     | 1363–1531                                            |                                                      |
+| 16  | **Agent 配置弹窗全套**（含 toggle/slider/input 体系、config-btn、mcp-card、config-add-btn）            | 1533–2007                                            | 这是整个表单/弹窗体系的基座，复用度最高              |
+| 17  | 子智能体弹窗全套                                                                                       | 1775–1870                                            |                                                      |
+| 18  | Model Tab（mdl-*）+ 添加模型弹窗                                                                       | 2009–2198                                            |                                                      |
+| 19  | Memory Tab + 导入记忆弹窗                                                                              | 2200–2400                                            |                                                      |
+| 20  | MCP Pane（含 JSON 编辑器 + 语法高亮）                                                                  | 2402–2623                                            |                                                      |
+| 21  | 自定义模型弹窗（含 model-select-menu）                                                                 | 2625–2827                                            |                                                      |
+| 22  | 创建项目弹窗                                                                                           | 2829–2981                                            |                                                      |
+| 23  | 文件夹选择器                                                                                           | 2983–3160                                            |                                                      |
+| 24  | 添加自动化任务弹窗                                                                                     | 3162–3263                                            |                                                      |
+| 25  | 新建自动驾驶流程弹窗                                                                                   | 3265–3361                                            |                                                      |
+| 26  | Word 文档面板（doc-panel/doc-paper/chat-doc-link/toggle）                                              | 3363–3601                                            |                                                      |
+| 27  | 菜单面板 + action-dropdown + segmented + 能力市场全套                                                  | 3603–4065                                            |                                                      |
+| 28  | 定时任务 + 任务卡 + 任务 hero/模板网格 + 菜单面板卡片                                                  | 3812–4341                                            | 注意 3812–3977 与 3603–4065 部分重叠，复制时合并去重 |
+| 29  | 聊天区（messages/msg-bubble/msg-actions/tooltip）                                                      | 4370–4470                                            | 需与 React 现有 `.message-*` 类名协调（见 5.4）      |
+| 30  | 输入栏全套（input-bar/wrapper/footer/选择器/附件/发送）                                                | 4472–4685                                            |                                                      |
+| 31  | 右侧面板（遗留，可选）                                                                                 | 4720–4763                                            |                                                      |
+| 32  | 舆情事件弹窗                                                                                           | 4765–4801                                            |                                                      |
+| 33  | 流程编排页全套                                                                                         | 4803–4877                                            | 含 orch 预览聊天                                     |
+| 34  | 登录页全套 + `loginFadeIn`                                                                             | 4895–4978                                            |                                                      |
+| 35  | Toast（`.hy-toast` + `toastFade`）                                                                     | 952–970                                              |                                                      |
+| 36  | 响应式断点                                                                                             | 4688–4718                                            | 与当前 980px 断点策略不同，移植时取舍                |
+| 37  | 全部关键帧：`fadeIn`/`msgIn`/`flyoutSlide`/`toastFade`/`configModalIn`/`subAgentModalIn`/`loginFadeIn` | 948–957、1197、1555–1558、1793–1796、4375、4907–4910 | 一次性复制                                           |
 
 ### 5.2 需要小幅适配再移植
 
