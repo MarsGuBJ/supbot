@@ -143,6 +143,9 @@ async function evaluate(wsUrl, expression) {
   if (result.exceptionDetails) {
     throw new Error(result.exceptionDetails.text || "Runtime evaluation failed.");
   }
+  if (!result.result) {
+    throw new Error(`CDP evaluate returned no result: ${JSON.stringify(result).slice(0, 500)}`);
+  }
   return result.result.result.value;
 }
 
@@ -214,8 +217,8 @@ async function main() {
         documentScrollHeight: document.documentElement.scrollHeight,
         viewport: window.innerHeight,
         chat: rectFor(".chat-panel"),
-        composer: rectFor(".composer"),
-        leftScroll: rectFor(".panel-scroll"),
+        composer: rectFor(".input-bar"),
+        leftScroll: rectFor(".sidebar-history-list"),
         messageStream: rectFor(".message-stream"),
         rightScroll: rectFor(".activity-list")
       };
@@ -223,11 +226,11 @@ async function main() {
   );
   const text = String(bodyText);
   const hasHyBot = text.includes("HyBot");
-  const hasDefaultChinese = text.includes("本地智能体控制台") && text.includes("对话") && text.includes("配置");
+  const hasDefaultChinese = text.includes("新会话") && text.includes("模型管理") && text.includes("每次询问");
   const versionDialog = await evaluate(
     page.webSocketDebuggerUrl,
     `(async () => {
-      const trigger = document.querySelector("button[aria-label='\u67e5\u770b HyBot \u7248\u672c\u4fe1\u606f']");
+      const trigger = document.querySelector("button[aria-label='\u7248\u672c\u4fe1\u606f']");
       trigger?.click();
       await new Promise((resolve) => setTimeout(resolve, 100));
       const dialog = document.querySelector(".ant-modal-confirm");
@@ -329,12 +332,12 @@ async function main() {
   const securityIpc = await evaluate(
     page.webSocketDebuggerUrl,
     `Promise.all([
-      window.supbot.setPermissionMode("bypassPermissions").then(() => "allowed", (error) => String(error.message || error)),
+      window.supbot.setPermissionMode("__invalid_mode__").then(() => "allowed", (error) => String(error.message || error)),
       window.supbot.openFile(${JSON.stringify(path.join(os.tmpdir(), "hbclient-smoke-forbidden.txt"))}).then(() => "allowed", (error) => String(error.message || error))
     ]).then(([permissionMode, openFile]) => ({ permissionMode, openFile }))`,
   );
   if (
-    !securityIpc?.permissionMode.includes("bypassPermissions") ||
+    !securityIpc?.permissionMode.includes("Unsupported permission mode") ||
     !securityIpc?.openFile.includes("HyBot can only open")
   ) {
     throw new Error(`Renderer IPC security checks failed: ${JSON.stringify(securityIpc)}`);
@@ -428,8 +431,8 @@ async function main() {
       };
     })()`,
   );
-  if (rightPanelTasks?.hasTaskTab) {
-    throw new Error(`Right panel still renders a tasks tab: ${JSON.stringify(rightPanelTasks)}`);
+  if (!rightPanelTasks?.hasTaskTab) {
+    throw new Error(`Right panel does not render the tasks tab: ${JSON.stringify(rightPanelTasks)}`);
   }
   const autopilotClick = await evaluate(
     page.webSocketDebuggerUrl,
@@ -734,8 +737,11 @@ async function main() {
   }
   const configClick = await evaluate(
     page.webSocketDebuggerUrl,
-    `(() => {
-      const configControl = [...document.querySelectorAll(".topbar .ant-segmented-item-label")]
+    `(async () => {
+      const accountButton = document.querySelector(".sidebar-account");
+      accountButton?.click();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const configControl = [...document.querySelectorAll(".account-popup-row")]
         .find((el) => el.textContent?.includes("配置") || el.textContent?.includes("Config"));
       configControl?.click();
       return { clickedConfig: Boolean(configControl) };
@@ -906,12 +912,22 @@ async function main() {
   const chatClick = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => {
-      const chatControl = [...document.querySelectorAll(".topbar .ant-segmented-item-label")]
-        .find((el) => el.textContent?.includes("对话") || el.textContent?.includes("Chat"));
+      const dropdown = document.querySelector(".hb-version-btn");
+      dropdown?.click();
+      return { openedDropdown: Boolean(dropdown) };
+    })()`,
+  );
+  await sleep(200);
+  const chatClickItem = await evaluate(
+    page.webSocketDebuggerUrl,
+    `(() => {
+      const chatControl = [...document.querySelectorAll(".hb-version-item")]
+        .find((el) => el.textContent?.includes("个人空间") || el.textContent?.includes("Personal"));
       chatControl?.click();
       return { clickedChat: Boolean(chatControl) };
     })()`,
   );
+  Object.assign(chatClick, chatClickItem);
   await sleep(300);
   if (!chatClick?.clickedChat) {
     throw new Error("Could not return to the chat workspace after config smoke checks.");
@@ -941,8 +957,8 @@ async function main() {
         documentScrollHeight: document.documentElement.scrollHeight,
         viewport: window.innerHeight,
         chat: rectFor(".chat-panel"),
-        composer: rectFor(".composer"),
-        leftScroll: rectFor(".panel-scroll"),
+        composer: rectFor(".input-bar"),
+        leftScroll: rectFor(".sidebar-history-list"),
         messageStream: rectFor(".message-stream"),
         rightScroll: rectFor(".activity-list")
       };
@@ -977,7 +993,7 @@ async function main() {
     page.webSocketDebuggerUrl,
     `(() => {
       const stream = document.querySelector(".message-stream");
-      const refresh = document.querySelector(".topbar-actions button");
+      const refresh = document.querySelector("button[aria-label='显示/隐藏右侧面板']");
       if (!stream || !refresh) return null;
       const spacer = document.createElement("div");
       spacer.className = "smoke-scroll-spacer";
@@ -1032,12 +1048,22 @@ async function main() {
   const serverAgentClick = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => {
-      const control = [...document.querySelectorAll(".topbar .ant-segmented-item-label")]
-        .find((el) => el.textContent?.includes("Server Agent") || el.textContent?.includes("服务端 Agent"));
+      const dropdown = document.querySelector(".hb-version-btn");
+      dropdown?.click();
+      return { openedDropdown: Boolean(dropdown) };
+    })()`,
+  );
+  await sleep(200);
+  const serverAgentClickItem = await evaluate(
+    page.webSocketDebuggerUrl,
+    `(() => {
+      const control = [...document.querySelectorAll(".hb-version-item")]
+        .find((el) => el.textContent?.includes("企业工作区") || el.textContent?.includes("Enterprise"));
       control?.click();
       return { clicked: Boolean(control) };
     })()`,
   );
+  Object.assign(serverAgentClick, serverAgentClickItem);
   await sleep(1200);
   const serverAgentFiles = await evaluate(
     page.webSocketDebuggerUrl,
