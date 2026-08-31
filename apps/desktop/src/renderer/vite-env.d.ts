@@ -39,6 +39,7 @@ import type {
   ModelConfigUpdate,
   ModelProviderConfig,
   ModelProviderUpdate,
+  ModelListResult,
   ModelTestResult,
   PermissionMode,
   PermissionRule,
@@ -243,6 +244,7 @@ declare global {
       deleteModelProvider(id: string): Promise<void>;
       setActiveModelProvider(id: string): Promise<ModelProviderConfig>;
       testModelProvider(id?: string, input?: Partial<ModelProviderUpdate>): Promise<ModelTestResult>;
+      listModelProviderModels(id?: string, input?: Partial<ModelProviderUpdate>): Promise<ModelListResult>;
       updateToolMarketConfig(input: ToolMarketConfigUpdate): Promise<ToolMarketConfig>;
       updatePersonality(input: PersonalityConfig): Promise<PersonalityConfig>;
       updateCapability(

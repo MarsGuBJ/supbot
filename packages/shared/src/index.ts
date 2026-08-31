@@ -1897,6 +1897,12 @@ export interface ModelTestResult {
   message: string;
 }
 
+export interface ModelListResult {
+  ok: boolean;
+  message: string;
+  models: string[];
+}
+
 export interface ScheduledJobInput {
   projectId?: string;
   title: string;

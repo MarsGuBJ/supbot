@@ -1313,6 +1313,12 @@ function registerIpc(): void {
   ipcMain.handle("modelProvider:test", (_event, id?: string, input?: Partial<ModelProviderUpdate>) =>
     getRuntime().testModelProvider(optionalString(id, "model provider id"), validatePartialModelProviderUpdate(input)),
   );
+  ipcMain.handle("modelProvider:listModels", (_event, id?: string, input?: Partial<ModelProviderUpdate>) =>
+    getRuntime().listModelProviderModels(
+      optionalString(id, "model provider id"),
+      validatePartialModelProviderUpdate(input),
+    ),
+  );
   ipcMain.handle("market-config:update", (_event, input: ToolMarketConfigUpdate) =>
     getRuntime().updateToolMarketConfig(validateToolMarketConfigUpdate(input)),
   );

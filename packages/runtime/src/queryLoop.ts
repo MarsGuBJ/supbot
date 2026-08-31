@@ -8,6 +8,7 @@ import type {
   ToolCallRecord,
 } from "@supbot/shared";
 import { nowIso } from "@supbot/shared";
+import { describeError } from "./errorFormat";
 import { generatedResultFilePattern } from "./localTools";
 import type { AdapterMessage, AdapterToolCall, ModelAdapter } from "./modelAdapter";
 import { ToolExecutor } from "./toolExecutor";
@@ -120,7 +121,7 @@ export async function queryLoop(input: QueryLoopInput): Promise<QueryLoopResult>
     }
     throw new Error(`Agent loop reached maxTurns (${maxTurns}) before producing a final answer.`);
   } catch (error) {
-    const message = (error as Error).message;
+    const message = describeError(error);
     await emit(input, events, { type: "turn_failed", error: message, trace });
     throw error;
   }
@@ -214,7 +215,8 @@ function artifactSummaryLine(output: string): string | undefined {
     .filter(Boolean);
   return (
     lines.find(
-      (line) => /(saved to|wrote|created|copied|fullpath|path|name)/i.test(line) && generatedResultFilePattern.test(line),
+      (line) =>
+        /(saved to|wrote|created|copied|fullpath|path|name)/i.test(line) && generatedResultFilePattern.test(line),
     ) || lines.find((line) => generatedResultFilePattern.test(line) && /[\\/]/.test(line))
   );
 }

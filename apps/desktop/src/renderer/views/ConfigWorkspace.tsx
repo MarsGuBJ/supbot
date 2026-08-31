@@ -15,6 +15,7 @@ import {
 } from "@ant-design/icons";
 import {
   Alert,
+  AutoComplete,
   Button,
   Divider,
   Form,
@@ -51,6 +52,7 @@ import { formatDateTime } from "@supbot/shared";
 import { McpServersCard } from "../components/McpServersCard";
 import { MemoryPanel } from "../components/MemoryPanel";
 import { truncateText } from "../lib/chatFormat";
+import { matchPresetByBaseUrl, modelProviderPresets } from "../lib/modelProviderPresets";
 
 export const hiddenSlashCommandCapabilityIds = new Set(["tool.file", "tool.shell"]);
 
@@ -460,6 +462,39 @@ export function ModelConfigCard({
   const [deletingId, setDeletingId] = useState("");
   const providers = snapshot.modelProviders.length ? snapshot.modelProviders : [snapshotProviderFallback(snapshot)];
   const activeProviderId = snapshot.activeModelProviderId || providers[0]?.id || "";
+  const watchedBaseUrl = Form.useWatch("baseUrl", form) || "";
+  const selectedPreset = matchPresetByBaseUrl(watchedBaseUrl);
+  const [fetchedModels, setFetchedModels] = useState<string[]>([]);
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const applyPreset = (key: string) => {
+    const preset = modelProviderPresets.find((item) => item.key === key);
+    if (!preset) {
+      return;
+    }
+    form.setFieldsValue({ providerName: preset.providerName, baseUrl: preset.baseUrl, model: "" });
+    setFetchedModels([]);
+  };
+  const fetchModels = async () => {
+    const values = form.getFieldsValue();
+    if (!values.baseUrl?.trim()) {
+      messageApi.warning(t("Fill in Base URL first."));
+      return;
+    }
+    setFetchingModels(true);
+    try {
+      const result = await window.supbot.listModelProviderModels(editingProvider?.id, values);
+      if (result.ok) {
+        setFetchedModels(result.models);
+        messageApi.success(t("Fetched {count} models.", { count: result.models.length }));
+      } else {
+        messageApi.warning(result.message);
+      }
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    } finally {
+      setFetchingModels(false);
+    }
+  };
   const openProviderForm = (provider?: ModelProviderConfig) => {
     setEditingProvider(provider || null);
     form.setFieldsValue(provider ? modelProviderFormValues(provider) : newModelProviderValues(snapshot));
@@ -645,14 +680,34 @@ export function ModelConfigCard({
         )}
       >
         <Form form={form} layout="vertical" onFinish={(values) => void saveProvider(values)}>
+          <Form.Item label={t("Provider")} extra={t("Select a provider to autofill Base URL and models.")}>
+            <Select
+              value={selectedPreset?.key ?? "custom"}
+              onChange={applyPreset}
+              options={[
+                ...modelProviderPresets.map((preset) => ({ value: preset.key, label: preset.label })),
+                { value: "custom", label: t("Custom") },
+              ]}
+            />
+          </Form.Item>
           <Form.Item label={t("Provider name")} name="providerName" rules={[{ required: true }]}>
             <Input />
           </Form.Item>
           <Form.Item label={t("Base URL")} name="baseUrl" rules={[{ required: true }]}>
             <Input placeholder="https://api.openai.com/v1" />
           </Form.Item>
-          <Form.Item label={t("Model")} name="model" rules={[{ required: true }]}>
-            <Input placeholder="gpt-4.1-mini" />
+          <Form.Item label={t("Model")} required>
+            <Space.Compact style={{ width: "100%" }}>
+              <Form.Item name="model" noStyle rules={[{ required: true }]}>
+                <AutoComplete
+                  placeholder={t("Fetch models or type one manually.")}
+                  options={fetchedModels.map((model) => ({ value: model }))}
+                />
+              </Form.Item>
+              <Button icon={<ReloadOutlined />} loading={fetchingModels} onClick={() => void fetchModels()}>
+                {t("Fetch models")}
+              </Button>
+            </Space.Compact>
           </Form.Item>
           <Form.Item
             label={t("API key")}

@@ -2,9 +2,23 @@ import type { ChatMessage, CompactBoundary } from "@supbot/shared";
 import { truncate } from "./localTools";
 
 export interface CompactManagerOptions {
+  /** First auto-compact trigger, in estimated chars (default 400K). */
   thresholdChars?: number;
+  /** Trigger for later compactions when the previous compact left more than postCompactTargetChars (default 600K). */
+  repeatThresholdChars?: number;
+  /** Post-compact context size that decides between thresholdChars and repeatThresholdChars (default 200K). */
+  postCompactTargetChars?: number;
+  /** Hard context ceiling that always forces a compact (default 1M). */
+  maxChars?: number;
   keepRecentMessages?: number;
 }
+
+export const defaultCompactLimits = {
+  thresholdChars: 400_000,
+  repeatThresholdChars: 600_000,
+  postCompactTargetChars: 200_000,
+  maxChars: 1_000_000,
+} as const;
 
 export class CompactManager {
   constructor(private readonly options: CompactManagerOptions = {}) {}
@@ -19,7 +33,18 @@ export class CompactManager {
     const activeMessages = lastBoundary?.messageId
       ? messages.slice(Math.max(0, messages.findIndex((message) => message.id === lastBoundary.messageId) + 1))
       : messages;
-    return estimateChars(activeMessages) >= (this.options.thresholdChars ?? 48_000);
+    const activeChars = estimateChars(activeMessages);
+    if (activeChars >= (this.options.maxChars ?? defaultCompactLimits.maxChars)) {
+      return true;
+    }
+    const thresholdChars = this.options.thresholdChars ?? defaultCompactLimits.thresholdChars;
+    if (!lastBoundary) {
+      return activeChars >= thresholdChars;
+    }
+    const postCompactChars = estimatePostCompactChars(lastBoundary, messages);
+    const postCompactTargetChars = this.options.postCompactTargetChars ?? defaultCompactLimits.postCompactTargetChars;
+    const repeatThresholdChars = this.options.repeatThresholdChars ?? defaultCompactLimits.repeatThresholdChars;
+    return activeChars >= (postCompactChars > postCompactTargetChars ? repeatThresholdChars : thresholdChars);
   }
 
   createBoundary(input: {
@@ -56,6 +81,12 @@ function estimateChars(messages: ChatMessage[]): number {
     const blockChars = (message.blocks || []).reduce((inner, block) => inner + JSON.stringify(block).length, 0);
     return sum + message.text.length + blockChars;
   }, 0);
+}
+
+function estimatePostCompactChars(boundary: CompactBoundary, messages: ChatMessage[]): number {
+  const preservedIds = new Set(boundary.preservedMessageIds);
+  const preservedChars = estimateChars(messages.filter((message) => preservedIds.has(message.id)));
+  return boundary.summary.length + preservedChars;
 }
 
 function summarizeMessages(messages: ChatMessage[]): string {

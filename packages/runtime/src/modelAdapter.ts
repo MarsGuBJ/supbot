@@ -342,15 +342,46 @@ export async function generateReply(input: GenerateReplyInput): Promise<Generate
   }
 }
 
-export function normalizeChatCompletionsUrl(baseUrl: string): string {
+function versionedApiUrl(baseUrl: string, endpoint: string): string {
   const trimmed = baseUrl.trim().replace(/\/+$/, "");
-  if (trimmed.endsWith("/chat/completions")) {
+  if (trimmed.endsWith(endpoint)) {
     return trimmed;
   }
-  if (trimmed.endsWith("/v1")) {
-    return `${trimmed}/chat/completions`;
+  // Versioned API roots (/v1, /v3, /v4, ...) append the endpoint directly;
+  // bare origins get the OpenAI default /v1 prefix.
+  if (/\/v\d+[a-z]*$/i.test(trimmed)) {
+    return `${trimmed}${endpoint}`;
   }
-  return `${trimmed}/v1/chat/completions`;
+  return `${trimmed}/v1${endpoint}`;
+}
+
+export function normalizeChatCompletionsUrl(baseUrl: string): string {
+  return versionedApiUrl(baseUrl, "/chat/completions");
+}
+
+export function normalizeModelsUrl(baseUrl: string): string {
+  return versionedApiUrl(baseUrl, "/models");
+}
+
+/** GET {baseUrl}/models on an OpenAI-compatible endpoint and return the model ids. */
+export async function listProviderModels(baseUrl: string, apiKey?: string): Promise<string[]> {
+  const headers: Record<string, string> = {};
+  const key = normalizeModelApiKey(apiKey);
+  if (key) {
+    headers.authorization = `Bearer ${key}`;
+  }
+  const response = await fetchWithRetry(normalizeModelsUrl(baseUrl), { headers });
+  if (!response.ok) {
+    const responseBody = await response.text().catch(() => "");
+    throw new Error(
+      `Model list request failed (${response.status}): ${responseBody.slice(0, 500) || response.statusText}`,
+    );
+  }
+  const payload = (await response.json()) as { data?: Array<{ id?: unknown }> };
+  if (!Array.isArray(payload.data)) {
+    throw new Error("Model list response is not OpenAI-compatible (missing data array).");
+  }
+  return payload.data.map((item) => (typeof item?.id === "string" ? item.id : "")).filter((id) => id.length > 0);
 }
 
 export function normalizeModelApiKey(value?: string): string {

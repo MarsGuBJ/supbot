@@ -210,6 +210,8 @@ const api = {
   setActiveModelProvider: (id: string) => ipcRenderer.invoke("modelProvider:setActive", id),
   testModelProvider: (id?: string, input?: Partial<ModelProviderUpdate>) =>
     ipcRenderer.invoke("modelProvider:test", id, input),
+  listModelProviderModels: (id?: string, input?: Partial<ModelProviderUpdate>) =>
+    ipcRenderer.invoke("modelProvider:listModels", id, input),
   updateToolMarketConfig: (input: ToolMarketConfigUpdate) => ipcRenderer.invoke("market-config:update", input),
   updatePersonality: (input: PersonalityConfig) => ipcRenderer.invoke("personality:update", input),
   updateCapability: (id: string, input: CapabilityUpdateInput) => ipcRenderer.invoke("capability:update", id, input),

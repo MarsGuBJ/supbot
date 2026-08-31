@@ -53,6 +53,7 @@ import {
   type MemoryUpdateInput,
   type ModelConfig,
   type ModelConfigUpdate,
+  type ModelListResult,
   type ModelProviderConfig,
   type ModelProviderUpdate,
   type ModelTestResult,
@@ -94,11 +95,12 @@ import {
   type ToolMarketQuery,
 } from "@supbot/shared";
 import { AutopilotOrchestrator } from "./autopilotOrchestrator";
+import { describeError } from "./errorFormat";
 import { stripQuotes, type LocalToolHost, type LocalToolResult } from "./localTools";
 import { LocalPackageManager } from "./localPackageManager";
 import { MemoryManager } from "./memoryManager";
 import { McpManager } from "./mcpManager";
-import { generateReply, normalizeModelApiKey } from "./modelAdapter";
+import { generateReply, listProviderModels, normalizeModelApiKey } from "./modelAdapter";
 import { PermissionPolicy } from "./permissionPolicy";
 import { ProjectManager } from "./projectManager";
 import { QueryEngine } from "./queryEngine";
@@ -1632,7 +1634,34 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       });
       return { ok: true, message: result.text.slice(0, 500) };
     } catch (error) {
-      return { ok: false, message: (error as Error).message };
+      return { ok: false, message: describeError(error) };
+    }
+  }
+
+  async listModelProviderModels(id?: string, update?: Partial<ModelProviderUpdate>): Promise<ModelListResult> {
+    this.assertLoaded();
+    const baseProvider = id
+      ? this.requireModelProvider(id)
+      : update
+        ? { ...createInitialState().modelProviders[0], apiKeySecret: undefined }
+        : this.ensureActiveModelProvider();
+    const providerName = update?.providerName || baseProvider.providerName;
+    const model = update?.model || baseProvider.model;
+    const baseUrl = inferModelBaseUrl(providerName, model, update?.baseUrl || baseProvider.baseUrl);
+    let apiKey: string;
+    try {
+      apiKey = normalizeModelApiKey(update?.apiKey || (update?.clearApiKey ? undefined : baseProvider.apiKeySecret));
+    } catch (error) {
+      return { ok: false, message: describeError(error), models: [] };
+    }
+    try {
+      const models = await listProviderModels(baseUrl, apiKey || undefined);
+      if (models.length === 0) {
+        return { ok: false, message: "The endpoint returned an empty model list.", models: [] };
+      }
+      return { ok: true, message: `${models.length} models`, models };
+    } catch (error) {
+      return { ok: false, message: describeError(error), models: [] };
     }
   }
 
@@ -2044,7 +2073,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         return;
       }
       const status: JobStatus = controller.signal.aborted ? "canceled" : "failed";
-      const message = controller.signal.aborted ? "Canceled by user" : (error as Error).message;
+      const message = controller.signal.aborted ? "Canceled by user" : describeError(error);
       this.updateAssistantMessageForJob(job.conversationId, jobId, status, message);
       const failedMessage = this.findConversation(job.conversationId)?.messages.find((item) => item.jobId === jobId);
       if (failedMessage) {

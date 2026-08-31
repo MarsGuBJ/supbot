@@ -19,8 +19,10 @@ import {
   TranscriptStore,
 } from "../src";
 import { queryLoop } from "../src/queryLoop";
+import { CompactManager } from "../src/compactManager";
 import { normalizeMarketApiUrl } from "../src/toolMarket";
 import { defaultModelConfig } from "@supbot/shared";
+import type { ChatMessage, CompactBoundary } from "@supbot/shared";
 
 const tempDirs: string[] = [];
 
@@ -245,7 +247,11 @@ type MockMcpMode =
 
 function mockMcpResult(method: string): unknown {
   if (method === "initialize") {
-    return { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "mock-remote", version: "1.0.0" } };
+    return {
+      protocolVersion: "2024-11-05",
+      capabilities: { tools: {} },
+      serverInfo: { name: "mock-remote", version: "1.0.0" },
+    };
   }
   if (method === "tools/list") {
     return {
@@ -454,6 +460,12 @@ describe("model client helpers", () => {
     );
     expect(normalizeChatCompletionsUrl("https://api.example.com/v1/chat/completions")).toBe(
       "https://api.example.com/v1/chat/completions",
+    );
+    expect(normalizeChatCompletionsUrl("https://open.bigmodel.cn/api/paas/v4")).toBe(
+      "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    );
+    expect(normalizeChatCompletionsUrl("https://ark.cn-beijing.volces.com/api/v3")).toBe(
+      "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
     );
   });
 
@@ -6865,5 +6877,68 @@ describe("SupbotRuntime", () => {
     expect(snapshot.conversations[0].projectId).toBe(project.id);
     expect(snapshot.jobs[0].projectId).toBe(project.id);
     await waitForJob(runtime, snapshot.jobs[0].id);
+  });
+});
+
+describe("CompactManager context limits", () => {
+  const manager = new CompactManager();
+  let idCounter = 0;
+  const chatMessage = (chars: number): ChatMessage => {
+    idCounter += 1;
+    return {
+      id: `m${idCounter}`,
+      conversationId: "conv",
+      role: "user",
+      text: "x".repeat(chars),
+      createdAt: new Date().toISOString(),
+    };
+  };
+  const messagesOf = (sizes: number[]) => sizes.map(chatMessage);
+  const boundaryFor = (anchor: ChatMessage, preserved: ChatMessage[], summaryChars: number): CompactBoundary => ({
+    id: "b1",
+    conversationId: "conv",
+    messageId: anchor.id,
+    summary: "s".repeat(summaryChars),
+    preservedMessageIds: preserved.map((message) => message.id),
+    originalMessageCount: 12,
+    createdAt: new Date().toISOString(),
+  });
+
+  test("does not compact below the 400K first threshold", () => {
+    expect(manager.shouldCompact(messagesOf(Array(12).fill(30_000)), [])).toBe(false);
+  });
+
+  test("compacts at 400K chars before any boundary", () => {
+    expect(manager.shouldCompact(messagesOf(Array(12).fill(34_000)), [])).toBe(true);
+  });
+
+  test("always compacts at the 1M hard ceiling", () => {
+    const messages = messagesOf(Array(12).fill(90_000));
+    expect(manager.shouldCompact(messages, [])).toBe(true);
+  });
+
+  test("uses the 400K trigger after a boundary when the compacted context stayed within 200K", () => {
+    const earlier = messagesOf(Array(6).fill(5_000));
+    const preserved = messagesOf(Array(6).fill(10_000));
+    const boundary = boundaryFor(earlier.at(-1)!, preserved, 5_000);
+    const grown = [...earlier, ...preserved, ...messagesOf(Array(6).fill(55_000))];
+    // active chars after the boundary anchor = preserved (60K) + grown (330K) = 390K < 400K
+    expect(manager.shouldCompact(grown, [boundary])).toBe(false);
+    const bigger = [...grown, chatMessage(20_000)];
+    // active = 410K >= 400K
+    expect(manager.shouldCompact(bigger, [boundary])).toBe(true);
+  });
+
+  test("defers the next compact to 600K when the compacted context still exceeded 200K", () => {
+    const earlier = messagesOf(Array(6).fill(5_000));
+    const preserved = messagesOf(Array(6).fill(40_000));
+    const boundary = boundaryFor(earlier.at(-1)!, preserved, 5_000);
+    // post-compact chars = 5K summary + 240K preserved = 245K > 200K
+    const grown = [...earlier, ...preserved, ...messagesOf(Array(6).fill(40_000))];
+    // active chars = 240K + 240K = 480K, above 400K but below 600K
+    expect(manager.shouldCompact(grown, [boundary])).toBe(false);
+    const bigger = [...grown, ...messagesOf(Array(3).fill(40_000))];
+    // active = 600K >= 600K
+    expect(manager.shouldCompact(bigger, [boundary])).toBe(true);
   });
 });
