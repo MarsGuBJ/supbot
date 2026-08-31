@@ -148,7 +148,7 @@ OpenAI-compatible gateways:
 - do not use `envVarConfig` for Anthropic-native auth/base-URL wiring.
 
 If the upstream expects OpenAI-compatible JSON bodies, it is not an anthropic
-proxy even if it can reach Claude-family models.
+proxy even if it can reach Anthropic-family models.
 
 ## Current repo note
 

@@ -81,7 +81,7 @@ test('renderControlCenterHtml uses the KennyHarness wordmark, status rail, and w
   const { renderControlCenterHtml } = loadExtension();
   const html = renderControlCenterHtml(createStatus(), { nonce: 'test-nonce', platform: 'win32' });
 
-  assert.match(html, /Open<span class="wordmark-accent">Claude<\/span>/);
+  assert.match(html, /Kenny<span class="wordmark-accent">Harness<\/span>/);
   assert.match(html, /class="status-rail"/);
   assert.match(html, /\.sunset-gradient\s*\{/);
   assert.match(html, /class="action-button primary" id="launch"/);

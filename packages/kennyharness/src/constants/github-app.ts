@@ -1,9 +1,9 @@
-export const PR_TITLE = 'Add Claude Code GitHub Workflow'
+export const PR_TITLE = 'Add AI Coding Agent GitHub Workflow'
 
 export const GITHUB_ACTION_SETUP_DOCS_URL =
   'https://github.com/anthropics/claude-code-action/blob/main/docs/setup.md'
 
-export const WORKFLOW_CONTENT = `name: Claude Code
+export const WORKFLOW_CONTENT = `name: AI Coding Agent
 
 on:
   issue_comment:
@@ -28,24 +28,24 @@ jobs:
       pull-requests: read
       issues: read
       id-token: write
-      actions: read # Required for Claude to read CI results on PRs
+      actions: read # Required for the agent to read CI results on PRs
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: Run Claude Code
+      - name: Run AI Coding Agent
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: \${{ secrets.ANTHROPIC_API_KEY }}
 
-          # This is an optional setting that allows Claude to read CI results on PRs
+          # This is an optional setting that allows the agent to read CI results on PRs
           additional_permissions: |
             actions: read
 
-          # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
+          # Optional: Give a custom prompt to the agent. If this is not specified, the agent will perform the instructions specified in the comment that tagged it.
           # prompt: 'Update the pull request description to include a summary of changes.'
 
           # Optional: Add claude_args to customize behavior and configuration
@@ -55,13 +55,13 @@ jobs:
 
 `
 
-export const PR_BODY = `## 🤖 Installing Claude Code GitHub App
+export const PR_BODY = `## 🤖 Installing the AI Coding Agent GitHub App
 
-This PR adds a GitHub Actions workflow that enables Claude Code integration in our repository.
+This PR adds a GitHub Actions workflow that enables AI coding agent integration in our repository.
 
-### What is Claude Code?
+### What is the AI coding agent?
 
-[Claude Code](https://claude.com/claude-code) is an AI coding agent that can help with:
+[The AI coding agent](https://claude.com/claude-code) can help with:
 - Bug fixes and improvements  
 - Documentation updates
 - Implementing new features
@@ -71,33 +71,33 @@ This PR adds a GitHub Actions workflow that enables Claude Code integration in o
 
 ### How it works
 
-Once this PR is merged, we'll be able to interact with Claude by mentioning @claude in a pull request or issue comment.
-Once the workflow is triggered, Claude will analyze the comment and surrounding context, and execute on the request in a GitHub action.
+Once this PR is merged, we'll be able to interact with the agent by mentioning @claude in a pull request or issue comment.
+Once the workflow is triggered, the agent will analyze the comment and surrounding context, and execute on the request in a GitHub action.
 
 ### Important Notes
 
 - **This workflow won't take effect until this PR is merged**
 - **@claude mentions won't work until after the merge is complete**
-- The workflow runs automatically whenever Claude is mentioned in PR or issue comments
-- Claude gets access to the entire PR or issue context including files, diffs, and previous comments
+- The workflow runs automatically whenever the agent is mentioned in PR or issue comments
+- The agent gets access to the entire PR or issue context including files, diffs, and previous comments
 
 ### Security
 
 - Our Anthropic API key is securely stored as a GitHub Actions secret
 - Only users with write access to the repository can trigger the workflow
-- All Claude runs are stored in the GitHub Actions run history
-- Claude's default tools are limited to reading/writing files and interacting with our repo by creating comments, branches, and commits.
+- All agent runs are stored in the GitHub Actions run history
+- The agent's default tools are limited to reading/writing files and interacting with our repo by creating comments, branches, and commits.
 - We can add more allowed tools by adding them to the workflow file like:
 
 \`\`\`
 allowed_tools: Bash(npm install),Bash(npm run build),Bash(npm run lint),Bash(npm run test)
 \`\`\`
 
-There's more information in the [Claude Code action repo](https://github.com/anthropics/claude-code-action).
+There's more information in the [action repo](https://github.com/anthropics/claude-code-action).
 
 After merging this PR, let's try mentioning @claude in a comment on any PR to get started!`
 
-export const CODE_REVIEW_PLUGIN_WORKFLOW_CONTENT = `name: Claude Code Review
+export const CODE_REVIEW_PLUGIN_WORKFLOW_CONTENT = `name: AI Code Review
 
 on:
   pull_request:
@@ -130,7 +130,7 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Run Claude Code Review
+      - name: Run AI Code Review
         id: claude-review
         uses: anthropics/claude-code-action@v1
         with:

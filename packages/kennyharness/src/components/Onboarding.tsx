@@ -99,7 +99,7 @@ export function Onboarding({
   const apiKeyNeedingApproval = useMemo(() => {
     // Add API key step if needed
     // On homespace, ANTHROPIC_API_KEY is preserved in process.env for child
-    // processes but ignored by Claude Code itself (see auth.ts).
+    // processes but ignored by KennyHarness itself (see auth.ts).
     if (!process.env.ANTHROPIC_API_KEY || isRunningOnHomespace() || !isAnthropicAuthEnabled()) {
       return '';
     }

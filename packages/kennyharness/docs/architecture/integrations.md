@@ -198,7 +198,7 @@ Some provider-specific behavior is real protocol or capability divergence and
 should remain explicit unless the external API changes.
 
 - GitHub is a dual-mode route.
-  Claude models can use Anthropic-native message format, while Copilot/Models
+  Anthropic models can use Anthropic-native message format, while Copilot/Models
   traffic still uses OpenAI/Codex-style transport behavior.
 - Mistral is not just "generic OpenAI-compatible".
   It still requires dedicated env selection and request shaping.

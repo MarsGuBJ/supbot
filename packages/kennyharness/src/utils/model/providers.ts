@@ -92,7 +92,7 @@ export function usesAnthropicAccountFlow(): boolean {
  * anywhere (handles bare names like "claude-sonnet-4" and compound formats like
  * "github:copilot:claude-sonnet-4" or any future provider-prefixed variants).
  *
- * api.githubcopilot.com supports Anthropic native format for Claude models,
+ * api.githubcopilot.com supports Anthropic native format for Anthropic models,
  * enabling prompt caching via cache_control blocks which significantly reduces
  * per-turn token costs by caching the system prompt and tool definitions.
  */

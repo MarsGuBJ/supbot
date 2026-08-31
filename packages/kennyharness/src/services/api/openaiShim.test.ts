@@ -5811,7 +5811,7 @@ test('strips Anthropic attribution header block from chat-completions system pro
           'x-anthropic-billing-header: cc_version=0.8.0.abc123; ' +
           'cc_entrypoint=cli;',
       },
-      { type: 'text', text: 'You are Claude Code, helpful assistant.' },
+      { type: 'text', text: 'You are a helpful coding assistant.' },
       { type: 'text', text: 'Project context: bun + react.' },
     ],
     messages: [{ role: 'user', content: 'hello' }],
@@ -5824,7 +5824,7 @@ test('strips Anthropic attribution header block from chat-completions system pro
   expect(sysMsg).toBeDefined()
   expect(sysMsg?.content).not.toContain('x-anthropic-billing-header')
   expect(sysMsg?.content).not.toContain('cc_version=')
-  expect(sysMsg?.content).toContain('You are Claude Code, helpful assistant.')
+  expect(sysMsg?.content).toContain('You are a helpful coding assistant.')
   expect(sysMsg?.content).toContain('Project context: bun + react.')
 })
 
@@ -5861,7 +5861,7 @@ test('strips Anthropic attribution header block from responses-API instructions 
         type: 'text',
         text: 'x-anthropic-billing-header: cc_version=0.8.0.abc123; cc_entrypoint=cli;',
       },
-      { type: 'text', text: 'You are Claude Code.' },
+      { type: 'text', text: 'You are a coding assistant.' },
     ],
     messages: [{ role: 'user', content: 'hello' }],
     max_tokens: 64,
@@ -5871,7 +5871,7 @@ test('strips Anthropic attribution header block from responses-API instructions 
   const instructions = capturedBody?.instructions as string
   expect(instructions).not.toContain('x-anthropic-billing-header')
   expect(instructions).not.toContain('cc_version=')
-  expect(instructions).toContain('You are Claude Code.')
+  expect(instructions).toContain('You are a coding assistant.')
 })
 
 test('emits reasoning_effort on chat_completions when reasoningEffort is passed', async () => {

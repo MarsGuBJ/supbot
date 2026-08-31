@@ -97,7 +97,7 @@ Safer rule:
 ## Pitfall 9: Flattening real protocol differences
 
 Common mistake:
-Treating Bedrock, Vertex, Gemini, GitHub native Claude mode, or Mistral as if
+Treating Bedrock, Vertex, Gemini, GitHub native Anthropic mode, or Mistral as if
 they were all just generic OpenAI-compatible routes.
 
 Safer rule:

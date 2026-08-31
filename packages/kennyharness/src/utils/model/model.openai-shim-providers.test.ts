@@ -260,7 +260,7 @@ test('getDefaultMainLoopModelSetting defaults Xiaomi MiMo to mimo-v2.5-pro', asy
   expect(getDefaultMainLoopModel()).toBe('mimo-v2.5-pro')
 })
 
-test('modelDisplayString does not show Claude subscription default for Xiaomi MiMo', async () => {
+test('modelDisplayString does not show Anthropic subscription default for Xiaomi MiMo', async () => {
   process.env.MIMO_API_KEY = 'mimo-test'
   process.env.CLAUDE_CODE_USE_OPENAI = '1'
   process.env.OPENAI_BASE_URL = 'https://api.xiaomimimo.com/v1'
@@ -274,7 +274,7 @@ test('modelDisplayString does not show Claude subscription default for Xiaomi Mi
   expect(renderDefaultModelSetting('mimo-v2.5-pro')).toBe('mimo-v2.5-pro')
 })
 
-test('modelDisplayString does not show Claude subscription default for MiniMax', async () => {
+test('modelDisplayString does not show Anthropic subscription default for MiniMax', async () => {
   process.env.MINIMAX_API_KEY = 'minimax-test'
   process.env.OPENAI_MODEL = 'MiniMax-M2.7'
 

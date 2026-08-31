@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { shouldRefreshOAuthAccountInfo } from './client.js'
 
-test('OAuth account info population does not refresh when Claude.ai auth is inactive', () => {
+test('OAuth account info population does not refresh when claude.ai auth is inactive', () => {
   expect(
     shouldRefreshOAuthAccountInfo({
       hasCompleteAccountInfo: false,
@@ -11,7 +11,7 @@ test('OAuth account info population does not refresh when Claude.ai auth is inac
   ).toBe(false)
 })
 
-test('OAuth account info population still refreshes active Claude.ai auth', () => {
+test('OAuth account info population still refreshes active claude.ai auth', () => {
   expect(
     shouldRefreshOAuthAccountInfo({
       hasCompleteAccountInfo: false,

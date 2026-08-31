@@ -95,18 +95,18 @@ export function getAgentModel(
   const agentModelWithExp = agentModel ?? getDefaultSubagentModel()
 
   // Provider-aware model alias fallback for agents.
-  // Claude-native providers (Bedrock, Vertex, Foundry, official Anthropic API)
+  // Anthropic-native providers (Bedrock, Vertex, Foundry, official Anthropic API)
   // have guaranteed haiku/sonnet model availability. Custom Anthropic-compatible
   // endpoints, OpenAI-shim, Gemini, Mistral, and other providers may not have
   // equivalent models, causing "model not found" errors when resolving aliases.
-  // For haiku/sonnet aliases on non-Claude-native providers, inherit parent model.
+  // For haiku/sonnet aliases on non-Anthropic-native providers, inherit parent model.
   // Note: 'opus' is NOT included here because it's handled separately by
   // aliasMatchesParentTier() which checks if parent's tier matches the alias.
   if (
     (agentModelWithExp === 'haiku' || agentModelWithExp === 'sonnet') &&
     !checkIsClaudeNativeProvider()
   ) {
-    // Non-Claude-native provider → inherit parent model
+    // Non-Anthropic-native provider → inherit parent model
     return getRuntimeMainLoopModel({
       permissionMode: permissionMode ?? 'default',
       mainLoopModel: parentModel,
@@ -174,9 +174,9 @@ function assertToolSpecifiedModelAllowed(
 }
 
 /**
- * Check if the current provider is Claude-native (has guaranteed haiku/sonnet models).
- * Claude-native providers: Bedrock, Vertex, Foundry, official Anthropic API.
- * Non-Claude-native: OpenAI, Gemini, Mistral, GitHub, NVIDIA NIM, MiniMax,
+ * Check if the current provider is Anthropic-native (has guaranteed haiku/sonnet models).
+ * Anthropic-native providers: Bedrock, Vertex, Foundry, official Anthropic API.
+ * Non-Anthropic-native: OpenAI, Gemini, Mistral, GitHub, NVIDIA NIM, MiniMax,
  * and custom Anthropic-compatible endpoints (proxies, self-hosted).
  */
 export function checkIsClaudeNativeProvider(): boolean {

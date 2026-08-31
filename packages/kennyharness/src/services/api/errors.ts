@@ -313,18 +313,18 @@ export const OAUTH_ORG_NOT_ALLOWED_ERROR_MESSAGE =
 
 export function getTokenRevokedErrorMessage(): string {
   return getIsNonInteractiveSession()
-    ? 'Your account does not have access to Claude. Please login again or contact your administrator.'
+    ? 'Your account does not have access to KennyHarness. Please login again or contact your administrator.'
     : TOKEN_REVOKED_ERROR_MESSAGE
 }
 
 export function getOauthOrgNotAllowedErrorMessage(): string {
   return getIsNonInteractiveSession()
-    ? 'Your organization does not have access to Claude. Please login again or contact your administrator.'
+    ? 'Your organization does not have access to KennyHarness. Please login again or contact your administrator.'
     : OAUTH_ORG_NOT_ALLOWED_ERROR_MESSAGE
 }
 
 /**
- * Check if we're in CCR (Claude Code Remote) mode.
+ * Check if we're in CCR (CLAUDE_CODE_REMOTE) mode.
  * In CCR mode, auth is handled via JWTs provided by the infrastructure,
  * not via /login. Transient auth errors should suggest retrying, not logging in.
  */
@@ -655,7 +655,7 @@ export function getAssistantMessageFromError(
       // If getRateLimitErrorMessage returned null, it means the fallback mechanism
       // will handle this silently (e.g., Opus -> Sonnet fallback for eligible users).
       // Return NO_RESPONSE_REQUESTED so no error is shown to the user, but the
-      // message is still recorded in conversation history for Claude to see.
+      // message is still recorded in conversation history for the model to see.
       return createAssistantAPIErrorMessage({
         content: NO_RESPONSE_REQUESTED,
         error: 'rate_limit',
@@ -874,12 +874,12 @@ export function getAssistantMessageFromError(
   ) {
     return createAssistantAPIErrorMessage({
       content:
-        'Claude Opus is not available with the Claude Pro plan. If you have updated your subscription plan recently, run /logout and /login for the plan to take effect.',
+        'Anthropic Opus is not available with the Pro plan. If you have updated your subscription plan recently, run /logout and /login for the plan to take effect.',
       error: 'invalid_request',
     })
   }
 
-  // Check for invalid model name error for Ant users. Claude Code may be
+  // Check for invalid model name error for Ant users. KennyHarness may be
   // defaulting to a custom internal-only model for Ants, and there might be
   // Ants using new or unknown org IDs that haven't been gated in.
   if (

@@ -10,9 +10,9 @@
  *
  * Complements (does not replace) microCompact.ts:
  * - microCompact: time/cache-based, runs from query.ts, binary clear/keep,
- *   limited to Claude (cache editing) or idle gaps (time-based).
+ *   limited to Anthropic (cache editing) or idle gaps (time-based).
  * - compressToolHistory: size-based, runs at the shim layer, tiered
- *   compression, covers the gap for active sessions on non-Claude providers.
+ *   compression, covers the gap for active sessions on non-Anthropic providers.
  *
  * Reuses isCompactableTool from microCompact to avoid touching tools the
  * project already classifies as unsafe to compress (e.g. Task, Agent).

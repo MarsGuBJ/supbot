@@ -143,7 +143,7 @@ def build_default_providers() -> list[Provider]:
 
 class SmartRouter:
     """
-    Intelligently routes Claude Code API requests to the best
+    Intelligently routes KennyHarness API requests to the best
     available LLM provider based on latency, cost, and health.
     """
 
@@ -241,7 +241,7 @@ class SmartRouter:
         claude_model: str,
         is_large_request: bool = False,
     ) -> str:
-        """Map a Claude model name to the provider's actual model."""
+        """Map an Anthropic model name to the provider's actual model."""
         if is_large_request:
             return provider.big_model
         is_large = any(

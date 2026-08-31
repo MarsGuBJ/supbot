@@ -86,9 +86,9 @@ export GEMINI_API_KEY=...
 export GEMINI_MODEL=gemini-3-flash-preview
 ```
 
-### Claude on Vertex AI
+### Anthropic Models on Vertex AI
 
-The Vertex route uses Anthropic's Claude-on-Vertex API. It is not a general
+The Vertex route uses Anthropic's Vertex AI API. It is not a general
 Vertex AI Model Garden adapter for Gemini or arbitrary partner models; use the
 Gemini provider for Gemini models and OpenAI-compatible routes for compatible
 third-party gateways.
@@ -113,7 +113,7 @@ kennyharness --model claude-sonnet-4-6
 ```
 
 `CLOUD_ML_REGION` is optional and defaults to `us-east5`. Model-specific
-Vertex region override variables are also supported for Claude models; see
+Vertex region override variables are also supported for Anthropic models; see
 `src/utils/envUtils.ts` for the current override names.
 
 ### Gemini via OpenRouter
@@ -194,7 +194,7 @@ export OPENAI_MODEL=gpt-5.4
 kennyharness
 ```
 
-OpenCode Zen is a pay-as-you-go AI gateway with 41 models (GPT, Claude, Gemini,
+OpenCode Zen is a pay-as-you-go AI gateway with 41 models (GPT, Anthropic, Gemini,
 Qwen, MiniMax, GLM, Kimi, Grok, Big Pickle, DeepSeek, Nemotron). Uses the same
 `OPENCODE_API_KEY` as OpenCode Go. Get your key from https://opencode.ai.
 

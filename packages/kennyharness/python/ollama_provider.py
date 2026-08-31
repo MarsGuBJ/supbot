@@ -2,7 +2,7 @@
 ollama_provider.py
 ------------------
 Adds native Ollama support to kennyharness.
-Lets Claude Code route requests to any locally-running Ollama model
+Lets KennyHarness route requests to any locally-running Ollama model
 (llama3, mistral, codellama, phi3, qwen2, deepseek-coder, etc.)
 without needing an API key.
 

@@ -115,7 +115,7 @@ export const SYSTEM_PROMPT_DYNAMIC_BOUNDARY =
   '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__'
 
 // @[MODEL LAUNCH]: Update the latest frontier model.
-const FRONTIER_MODEL_NAME = 'Claude Opus 4.7'
+const FRONTIER_MODEL_NAME = 'Anthropic Opus 4.7'
 
 function getHooksSection(): string {
   return `Users may configure 'hooks', shell commands that execute in response to events like tool calls, in settings. Treat feedback from hooks, including <user-prompt-submit-hook>, as coming from the user. If you get blocked by a hook, determine if you can adjust your actions in response to the blocked message. If not, ask the user to check their hooks configuration.`
@@ -782,7 +782,7 @@ export async function enhanceSystemPromptWithEnvDetails(
 
 /**
  * Returns instructions for using the scratchpad directory if enabled.
- * The scratchpad is a per-session directory where Claude can write temporary files.
+ * The scratchpad is a per-session directory where KennyHarness can write temporary files.
  */
 export function getScratchpadInstructions(): string | null {
   if (!isScratchpadEnabled()) {

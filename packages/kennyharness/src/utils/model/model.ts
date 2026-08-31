@@ -439,7 +439,7 @@ export function getDefaultMainLoopModel(): ModelName {
  */
 export function firstPartyNameToCanonical(name: ModelName): ModelShortName {
   name = name.toLowerCase()
-  // Special cases for Claude 4+ models to differentiate versions
+  // Special cases for Anthropic 4+ models to differentiate versions
   // Order matters: check more specific versions first (4-7 before 4-6 before 4-5 before 4)
   if (name.includes('claude-opus-4-7')) {
     return 'claude-opus-4-7'
@@ -468,7 +468,7 @@ export function firstPartyNameToCanonical(name: ModelName): ModelShortName {
   if (name.includes('claude-haiku-4-5')) {
     return 'claude-haiku-4-5'
   }
-  // Claude 3.x models use a different naming scheme (claude-3-{family})
+  // Anthropic 3.x models use a different naming scheme (claude-3-{family})
   if (name.includes('claude-3-7-sonnet')) {
     return 'claude-3-7-sonnet'
   }
@@ -581,7 +581,7 @@ export function renderModelSetting(setting: ModelName | ModelAlias): string {
  */
 export function getPublicModelDisplayName(model: ModelName): string | null {
   // For OpenAI-compatible/non-Anthropic providers, show the actual model name
-  // instead of interpreting provider-specific defaults as Claude aliases.
+  // instead of interpreting provider-specific defaults as Anthropic aliases.
   if (
     getAPIProvider() === 'openai' ||
     getAPIProvider() === 'gemini' ||
@@ -770,7 +770,7 @@ export function parseUserSpecifiedModel(
   }
 
   // Opus 4/4.1 are no longer available on the first-party API (same as
-  // Claude.ai) — silently remap to the current Opus default. The 'opus'
+  // claude.ai) — silently remap to the current Opus default. The 'opus'
   // alias already resolves to 4.6, so the only users on these explicit
   // strings pinned them in settings/env/--model/SDK before 4.5 launched.
   // 3P providers may not yet have 4.6 capacity, so pass through unchanged.
@@ -904,16 +904,16 @@ export function getMarketingNameForModel(modelId: string): string | undefined {
     return has1m ? 'Sonnet 4 (with 1M context)' : 'Sonnet 4'
   }
   if (canonical.includes('claude-3-7-sonnet')) {
-    return 'Claude 3.7 Sonnet'
+    return 'Anthropic 3.7 Sonnet'
   }
   if (canonical.includes('claude-3-5-sonnet')) {
-    return 'Claude 3.5 Sonnet'
+    return 'Anthropic 3.5 Sonnet'
   }
   if (canonical.includes('claude-haiku-4-5')) {
     return 'Haiku 4.5'
   }
   if (canonical.includes('claude-3-5-haiku')) {
-    return 'Claude 3.5 Haiku'
+    return 'Anthropic 3.5 Haiku'
   }
 
   return undefined

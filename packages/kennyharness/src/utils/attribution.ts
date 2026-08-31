@@ -84,11 +84,11 @@ export function getDefaultCommitCoAuthorName({
     return formatClaudeCoAuthorName(model)
   }
 
-  // Unknown first-party models may be unreleased Claude codenames, so keep the
+  // Unknown first-party models may be unreleased Anthropic codenames, so keep the
   // historical public fallback. OpenAI-compatible providers should identify the
-  // actual configured model instead of claiming Claude Opus.
+  // actual configured model instead of claiming Opus.
   if (apiProvider === 'firstParty') {
-    // @[MODEL LAUNCH]: Update this fallback when the default public Claude model changes.
+    // @[MODEL LAUNCH]: Update this fallback when the default public Anthropic model changes.
     return 'Claude Opus 4.6'
   }
 
@@ -141,7 +141,7 @@ export function getAttributionTexts(): AttributionTexts {
     return { commit: '', pr: '' }
   }
 
-  // First-party unknown models may be unreleased Claude codenames. Other
+  // First-party unknown models may be unreleased Anthropic codenames. Other
   // providers can safely use the configured public model string.
   const model = getMainLoopModel()
   const apiProvider = getAPIProvider()
@@ -345,12 +345,12 @@ async function getTranscriptStats(): Promise<{
 }
 
 /**
- * Get enhanced PR attribution text with Claude contribution stats.
+ * Get enhanced PR attribution text with KennyHarness contribution stats.
  *
- * Format: "🤖 Generated with Claude Code (93% 3-shotted by claude-opus-4-5)"
+ * Format: "🤖 Generated with KennyHarness (93% 3-shotted by claude-opus-4-5)"
  *
  * Rules:
- * - Shows Claude contribution percentage from commit attribution
+ * - Shows KennyHarness contribution percentage from commit attribution
  * - Shows N-shotted where N is the prompt count (1-shotted, 2-shotted, etc.)
  * - Shows short model name (e.g., claude-opus-4-5)
  * - Returns default attribution if explicitly enabled and stats can't be computed
@@ -432,7 +432,7 @@ export async function getEnhancedPRAttribution(
     return DEFAULT_PR_ATTRIBUTION
   }
 
-  // Build the enhanced attribution: "🤖 Generated with Claude Code (93% 3-shotted by claude-opus-4-5, 2 memories recalled)"
+  // Build the enhanced attribution: "🤖 Generated with KennyHarness (93% 3-shotted by claude-opus-4-5, 2 memories recalled)"
   const memSuffix =
     memoryAccessCount > 0
       ? `, ${memoryAccessCount} ${memoryAccessCount === 1 ? 'memory' : 'memories'} recalled`

@@ -218,7 +218,7 @@
 * **groq:** strip unsupported store field ([#983](https://github.com/Gitlawb/kennyharness/issues/983)) ([6d0953a](https://github.com/Gitlawb/kennyharness/commit/6d0953a79cb435b17ed231019fa0b660b770c914))
 * **mcp:** allow third-party providers to approve project-scope .mcp.json servers ([#696](https://github.com/Gitlawb/kennyharness/issues/696)) ([#937](https://github.com/Gitlawb/kennyharness/issues/937)) ([dc3c065](https://github.com/Gitlawb/kennyharness/commit/dc3c065c4a70663978f965d50846ba6a0692e59d))
 * **shims:** strip x-anthropic-billing-header block before forwarding system prompt ([#1019](https://github.com/Gitlawb/kennyharness/issues/1019)) ([40ae1e7](https://github.com/Gitlawb/kennyharness/commit/40ae1e720034f00912762d5e723903d3170bc396))
-* **startup:** make CLAUDE logo D distinct ([#986](https://github.com/Gitlawb/kennyharness/issues/986)) ([35f86a9](https://github.com/Gitlawb/kennyharness/commit/35f86a9580aedd3f359dfc13992e49f2ec53757e))
+* **startup:** make Anthropic logo D distinct ([#986](https://github.com/Gitlawb/kennyharness/issues/986)) ([35f86a9](https://github.com/Gitlawb/kennyharness/commit/35f86a9580aedd3f359dfc13992e49f2ec53757e))
 * **tests:** resolve flakiness due to module leak and env state leakage ([#988](https://github.com/Gitlawb/kennyharness/issues/988)) ([990a5a2](https://github.com/Gitlawb/kennyharness/commit/990a5a2afbb22b8f9274328783a6adbda1a3b62c))
 * **web-search:** surface diagnostic when adapter returns 0 hits and no native fallback ([#1006](https://github.com/Gitlawb/kennyharness/issues/1006)) ([1c74675](https://github.com/Gitlawb/kennyharness/commit/1c746750f67d576b8272ba985b65c9c4406bdbc9))
 
@@ -296,7 +296,7 @@
 * **api:** improve local provider reliability with readiness and self-healing ([#738](https://github.com/Gitlawb/kennyharness/issues/738)) ([4cb963e](https://github.com/Gitlawb/kennyharness/commit/4cb963e660dbd6ee438c04042700db05a9d32c59))
 * **api:** smart model routing primitive (cheap-for-simple, strong-for-hard) ([#785](https://github.com/Gitlawb/kennyharness/issues/785)) ([e908864](https://github.com/Gitlawb/kennyharness/commit/e908864da7e7c987a98053ac5d18d702e192db2b))
 * enable 15 additional feature flags in open build ([#667](https://github.com/Gitlawb/kennyharness/issues/667)) ([6a62e3f](https://github.com/Gitlawb/kennyharness/commit/6a62e3ff76ba9ba446b8e20cf2bb139ee76a9387))
-* native Anthropic API mode for Claude models on GitHub Copilot ([#579](https://github.com/Gitlawb/kennyharness/issues/579)) ([fdef4a1](https://github.com/Gitlawb/kennyharness/commit/fdef4a1b4ce218ded4937ca83b30acce7c726472))
+* native Anthropic API mode for Anthropic models on GitHub Copilot ([#579](https://github.com/Gitlawb/kennyharness/issues/579)) ([fdef4a1](https://github.com/Gitlawb/kennyharness/commit/fdef4a1b4ce218ded4937ca83b30acce7c726472))
 * **provider:** expose Atomic Chat in /provider picker with autodetect ([#810](https://github.com/Gitlawb/kennyharness/issues/810)) ([ee19159](https://github.com/Gitlawb/kennyharness/commit/ee19159c17b3de3b4a8b4a4541a6569f4261d54e))
 * **provider:** zero-config autodetection primitive ([#784](https://github.com/Gitlawb/kennyharness/issues/784)) ([a5bfcbb](https://github.com/Gitlawb/kennyharness/commit/a5bfcbbadf8e9a1fd42f3e103d295524b8da64b0))
 

@@ -1118,13 +1118,13 @@ describe('convertSystemPrompt', () => {
           'x-anthropic-billing-header: cc_version=0.8.0.abc123; ' +
           'cc_entrypoint=cli;',
       },
-      { type: 'text', text: 'You are Claude Code.' },
+      { type: 'text', text: 'You are a coding assistant.' },
       { type: 'text', text: 'Project context: bun + react.' },
     ])
 
     expect(result).not.toContain('x-anthropic-billing-header')
     expect(result).not.toContain('cc_version=')
-    expect(result).toContain('You are Claude Code.')
+    expect(result).toContain('You are a coding assistant.')
     expect(result).toContain('Project context: bun + react.')
   })
 
@@ -1140,8 +1140,8 @@ describe('convertSystemPrompt', () => {
   })
 
   test('passes plain string system prompts through untouched', () => {
-    expect(convertSystemPrompt('You are Claude Code.')).toBe(
-      'You are Claude Code.',
+    expect(convertSystemPrompt('You are a coding assistant.')).toBe(
+      'You are a coding assistant.',
     )
   })
 })

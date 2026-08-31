@@ -398,7 +398,7 @@ export const PowerShellTool = buildTool({
     backgroundedByUser,
     assistantAutoBackgrounded
   }: Out, toolUseID: string): ToolResultBlockParam {
-    // For image data, format as image content block for Claude
+    // For image data, format as image content block for the model
     if (isImage) {
       const block = buildImageToolResult(stdout, toolUseID);
       if (block) return block;
@@ -572,7 +572,7 @@ export const PowerShellTool = buildTool({
 
       let stdout = stripEmptyLines(stdoutAccumulator.toString());
 
-      // Claude Code hints protocol: CLIs/SDKs gated on CLAUDECODE=1 emit a
+      // CLI hints protocol: CLIs/SDKs gated on CLAUDECODE=1 emit a
       // `<claude-code-hint />` tag to stderr (merged into stdout here). Scan,
       // record for useClaudeCodeHintRecommendation to surface, then strip
       // so the model never sees the tag — a zero-token side channel.
@@ -852,7 +852,7 @@ async function* runPowerShellCommand({
     }, ASSISTANT_BLOCKING_BUDGET_MS).unref();
   }
 
-  // Handle Claude asking to run it in the background explicitly
+  // Handle the model asking to run it in the background explicitly
   // When explicitly requested via run_in_background, always honor the request
   // regardless of the command type (isAutobackgroundingAllowed only applies to automatic backgrounding)
   if (run_in_background === true && !isBackgroundTasksDisabled) {

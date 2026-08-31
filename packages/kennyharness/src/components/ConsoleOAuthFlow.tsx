@@ -72,7 +72,7 @@ export function ConsoleOAuthFlow({
   const settings = getSettings_DEPRECATED() || {};
   const forceLoginMethod = forceLoginMethodProp ?? settings.forceLoginMethod;
   const orgUUID = settings.forceLoginOrgUUID;
-  const forcedMethodMessage = forceLoginMethod === 'claudeai' ? 'Login method pre-selected: Subscription Plan (Claude Pro/Max)' : forceLoginMethod === 'console' ? 'Login method pre-selected: API Usage Billing (Anthropic Console)' : null;
+  const forcedMethodMessage = forceLoginMethod === 'claudeai' ? 'Login method pre-selected: Subscription Plan (Pro/Max)' : forceLoginMethod === 'console' ? 'Login method pre-selected: API Usage Billing (Anthropic Console)' : null;
   const terminal = useTerminalNotification();
   const [oauthStatus, setOAuthStatus] = useState<OAuthStatus>(() => {
     if (initialStatus) {
@@ -96,7 +96,7 @@ export function ConsoleOAuthFlow({
   const [cursorOffset, setCursorOffset] = useState(0);
   const [oauthService] = useState(() => new OAuthService());
   const [loginWithClaudeAi, setLoginWithClaudeAi] = useState(() => {
-    // Use Claude AI auth for setup-token mode to support user:inference scope
+    // Use claude.ai auth for setup-token mode to support user:inference scope
     return mode === 'setup-token' || forceLoginMethod === 'claudeai';
   });
   // After a few seconds we suggest the user to copy/paste url if the
@@ -384,13 +384,13 @@ function OAuthStatusMessage({
     case 'idle': {
       const promptText =
         startingMessage ||
-        'KennyHarness can be used with your Claude subscription or billed based on API usage through your Console account.'
+        'KennyHarness can be used with your claude.ai subscription or billed based on API usage through your Console account.'
 
       const loginOptions = [
         {
           label: (
             <Text>
-              Claude account with subscription ·{' '}
+              claude.ai account with subscription ·{' '}
               <Text dimColor>Pro, Max, Team, or Enterprise</Text>
               {'\n'}
             </Text>

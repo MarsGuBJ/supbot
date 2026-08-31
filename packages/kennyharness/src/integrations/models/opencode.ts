@@ -313,10 +313,10 @@ export default [
     maxOutputTokens: 16_384,
   }),
 
-  // --- Claude family (messages endpoint) ---
+  // --- Anthropic family (messages endpoint) ---
   defineModel({
     id: 'opencode-claude-opus-4-7',
-    label: 'Claude Opus 4.7',
+    label: 'Anthropic Opus 4.7',
 
     vendorId: 'openai',
     classification: ['chat', 'reasoning'],
@@ -334,7 +334,7 @@ export default [
   }),
   defineModel({
     id: 'opencode-claude-opus-4-6',
-    label: 'Claude Opus 4.6',
+    label: 'Anthropic Opus 4.6',
 
     vendorId: 'openai',
     classification: ['chat', 'reasoning'],
@@ -352,7 +352,7 @@ export default [
   }),
   defineModel({
     id: 'opencode-claude-opus-4-5',
-    label: 'Claude Opus 4.5',
+    label: 'Anthropic Opus 4.5',
 
     vendorId: 'openai',
     classification: ['chat', 'reasoning'],
@@ -370,7 +370,7 @@ export default [
   }),
   defineModel({
     id: 'opencode-claude-opus-4-1',
-    label: 'Claude Opus 4.1',
+    label: 'Anthropic Opus 4.1',
 
     vendorId: 'openai',
     classification: ['chat', 'reasoning'],
@@ -388,7 +388,7 @@ export default [
   }),
   defineModel({
     id: 'opencode-claude-sonnet-4-6',
-    label: 'Claude Sonnet 4.6',
+    label: 'Anthropic Sonnet 4.6',
 
     vendorId: 'openai',
     classification: ['chat', 'reasoning'],
@@ -406,7 +406,7 @@ export default [
   }),
   defineModel({
     id: 'opencode-claude-sonnet-4-5',
-    label: 'Claude Sonnet 4.5',
+    label: 'Anthropic Sonnet 4.5',
 
     vendorId: 'openai',
     classification: ['chat', 'reasoning'],
@@ -424,7 +424,7 @@ export default [
   }),
   defineModel({
     id: 'opencode-claude-sonnet-4',
-    label: 'Claude Sonnet 4',
+    label: 'Anthropic Sonnet 4',
 
     vendorId: 'openai',
     classification: ['chat', 'reasoning'],
@@ -442,7 +442,7 @@ export default [
   }),
   defineModel({
     id: 'opencode-claude-haiku-4-5',
-    label: 'Claude Haiku 4.5',
+    label: 'Anthropic Haiku 4.5',
 
     vendorId: 'openai',
     classification: ['chat'],
@@ -460,7 +460,7 @@ export default [
   }),
   defineModel({
     id: 'opencode-claude-3-5-haiku',
-    label: 'Claude Haiku 3.5',
+    label: 'Anthropic Haiku 3.5',
 
     vendorId: 'openai',
     classification: ['chat'],

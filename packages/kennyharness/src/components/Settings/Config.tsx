@@ -751,7 +751,7 @@ export function Config({
     }
   }, {
     id: 'agentPushNotifEnabled',
-    label: 'Push when Claude decides',
+    label: 'Push when KennyHarness decides',
     value: globalConfig.agentPushNotifEnabled ?? false,
     type: 'boolean' as const,
     onChange(agentPushNotifEnabled: boolean) {
@@ -923,7 +923,7 @@ export function Config({
     }
   }] : []), {
     id: 'claudeInChromeDefaultEnabled',
-    label: 'Claude in Chrome enabled by default',
+    label: 'Browser control in Chrome enabled by default',
     value: globalConfig.claudeInChromeDefaultEnabled ?? true,
     type: 'boolean' as const,
     onChange(enabled_5: boolean) {
@@ -1151,7 +1151,7 @@ export function Config({
     });
     // Check for API key changes
     // On homespace, ANTHROPIC_API_KEY is preserved in process.env for child
-    // processes but ignored by Claude Code itself (see auth.ts).
+    // processes but ignored by KennyHarness itself (see auth.ts).
     const effectiveApiKey = isRunningOnHomespace() ? undefined : process.env.ANTHROPIC_API_KEY;
     const initialUsingCustomKey = Boolean(effectiveApiKey && initialConfig.current.customApiKeyResponses?.approved?.includes(normalizeApiKeyForConfig(effectiveApiKey)));
     const currentUsingCustomKey = Boolean(effectiveApiKey && globalConfig.customApiKeyResponses?.approved?.includes(normalizeApiKeyForConfig(effectiveApiKey)));

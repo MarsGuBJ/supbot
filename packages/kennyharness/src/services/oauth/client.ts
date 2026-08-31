@@ -1,4 +1,4 @@
-// OAuth client for handling authentication flows with Claude services
+// OAuth client for handling authentication flows with Anthropic services
 import axios from 'axios'
 import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
@@ -32,7 +32,7 @@ import type {
 } from './types.js'
 
 /**
- * Check if the user has Claude.ai authentication scope
+ * Check if the user has claude.ai authentication scope
  * @private Only call this if you're OAuth / auth related code!
  */
 export function shouldUseClaudeAIAuth(scopes: string[] | undefined): boolean {
@@ -69,7 +69,7 @@ export function buildAuthUrl({
     : getOauthConfig().CONSOLE_AUTHORIZE_URL
 
   const authUrl = new URL(authUrlBase)
-  authUrl.searchParams.append('code', 'true') // this tells the login page to show Claude Max upsell
+  authUrl.searchParams.append('code', 'true') // this tells the login page to show the Max plan upsell
   authUrl.searchParams.append('client_id', getOauthConfig().CLIENT_ID)
   authUrl.searchParams.append('response_type', 'code')
   authUrl.searchParams.append(
@@ -151,7 +151,7 @@ export async function refreshOAuthToken(
     grant_type: 'refresh_token',
     refresh_token: refreshToken,
     client_id: getOauthConfig().CLIENT_ID,
-    // Request specific scopes, defaulting to the full Claude AI set. The
+    // Request specific scopes, defaulting to the full Anthropic AI set. The
     // backend's refresh-token grant allows scope expansion beyond what the
     // initial authorize granted (see ALLOWED_SCOPE_EXPANSIONS), so this is
     // safe even for tokens issued before scopes were added to the app's

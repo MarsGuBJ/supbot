@@ -841,7 +841,7 @@ function renderControlCenterHtml(status, options = {}) {
         <div class="hero-top">
           <div class="brand">
             <div class="eyebrow">${escapeHtml(viewModel.header.eyebrow)}</div>
-            <div class="wordmark" aria-label="KennyHarness wordmark">Open<span class="wordmark-accent">Claude</span></div>
+            <div class="wordmark" aria-label="KennyHarness wordmark">Kenny<span class="wordmark-accent">Harness</span></div>
             <div class="headline">
               <h1 class="headline-title" id="control-center-title">${escapeHtml(viewModel.header.title)}</h1>
               <p class="headline-subtitle">${escapeHtml(viewModel.header.subtitle)}</p>

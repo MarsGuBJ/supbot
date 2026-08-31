@@ -404,14 +404,14 @@ function getModelOptionsBase(fastMode = false): ModelOption[] {
     return [getDefaultOptionForUser(fastMode), ...getCopilotModelOptions()]
   }
 
-  // When using Ollama, show models from the Ollama server instead of Claude models
+  // When using Ollama, show models from the Ollama server instead of Anthropic models
   if (getAPIProvider() === 'openai' && isOllamaProvider()) {
     const defaultOption = getDefaultOptionForUser(fastMode)
     const ollamaModels = getCachedOllamaModelOptions()
     if (ollamaModels.length > 0) {
       return [defaultOption, ...ollamaModels]
     }
-    // Fallback: if models not yet fetched, show current model instead of Claude models
+    // Fallback: if models not yet fetched, show current model instead of Anthropic models
     const currentModel = getUserSpecifiedModelSetting() ?? getInitialMainLoopModel()
     if (currentModel != null) {
       return [

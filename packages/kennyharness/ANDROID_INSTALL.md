@@ -118,7 +118,7 @@ node dist/cli.mjs
 **`qwen/qwen3.6-plus-preview:free`** — Best free model on OpenRouter as of April 2026.
 
 - 1M token context window
-- Beats Claude 4.5 Opus on Terminal-Bench 2.0 agentic coding (61.6 vs 59.3)
+- Beats Anthropic's Opus 4.5 on Terminal-Bench 2.0 agentic coding (61.6 vs 59.3)
 - Built-in chain-of-thought reasoning
 - Native tool use and function calling
 - $0/M tokens (preview period)

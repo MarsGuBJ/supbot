@@ -81,7 +81,7 @@ import { clearToolSchemaCache } from './toolSchemaCache.js'
 const DEFAULT_API_KEY_HELPER_TTL = 5 * 60 * 1000
 
 /**
- * CCR and Claude Desktop spawn the CLI with OAuth and should never fall back
+ * CCR and the desktop app spawn the CLI with OAuth and should never fall back
  * to the user's ~/.claude/settings.json API-key config (apiKeyHelper,
  * env.ANTHROPIC_API_KEY, env.ANTHROPIC_AUTH_TOKEN). Those settings exist for
  * the user's terminal CLI, not managed sessions. Without this guard, a user
@@ -1550,7 +1550,7 @@ async function checkAndRefreshOAuthTokenIfNeededImpl(
 
     logEvent('tengu_oauth_token_refresh_starting', {})
     const refreshedTokens = await refreshOAuthToken(lockedTokens.refreshToken, {
-      // For Claude.ai subscribers, omit scopes so the default
+      // For claude.ai subscribers, omit scopes so the default
       // CLAUDE_AI_OAUTH_SCOPES applies — this allows scope expansion
       // (e.g. adding user:file_upload) on refresh without re-login.
       scopes: shouldUseClaudeAIAuth(lockedTokens.scopes)
@@ -1606,7 +1606,7 @@ export function hasProfileScope(): boolean {
 
 export function is1PApiCustomer(): boolean {
   // 1P API customers are users who are NOT:
-  // 1. Claude.ai subscribers (Max, Pro, Enterprise, Team)
+  // 1. claude.ai subscribers (Max, Pro, Enterprise, Team)
   // 2. Vertex AI users
   // 3. AWS Bedrock users
   // 4. Foundry users
@@ -1620,7 +1620,7 @@ export function is1PApiCustomer(): boolean {
     return false
   }
 
-  // Exclude Claude.ai subscribers
+  // Exclude claude.ai subscribers
   if (isClaudeAISubscriber()) {
     return false
   }
@@ -1645,7 +1645,7 @@ export function isOverageProvisioningAllowed(): boolean {
   const accountInfo = getOauthAccountInfo()
   const billingType = accountInfo?.billingType
 
-  // Must be a Claude subscriber with a supported subscription type
+  // Must be a claude.ai subscriber with a supported subscription type
   if (!isClaudeAISubscriber() || !billingType) {
     return false
   }
@@ -1737,15 +1737,15 @@ export function getSubscriptionName(): string {
 
   switch (subscriptionType) {
     case 'enterprise':
-      return 'Claude Enterprise'
+      return 'Anthropic Enterprise'
     case 'team':
-      return 'Claude Team'
+      return 'Anthropic Team'
     case 'max':
-      return 'Claude Max'
+      return 'Anthropic Max'
     case 'pro':
-      return 'Claude Pro'
+      return 'Anthropic Pro'
     default:
-      return 'Claude API'
+      return 'Anthropic API'
   }
 }
 

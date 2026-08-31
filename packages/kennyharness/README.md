@@ -162,7 +162,7 @@ Advanced and source-build guides:
 | Xiaomi MiMo | `/provider` or env vars | OpenAI-compatible API at `https://mimo.mi.com`; uses `MIMO_API_KEY` and defaults to `mimo-v2.5-pro` |
 | Ollama | `/provider` or env vars | Local inference with no API key |
 | Atomic Chat | `/provider`, env vars, or `bun run dev:atomic-chat` | Local Model Provider; auto-detects loaded models |
-| Bedrock / Vertex / Foundry | env vars | Anthropic-family cloud routes; Vertex is for Claude on Vertex AI, not arbitrary Model Garden models |
+| Bedrock / Vertex / Foundry | env vars | Anthropic-family cloud routes; Vertex is for Anthropic models on Vertex AI, not arbitrary Model Garden models |
 
 ## What Works
 
@@ -240,7 +240,7 @@ export FIRECRAWL_API_KEY=your-key-here
 
 With Firecrawl enabled:
 
-- `WebSearch` can use Firecrawl's search API while DuckDuckGo remains the default free path for non-Claude models
+- `WebSearch` can use Firecrawl's search API while DuckDuckGo remains the default free path for non-Anthropic models
 - `WebFetch` uses Firecrawl's scrape endpoint instead of raw HTTP, handling JS-rendered pages correctly
 
 Free tier at [firecrawl.dev](https://firecrawl.dev) includes 500 credits. The key is optional.
@@ -375,13 +375,6 @@ For larger changes, open an issue first so the scope is clear before implementat
 - `bun run smoke`
 - focused `bun test ...` runs for files and flows you changed
 
-
-## Disclaimer
-
-KennyHarness is an independent community project and is not affiliated with, endorsed by, or sponsored by Anthropic.
-
-KennyHarness originated from the Claude Code codebase and has since been substantially modified to support multiple providers and open use. "Claude" and "Claude Code" are trademarks of Anthropic PBC. See [LICENSE](LICENSE) for details.
-
 ## License
 
-See [LICENSE](LICENSE).
+MIT License, copyright (c) 2026 ishu. See [LICENSE](LICENSE).

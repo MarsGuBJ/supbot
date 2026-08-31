@@ -199,7 +199,7 @@ describe('extractCacheMetrics — Copilot / Ollama (unsupported)', () => {
     expect(m.hitRate).toBeNull()
   })
 
-  test('Copilot serving Claude (copilot-claude) is supported and uses Anthropic fields', () => {
+  test('Copilot serving Anthropic models (copilot-claude) is supported and uses Anthropic fields', () => {
     const usage = {
       input_tokens: 200,
       cache_read_input_tokens: 800,

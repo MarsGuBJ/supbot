@@ -113,7 +113,7 @@ export function modelSupportsISP(model: string): boolean {
 
 function vertexModelSupportsWebSearch(model: string): boolean {
   const canonical = getCanonicalName(model)
-  // Web search only supported on Claude 4.0+ models on Vertex
+  // Web search only supported on Anthropic 4.0+ models on Vertex
   return (
     canonical.includes('claude-opus-4') ||
     canonical.includes('claude-sonnet-4') ||
@@ -121,7 +121,7 @@ function vertexModelSupportsWebSearch(model: string): boolean {
   )
 }
 
-// Context management is supported on Claude 4+ models
+// Context management is supported on Anthropic 4+ models
 export function modelSupportsContextManagement(model: string): boolean {
   const canonical = getCanonicalName(model)
   const provider = getAPIProvider()
@@ -196,7 +196,7 @@ export function modelSupportsAutoMode(model: string): boolean {
 
 /**
  * Get the correct tool search beta header for the current API provider.
- * - Claude API / Foundry: advanced-tool-use-2025-11-20
+ * - Anthropic API / Foundry: advanced-tool-use-2025-11-20
  * - Vertex AI / Bedrock: tool-search-tool-2025-10-19
  */
 export function getToolSearchBetaHeader(): string {
@@ -342,7 +342,7 @@ export const getAllModelBetas = memoize((model: string): string[] => {
     betaHeaders.push(TOKEN_EFFICIENT_TOOLS_BETA_HEADER)
   }
 
-  // Add web search beta for Vertex Claude 4.0+ models only
+  // Add web search beta for Vertex Anthropic 4.0+ models only
   if (provider === 'vertex' && vertexModelSupportsWebSearch(model)) {
     betaHeaders.push(WEB_SEARCH_BETA_HEADER)
   }

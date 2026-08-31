@@ -12,7 +12,7 @@ export type ModelConfig = LegacyProviderModelConfig
 
 // ---------------------------------------------------------------------------
 // OpenAI-compatible model mappings
-// Maps Claude model tiers to sensible defaults for popular providers.
+// Maps Anthropic model tiers to sensible defaults for popular providers.
 // Override with OPENAI_MODEL, ANTHROPIC_MODEL, or settings.model
 // ---------------------------------------------------------------------------
 export const OPENAI_MODEL_DEFAULTS = {
@@ -23,7 +23,7 @@ export const OPENAI_MODEL_DEFAULTS = {
 
 // ---------------------------------------------------------------------------
 // Gemini model mappings
-// Maps Claude model tiers to Google Gemini equivalents.
+// Maps Anthropic model tiers to Google Gemini equivalents.
 // Override with GEMINI_MODEL env var.
 // ---------------------------------------------------------------------------
 export const GEMINI_MODEL_DEFAULTS = {

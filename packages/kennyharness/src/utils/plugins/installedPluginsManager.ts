@@ -794,8 +794,8 @@ export function removeAllPluginsForMarketplace(marketplaceName: string): {
  * - user/managed scopes: always relevant (global)
  * - project/local scopes: only if projectPath matches the current project
  *
- * getOriginalCwd() (not getCwd()) because "current project" is where Claude
- * Code was launched from, not wherever the working directory has drifted to.
+ * getOriginalCwd() (not getCwd()) because "current project" is where KennyHarness
+ * was launched from, not wherever the working directory has drifted to.
  */
 export function isInstallationRelevantToCurrentProject(
   inst: PluginInstallationEntry,

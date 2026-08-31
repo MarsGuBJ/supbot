@@ -1,7 +1,7 @@
 import { defineGateway } from '../define.js'
 
 /**
- * GitHub Copilot has a special native-Claude path for Claude models.
+ * GitHub Copilot has a special native-Anthropic path for Anthropic models.
  * When the model string contains "claude-", the runtime routes through
  * the native Anthropic path instead of the OpenAI shim to enable prompt
  * caching. This exception is handled in openaiShim.ts and providers.ts
@@ -45,7 +45,7 @@ export default defineGateway({
   catalog: {
     source: 'static',
     models: [
-      { id: 'github-claude-sonnet', apiName: 'claude-sonnet-4-6', label: 'Claude Sonnet (GitHub)', modelDescriptorId: 'claude-sonnet-4-6' },
+      { id: 'github-claude-sonnet', apiName: 'claude-sonnet-4-6', label: 'Anthropic Sonnet (GitHub)', modelDescriptorId: 'claude-sonnet-4-6' },
       { id: 'github-gpt-4o', apiName: 'gpt-4o', label: 'GPT-4o (GitHub)', modelDescriptorId: 'gpt-4o' },
     ],
   },

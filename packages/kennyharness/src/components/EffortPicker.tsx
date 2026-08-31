@@ -99,7 +99,7 @@ export function EffortPicker({ onSelect, onCancel }: Props) {
   const supportsEffort = modelSupportsEffort(model)
   // For OpenAI/Codex: prefer the user's current selection (max → xhigh for
   // option matching), otherwise the model's alias default, otherwise auto.
-  // For Claude: user's current selection or auto.
+  // For Anthropic: user's current selection or auto.
   const initialFocus = usesOpenAIEffort
     ? (appStateEffort === 'max'
         ? 'xhigh'
@@ -116,7 +116,7 @@ export function EffortPicker({ onSelect, onCancel }: Props) {
             {supportsEffort && usesOpenAIEffort
               ? `OpenAI/Codex provider (${provider})`
               : supportsEffort
-              ? `Claude model · ${provider} provider`
+              ? `Anthropic model · ${provider} provider`
               : `Effort not supported for this model`
           }
         </Text>

@@ -89,7 +89,7 @@ describe('getAgentModel provider-aware fallback', () => {
     }
   })
 
-  describe('Claude-native providers', () => {
+  describe('Anthropic-native providers', () => {
     test('haiku alias resolves to haiku model for official Anthropic API', async () => {
       // Mock providers to return firstParty with official URL
       mockProvider('firstParty', true)
@@ -134,7 +134,7 @@ describe('getAgentModel provider-aware fallback', () => {
     })
   })
 
-  describe('Non-Claude-native providers', () => {
+  describe('Non-Anthropic-native providers', () => {
     test('haiku alias inherits parent model for OpenAI provider', async () => {
       mockProvider('openai')
 
@@ -312,7 +312,7 @@ describe('getAgentModel provider-aware fallback', () => {
       ).toBe('claude-3-5-haiku-20241022')
     })
 
-    test('keeps existing direct alias parsing for non-Claude providers', async () => {
+    test('keeps existing direct alias parsing for non-Anthropic providers', async () => {
       mockProvider('openai')
       delete process.env.OPENAI_MODEL
 

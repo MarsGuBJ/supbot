@@ -1,7 +1,7 @@
 export const PRODUCT_DISPLAY_NAME = 'KennyHarness'
 export const PRODUCT_URL = 'https://claude.com/claude-code'
 
-// Claude Code Remote session URLs
+// KennyHarness Remote session URLs
 export const CLAUDE_AI_BASE_URL = 'https://claude.ai'
 export const CLAUDE_AI_STAGING_BASE_URL = 'https://claude-ai.staging.ant.dev'
 export const CLAUDE_AI_LOCAL_BASE_URL = 'http://localhost:4000'
@@ -35,7 +35,7 @@ export function isRemoteSessionLocal(
 }
 
 /**
- * Get the base URL for Claude AI based on environment.
+ * Get the base URL for claude.ai based on environment.
  */
 export function getClaudeAiBaseUrl(
   sessionId?: string,

@@ -3,7 +3,7 @@ import { defineModel } from '../define.js'
 export default [
   defineModel({
     id: 'claude-sonnet-4-6',
-    label: 'Claude Sonnet 4.6',
+    label: 'Anthropic Sonnet 4.6',
     brandId: 'claude',
     vendorId: 'anthropic',
     classification: ['chat', 'reasoning', 'vision', 'coding'],
@@ -21,7 +21,7 @@ export default [
   }),
   defineModel({
     id: 'claude-opus-4-7',
-    label: 'Claude Opus 4.7',
+    label: 'Anthropic Opus 4.7',
     brandId: 'claude',
     vendorId: 'anthropic',
     classification: ['chat', 'reasoning', 'vision', 'coding'],
@@ -39,7 +39,7 @@ export default [
   }),
   defineModel({
     id: 'claude-opus-4-6',
-    label: 'Claude Opus 4.6',
+    label: 'Anthropic Opus 4.6',
     brandId: 'claude',
     vendorId: 'anthropic',
     classification: ['chat', 'reasoning', 'vision', 'coding'],
@@ -57,7 +57,7 @@ export default [
   }),
   defineModel({
     id: 'claude-haiku-4-5',
-    label: 'Claude Haiku 4.5',
+    label: 'Anthropic Haiku 4.5',
     brandId: 'claude',
     vendorId: 'anthropic',
     classification: ['chat', 'vision'],

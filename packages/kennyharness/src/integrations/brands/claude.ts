@@ -2,7 +2,7 @@ import { defineBrand } from '../define.js'
 
 export default defineBrand({
   id: 'claude',
-  label: 'Claude',
+  label: 'Anthropic',
   canonicalVendorId: 'anthropic',
   defaultCapabilities: {
     supportsVision: true,

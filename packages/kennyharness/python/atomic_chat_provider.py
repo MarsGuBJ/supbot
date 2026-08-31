@@ -2,7 +2,7 @@
 atomic_chat_provider.py
 -----------------------
 Adds native Atomic Chat support to kennyharness.
-Lets Claude Code route requests to any locally-running model via
+Lets KennyHarness route requests to any locally-running model via
 Atomic Chat (Apple Silicon only) at 127.0.0.1:1337.
 
 Atomic Chat exposes an OpenAI-compatible API, so messages are forwarded

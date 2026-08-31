@@ -70,7 +70,7 @@ describe('KennyHarness settings path surfaces', () => {
     })
   })
 
-  test('permission dialog treats ~/.kennyharness as the global Claude folder', () => {
+  test('permission dialog treats ~/.kennyharness as the global KennyHarness folder', () => {
     process.env.CLAUDE_CONFIG_DIR = join(homedir(), '.kennyharness')
 
     expect(
@@ -83,7 +83,7 @@ describe('KennyHarness settings path surfaces', () => {
     ).toBe(true)
   })
 
-  test('permission dialog does not treat arbitrary CLAUDE_CONFIG_DIR as the global Claude folder', () => {
+  test('permission dialog does not treat arbitrary CLAUDE_CONFIG_DIR as the global KennyHarness folder', () => {
     process.env.CLAUDE_CONFIG_DIR = join(homedir(), 'custom-kennyharness')
 
     expect(
@@ -127,7 +127,7 @@ describe('KennyHarness settings path surfaces', () => {
 })
 
 describe('KennyHarness validation tips', () => {
-  test('permissions.defaultMode invalid value keeps suggestion but no Claude docs link', () => {
+  test('permissions.defaultMode invalid value keeps suggestion but no docs link', () => {
     const tip = getValidationTip({
       path: 'permissions.defaultMode',
       code: 'invalid_value',

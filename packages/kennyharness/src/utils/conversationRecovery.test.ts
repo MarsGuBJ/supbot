@@ -148,7 +148,7 @@ test('loadConversationForResume rejects oversized reconstructed transcripts', as
   )
 })
 
-test('deserializeMessages preserves thinking blocks for GitHub native Claude transport', async () => {
+test('deserializeMessages preserves thinking blocks for GitHub native Anthropic transport', async () => {
   clearProviderEnv()
   process.env.CLAUDE_CODE_USE_GITHUB = '1'
   process.env.OPENAI_MODEL = 'claude-sonnet-4-6'

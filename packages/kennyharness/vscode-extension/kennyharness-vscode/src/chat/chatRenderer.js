@@ -602,7 +602,7 @@ function renderChatHtml({ nonce, platform }) {
 </head>
 <body>
   <div class="chat-header">
-    <div class="brand">Open<span class="brand-accent">Claude</span></div>
+    <div class="brand">Kenny<span class="brand-accent">Harness</span></div>
     <button class="header-btn" id="historyBtn" title="Session history">History</button>
     <button class="header-btn" id="newChatBtn" title="New chat">+ New</button>
     <button class="header-btn danger" id="abortBtn" title="Abort generation">Stop</button>
@@ -615,7 +615,7 @@ function renderChatHtml({ nonce, platform }) {
 
   <div class="messages" id="messages">
     <div class="welcome" id="welcomeScreen">
-      <div class="welcome-title">Open<span class="accent">Claude</span></div>
+      <div class="welcome-title">Kenny<span class="accent">Harness</span></div>
       <div class="welcome-sub">Ask a question, request a code change, or start a new task.</div>
       <div class="welcome-hint">Press <kbd>${escapeHtml(modKey)}+L</kbd> to focus input</div>
     </div>

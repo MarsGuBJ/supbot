@@ -2,7 +2,7 @@
 
 ## Brand
 
-A shared model-family identity such as Claude, GPT, Kimi, DeepSeek, Llama, or
+A shared model-family identity such as Anthropic, GPT, Kimi, DeepSeek, Llama, or
 Qwen. Brands provide reusable family-level metadata and help related model
 descriptors stay organized.
 

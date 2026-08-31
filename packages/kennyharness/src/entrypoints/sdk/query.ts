@@ -1031,9 +1031,9 @@ export function query(params: {
   // Note: We pass settings?.env to QueryImpl for application AFTER init() runs.
   // This ensures our env vars override config file env vars, not vice versa.
   // init() calls applyConfigEnvironmentVariables() which would override pre-applied env.
-  // Top-level `env` takes precedence over `settings.env` for Claude SDK compatibility.
+  // Top-level `env` takes precedence over `settings.env` for Agent SDK compatibility.
   // NOTE: undefined values are KEPT and treated as explicit unset requests
-  // (Claude SDK convention: { FOO: undefined } means "unset inherited FOO")
+  // (Agent SDK convention: { FOO: undefined } means "unset inherited FOO")
   const rawEnvOverrides = options.env ?? settings?.env
   const envOverrides: Record<string, string | undefined> | undefined = rawEnvOverrides
 
