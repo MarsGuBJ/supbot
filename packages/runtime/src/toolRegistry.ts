@@ -5,6 +5,8 @@ import type {
   LocalPackageInstallResult,
   SubagentConfig,
   ToolCallRecord,
+  UserQuestionAnswer,
+  UserQuestionItem,
 } from "@supbot/shared";
 import type { OpenAiToolDefinition } from "./modelAdapter";
 import { readLocalFile, shellLocalCommand, writeLocalFile, type LocalToolHost } from "./localTools";
@@ -35,6 +37,7 @@ export interface ToolExecutionContext {
   installPackageArchive?(input: { path: string; expectedSha256: string }): Promise<LocalPackageInstallResult>;
   subagents: SubagentConfig[];
   runSubagent(input: { subagentType?: string; prompt: string; signal: AbortSignal }): Promise<ToolExecutionResult>;
+  askUserQuestion?(input: { questions: UserQuestionItem[] }): Promise<UserQuestionAnswer[]>;
 }
 
 export interface ToolDefinition {
@@ -276,7 +279,103 @@ export function defaultToolDefinitions(): ToolDefinition[] {
         });
       },
     },
+    {
+      name: "AskUserQuestion",
+      description:
+        "Ask the user one or more questions with clickable options and wait for their answers. Use this whenever you need the user to make a choice or provide input before you can proceed, instead of listing questions in plain text and waiting for a reply. Each question offers 2-4 options plus an optional free-text note from the user.",
+      risk: "read",
+      concurrency: "safe",
+      interruptBehavior: "cancel",
+      usesWorkspace: false,
+      parameters: {
+        type: "object",
+        properties: {
+          questions: {
+            type: "array",
+            description: "One to four questions to ask the user.",
+            minItems: 1,
+            maxItems: 4,
+            items: {
+              type: "object",
+              properties: {
+                question: { type: "string", description: "The question to ask." },
+                multiSelect: {
+                  type: "boolean",
+                  description: "Whether the user may select multiple options.",
+                },
+                options: {
+                  type: "array",
+                  description: "Two to four answer options the user can pick from.",
+                  minItems: 2,
+                  maxItems: 4,
+                  items: {
+                    type: "object",
+                    properties: {
+                      label: { type: "string", description: "Short display text for this option." },
+                      description: { type: "string", description: "Optional explanation of this option." },
+                    },
+                    required: ["label"],
+                    additionalProperties: false,
+                  },
+                },
+              },
+              required: ["question", "options", "multiSelect"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["questions"],
+        additionalProperties: false,
+      },
+      summarize(input) {
+        const parsed = objectInput(input);
+        const questions = Array.isArray(parsed.questions) ? parsed.questions : [];
+        const first = questions.length ? objectInput(questions[0]).question : "";
+        return `Ask user: ${String(first || "").slice(0, 100)}`;
+      },
+      async execute(input, context) {
+        if (!context.askUserQuestion) {
+          throw new Error("Asking the user questions is not available in this runtime.");
+        }
+        const parsed = objectInput(input);
+        const questions = parseUserQuestions(parsed.questions);
+        const answers = await context.askUserQuestion({ questions });
+        return { text: formatUserQuestionAnswers(answers) };
+      },
+    },
   ];
+}
+
+function parseUserQuestions(value: unknown): UserQuestionItem[] {
+  if (!Array.isArray(value) || !value.length) {
+    throw new Error("questions must be a non-empty array.");
+  }
+  return value.map((item, index) => {
+    const parsed = objectInput(item);
+    const question = requiredString(parsed.question, `questions[${index}].question`);
+    const rawOptions = Array.isArray(parsed.options) ? parsed.options : [];
+    if (rawOptions.length < 2) {
+      throw new Error(`questions[${index}].options must contain at least 2 options.`);
+    }
+    const options = rawOptions.map((option, optionIndex) => {
+      const parsedOption = objectInput(option);
+      const label = requiredString(parsedOption.label, `questions[${index}].options[${optionIndex}].label`);
+      const description =
+        typeof parsedOption.description === "string" && parsedOption.description.trim()
+          ? parsedOption.description
+          : undefined;
+      return description ? { label, description } : { label };
+    });
+    return { question, options, multiSelect: parsed.multiSelect === true };
+  });
+}
+
+function formatUserQuestionAnswers(answers: UserQuestionAnswer[]): string {
+  const lines = answers.map((answer) => {
+    const picked = answer.answers.length ? answer.answers.join(", ") : "(no answer)";
+    return `Q: ${answer.question}\nA: ${picked}`;
+  });
+  return ["User answers:", ...lines].join("\n");
 }
 
 export function objectInput(input: unknown): Record<string, unknown> {

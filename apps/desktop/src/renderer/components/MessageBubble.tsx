@@ -19,6 +19,7 @@ import type { ChatMessage, GeneratedFile } from "@supbot/shared";
 import { statusColor, statusLabel } from "@supbot/shared";
 import { formatToolPayload, shouldShowGeneratedFileInChat } from "../lib/chatFormat";
 import { writeClipboardText } from "../lib/clipboard";
+import { QuestionBlock } from "./QuestionBlock";
 
 export const MessageBubble = memo(function MessageBubble({
   message: item,
@@ -252,6 +253,9 @@ export function MessageBlocks({
               <pre>{block.output.slice(0, 2400)}</pre>
             </div>
           );
+        }
+        if (block.type === "question") {
+          return <QuestionBlock block={block} t={t} key={`${message.id}-${block.questionId}`} />;
         }
         return <Alert key={`${message.id}-${index}`} type="error" message={block.message} />;
       })}

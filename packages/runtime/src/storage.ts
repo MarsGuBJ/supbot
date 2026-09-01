@@ -27,6 +27,7 @@ import {
   type ModelConfig,
   type ModelProviderConfig,
   type PendingToolPermission,
+  type PendingUserQuestion,
   type PermissionMode,
   type PermissionRule,
   type Project,
@@ -70,6 +71,7 @@ export interface RuntimeState {
   autopilotCheckpoints: AutopilotCheckpoint[];
   dataArtifacts: DataArtifact[];
   pendingToolPermissions: PendingToolPermission[];
+  pendingUserQuestions: PendingUserQuestion[];
   agentLoopTraces: AgentLoopTrace[];
   querySessions: QuerySession[];
   runtimeEvents: RuntimeEventRecord[];
@@ -230,6 +232,7 @@ export function createInitialState(): RuntimeState {
     autopilotCheckpoints: [],
     dataArtifacts: [],
     pendingToolPermissions: [],
+    pendingUserQuestions: [],
     agentLoopTraces: [],
     querySessions: [],
     runtimeEvents: [],
@@ -401,6 +404,7 @@ function normalizeState(input: LegacyRuntimeStateInput): RuntimeState {
       ? (input.dataArtifacts.map(normalizeDataArtifact).filter(Boolean) as DataArtifact[])
       : [],
     pendingToolPermissions: Array.isArray(input.pendingToolPermissions) ? input.pendingToolPermissions : [],
+    pendingUserQuestions: Array.isArray(input.pendingUserQuestions) ? input.pendingUserQuestions : [],
     agentLoopTraces: Array.isArray(input.agentLoopTraces) ? input.agentLoopTraces : [],
     querySessions: Array.isArray(input.querySessions) ? input.querySessions : [],
     runtimeEvents: Array.isArray(input.runtimeEvents) ? input.runtimeEvents : [],

@@ -261,3 +261,57 @@ describe("ToolExecutor project boundaries", () => {
     expect(result.record.error).toContain("Permission timed out");
   });
 });
+
+describe("AskUserQuestion tool", () => {
+  const askTool = () => {
+    const tool = new ToolRegistry().get("AskUserQuestion");
+    expect(tool).toBeDefined();
+    return tool!;
+  };
+
+  test("returns the user's answers as tool output", async () => {
+    const { context } = await setup();
+    const { result } = await execute(
+      askTool(),
+      {
+        ...context,
+        askUserQuestion: async ({ questions }) =>
+          questions.map((item) => ({ question: item.question, answers: ["A", "custom note"] })),
+      },
+      {
+        questions: [
+          {
+            question: "Pick one",
+            multiSelect: false,
+            options: [{ label: "A" }, { label: "B", description: "second" }],
+          },
+        ],
+      },
+    );
+    expect(result.record.status).toBe("completed");
+    expect(result.toolResultText).toContain("Q: Pick one");
+    expect(result.toolResultText).toContain("A: A, custom note");
+  });
+
+  test("rejects questions with fewer than two options", async () => {
+    const { context } = await setup();
+    const { result } = await execute(
+      askTool(),
+      {
+        ...context,
+        askUserQuestion: async () => [],
+      },
+      { questions: [{ question: "Pick one", multiSelect: false, options: [{ label: "A" }] }] },
+    );
+    expect(result.record.status).toBe("failed");
+  });
+
+  test("fails when the runtime cannot ask questions", async () => {
+    const { context } = await setup();
+    const { result } = await execute(askTool(), context, {
+      questions: [{ question: "Pick one", multiSelect: false, options: [{ label: "A" }, { label: "B" }] }],
+    });
+    expect(result.record.status).toBe("failed");
+    expect(result.toolResultText).toContain("not available");
+  });
+});

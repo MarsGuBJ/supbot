@@ -22,7 +22,7 @@ import { queryLoop } from "../src/queryLoop";
 import { CompactManager } from "../src/compactManager";
 import { normalizeMarketApiUrl } from "../src/toolMarket";
 import { defaultModelConfig } from "@supbot/shared";
-import type { ChatMessage, CompactBoundary } from "@supbot/shared";
+import type { AgentJob, ChatMessage, CompactBoundary } from "@supbot/shared";
 
 const tempDirs: string[] = [];
 
@@ -6940,5 +6940,265 @@ describe("CompactManager context limits", () => {
     const bigger = [...grown, ...messagesOf(Array(3).fill(40_000))];
     // active = 600K >= 600K
     expect(manager.shouldCompact(bigger, [boundary])).toBe(true);
+  });
+});
+
+describe("user questions", () => {
+  interface RuntimeInternals {
+    appendMessage(conversationId: string, message: ChatMessage): void;
+    requestUserQuestion(
+      jobId: string,
+      conversationId: string,
+      questions: { question: string; options: { label: string }[]; multiSelect: boolean }[],
+    ): Promise<{ question: string; answers: string[] }[]>;
+    resolveJobQuestions(jobId: string): void;
+    runningJobs: Map<string, { controller: AbortController }>;
+  }
+
+  const internals = (runtime: SupbotRuntime): RuntimeInternals => runtime as unknown as RuntimeInternals;
+
+  const sampleQuestions = [{ question: "Pick one", options: [{ label: "A" }, { label: "B" }], multiSelect: false }];
+
+  function seedRunningAssistant(runtime: SupbotRuntime, conversationId: string, jobId: string): void {
+    internals(runtime).runningJobs.set(jobId, { controller: new AbortController() });
+    internals(runtime).appendMessage(conversationId, {
+      id: `msg-${jobId}`,
+      conversationId,
+      role: "assistant",
+      text: "HyBot is thinking...",
+      createdAt: new Date().toISOString(),
+      jobId,
+      status: "running",
+    });
+  }
+
+  function questionBlockStatus(runtime: SupbotRuntime, conversationId: string, messageId: string) {
+    const message = runtime.snapshot(conversationId).conversations[0]?.messages.find((item) => item.id === messageId);
+    const block = message?.blocks?.find((item) => item.type === "question");
+    return block && block.type === "question" ? block.status : undefined;
+  }
+
+  test("answering resolves the pending question and updates the message block", async () => {
+    const runtime = await createRuntime();
+    const conversation = await runtime.createConversation("question flow");
+    seedRunningAssistant(runtime, conversation.id, "job-q1");
+    const pending = internals(runtime).requestUserQuestion("job-q1", conversation.id, sampleQuestions);
+    const question = runtime.snapshot(conversation.id).pendingUserQuestions[0];
+    expect(question).toBeDefined();
+    expect(questionBlockStatus(runtime, conversation.id, "msg-job-q1")).toBe("pending");
+    await runtime.answerUserQuestion(question.id, [{ question: "Pick one", answers: ["A", "note"] }]);
+    await expect(pending).resolves.toEqual([{ question: "Pick one", answers: ["A", "note"] }]);
+    expect(runtime.snapshot(conversation.id).pendingUserQuestions).toEqual([]);
+    expect(questionBlockStatus(runtime, conversation.id, "msg-job-q1")).toBe("answered");
+  });
+
+  test("canceling the job rejects the question and marks the block canceled", async () => {
+    const runtime = await createRuntime();
+    const conversation = await runtime.createConversation("question cancel");
+    seedRunningAssistant(runtime, conversation.id, "job-q2");
+    const pending = internals(runtime).requestUserQuestion("job-q2", conversation.id, sampleQuestions);
+    const assertion = expect(pending).rejects.toThrow("Question canceled");
+    internals(runtime).resolveJobQuestions("job-q2");
+    await assertion;
+    expect(runtime.snapshot(conversation.id).pendingUserQuestions).toEqual([]);
+    expect(questionBlockStatus(runtime, conversation.id, "msg-job-q2")).toBe("canceled");
+  });
+
+  test("init marks questions left pending by a previous run as canceled", async () => {
+    const { runtime, dataDir, rootDir } = await createRuntimeWithPaths();
+    const conversation = await runtime.createConversation("stale question");
+    const statePath = join(dataDir, "state.json");
+    const state = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
+    state.conversations = [
+      {
+        ...(state.conversations as Record<string, unknown>[])[0],
+        messages: [
+          {
+            id: "msg-stale",
+            conversationId: conversation.id,
+            role: "assistant",
+            text: "HyBot is thinking...",
+            createdAt: new Date().toISOString(),
+            jobId: "job-stale",
+            status: "running",
+            blocks: [{ type: "question", questionId: "q-stale", questions: sampleQuestions, status: "pending" }],
+          },
+        ],
+      },
+    ];
+    state.pendingUserQuestions = [
+      {
+        id: "q-stale",
+        jobId: "job-stale",
+        conversationId: conversation.id,
+        questions: sampleQuestions,
+        createdAt: new Date().toISOString(),
+      },
+    ];
+    await writeFile(statePath, JSON.stringify(state));
+    const reloaded = new SupbotRuntime(new JsonFileStorage(dataDir), { rootDir });
+    await reloaded.init();
+    const snapshot = reloaded.snapshot(conversation.id);
+    expect(snapshot.pendingUserQuestions).toEqual([]);
+    expect(questionBlockStatus(reloaded, conversation.id, "msg-stale")).toBe("canceled");
+  });
+
+  test("answering an unknown question id is a no-op", async () => {
+    const runtime = await createRuntime();
+    await expect(runtime.answerUserQuestion("question-missing", [])).resolves.toBeUndefined();
+  });
+});
+
+describe("interrupt and resume", () => {
+  interface InterruptInternals {
+    state: {
+      jobs: AgentJob[];
+    };
+    markAssistantMessageStatus(conversationId: string, jobId: string, status: string): void;
+  }
+
+  const internals = (runtime: SupbotRuntime): InterruptInternals => runtime as unknown as InterruptInternals;
+
+  const askFirst = {
+    choices: [
+      {
+        message: {
+          content: null,
+          tool_calls: [
+            {
+              id: "call_ask_1",
+              type: "function",
+              function: {
+                name: "AskUserQuestion",
+                arguments: JSON.stringify({
+                  questions: [{ question: "Pick one", multiSelect: false, options: [{ label: "A" }, { label: "B" }] }],
+                }),
+              },
+            },
+          ],
+        },
+      },
+    ],
+  };
+
+  test("interrupting a question-blocked job marks it waiting_user and preserves the message", async () => {
+    const runtime = await createRuntime();
+    const mock = await withMockModel(runtime, (_body, call) =>
+      call === 1 ? askFirst : { choices: [{ message: { content: "continued after resume" } }] },
+    );
+    try {
+      const result = await runtime.sendPrompt({ prompt: "ask me something" });
+      await waitForCondition("pending question", () => runtime.snapshot().pendingUserQuestions.length === 1);
+      await runtime.interruptJob(result.job.id);
+      await waitForCondition(
+        "job waiting_user",
+        () => runtime.snapshot().jobs.find((item) => item.id === result.job.id)?.status === "waiting_user",
+      );
+      expect(runtime.snapshot().pendingUserQuestions).toHaveLength(0);
+      const conversation = runtime.snapshot(result.conversation.id).conversations[0];
+      const interrupted = conversation.messages.find((item) => item.jobId === result.job.id);
+      expect(interrupted?.status).toBe("waiting_user");
+      expect(interrupted?.text).toBe("Interrupted.");
+      const questionBlock = interrupted?.blocks?.find((block) => block.type === "question");
+      expect(questionBlock && questionBlock.type === "question" ? questionBlock.status : undefined).toBe("canceled");
+
+      const followUp = await runtime.resumeJob(result.job.id);
+      expect(runtime.snapshot().jobs.find((item) => item.id === result.job.id)?.status).toBe("canceled");
+      await waitForJob(runtime, followUp.id);
+      expect(runtime.snapshot().jobs.find((item) => item.id === followUp.id)?.status).toBe("completed");
+      const after = runtime.snapshot(result.conversation.id).conversations[0];
+      expect(after.messages.some((item) => item.jobId === result.job.id && item.text === "Interrupted.")).toBe(true);
+      expect(
+        after.messages.some((item) => item.jobId === followUp.id && item.text.includes("continued after resume")),
+      ).toBe(true);
+    } finally {
+      await mock.close();
+    }
+  });
+
+  test("resumeJob rejects jobs that are not waiting_user", async () => {
+    const runtime = await createRuntime();
+    const mock = await withMockModel(runtime, () => ({ choices: [{ message: { content: "done" } }] }));
+    try {
+      const result = await runtime.sendPrompt({ prompt: "hello" });
+      await waitForJob(runtime, result.job.id);
+      await expect(runtime.resumeJob(result.job.id)).rejects.toThrow("waiting_user");
+    } finally {
+      await mock.close();
+    }
+  });
+
+  test("a new prompt supersedes a waiting_user job", async () => {
+    const runtime = await createRuntime();
+    const mock = await withMockModel(runtime, (_body, call) =>
+      call === 1 ? askFirst : { choices: [{ message: { content: "fresh answer" } }] },
+    );
+    try {
+      const first = await runtime.sendPrompt({ prompt: "ask me something" });
+      await waitForCondition("pending question", () => runtime.snapshot().pendingUserQuestions.length === 1);
+      await runtime.interruptJob(first.job.id);
+      await waitForCondition(
+        "job waiting_user",
+        () => runtime.snapshot().jobs.find((item) => item.id === first.job.id)?.status === "waiting_user",
+      );
+      const second = await runtime.sendPrompt({ conversationId: first.conversation.id, prompt: "never mind" });
+      expect(runtime.snapshot().jobs.find((item) => item.id === first.job.id)?.status).toBe("canceled");
+      await waitForJob(runtime, second.job.id);
+      expect(runtime.snapshot().jobs.find((item) => item.id === second.job.id)?.status).toBe("completed");
+    } finally {
+      await mock.close();
+    }
+  });
+
+  test("interrupting a queued job without a live controller settles it as waiting_user", async () => {
+    const runtime = await createRuntime();
+    const conversation = await runtime.createConversation("queued interrupt");
+    const now = new Date().toISOString();
+    internals(runtime).state.jobs.unshift({
+      id: "job-queued",
+      conversationId: conversation.id,
+      prompt: "queued work",
+      status: "queued",
+      workspaceMode: "main",
+      diffStatus: "unavailable",
+      createdAt: now,
+      updatedAt: now,
+      progress: [],
+    });
+    const job = await runtime.interruptJob("job-queued");
+    expect(job.status).toBe("waiting_user");
+    expect(runtime.snapshot().jobs.find((item) => item.id === "job-queued")?.status).toBe("waiting_user");
+  });
+
+  test("markAssistantMessageStatus keeps partial text and only changes status", async () => {
+    const runtime = await createRuntime();
+    const conversation = await runtime.createConversation("partial text");
+    const now = new Date().toISOString();
+    internals(runtime).state.jobs.unshift({
+      id: "job-partial",
+      conversationId: conversation.id,
+      prompt: "work",
+      status: "running",
+      workspaceMode: "main",
+      diffStatus: "unavailable",
+      createdAt: now,
+      updatedAt: now,
+      progress: [],
+    });
+    (runtime as unknown as { appendMessage(id: string, message: ChatMessage): void }).appendMessage(conversation.id, {
+      id: "msg-partial",
+      conversationId: conversation.id,
+      role: "assistant",
+      text: "partial answer so far",
+      createdAt: now,
+      jobId: "job-partial",
+      status: "running",
+    });
+    internals(runtime).markAssistantMessageStatus(conversation.id, "job-partial", "waiting_user");
+    const message = runtime
+      .snapshot(conversation.id)
+      .conversations[0]?.messages.find((item) => item.id === "msg-partial");
+    expect(message?.text).toBe("partial answer so far");
+    expect(message?.status).toBe("waiting_user");
   });
 });

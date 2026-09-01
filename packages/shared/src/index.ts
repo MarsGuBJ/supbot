@@ -2,7 +2,7 @@ export type RuntimeStatus = "ready" | "running" | "error";
 
 export type MessageRole = "system" | "user" | "assistant" | "tool";
 
-export type JobStatus = "queued" | "running" | "completed" | "failed" | "canceled";
+export type JobStatus = "queued" | "running" | "waiting_user" | "completed" | "failed" | "canceled";
 
 export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan";
 
@@ -1394,6 +1394,13 @@ export type ChatMessageBlock =
   | { type: "compact_summary"; boundaryId: string; summary: string }
   | { type: "subagent_start"; agentName: string; prompt: string; taskId?: string }
   | { type: "subagent_done"; agentName: string; output: string; taskId?: string; isError?: boolean }
+  | {
+      type: "question";
+      questionId: string;
+      questions: UserQuestionItem[];
+      status: "pending" | "answered" | "canceled";
+      answers?: UserQuestionAnswer[];
+    }
   | { type: "error"; message: string };
 
 export type ToolCallStatus = "pending_permission" | "running" | "completed" | "failed" | "denied";
@@ -1456,6 +1463,30 @@ export interface ToolCallRecord {
   }>;
   outputTruncated?: boolean;
   error?: string;
+}
+
+export interface UserQuestionOption {
+  label: string;
+  description?: string;
+}
+
+export interface UserQuestionItem {
+  question: string;
+  options: UserQuestionOption[];
+  multiSelect: boolean;
+}
+
+export interface UserQuestionAnswer {
+  question: string;
+  answers: string[];
+}
+
+export interface PendingUserQuestion {
+  id: string;
+  jobId: string;
+  conversationId: string;
+  questions: UserQuestionItem[];
+  createdAt: string;
 }
 
 export interface PendingToolPermission {
@@ -1811,6 +1842,7 @@ export interface RuntimeSnapshot {
   autopilotCheckpoints: AutopilotCheckpoint[];
   dataArtifacts: DataArtifact[];
   pendingToolPermissions: PendingToolPermission[];
+  pendingUserQuestions: PendingUserQuestion[];
   agentLoopTraces: AgentLoopTrace[];
   querySessions: QuerySession[];
   runtimeEvents: RuntimeEventRecord[];
@@ -1856,6 +1888,7 @@ export type SupbotEvent =
   | { type: "job"; job: AgentJob }
   | { type: "message"; conversationId: string; message: ChatMessage }
   | { type: "tool_permission"; permission: PendingToolPermission }
+  | { type: "user_question"; question: PendingUserQuestion }
   | { type: "tool_progress"; toolCall: ToolCallRecord }
   | { type: "query_event"; event: RuntimeEventRecord }
   | { type: "message_delta"; conversationId: string; messageId: string; delta: string }
@@ -2027,6 +2060,8 @@ export function statusLabel(status?: JobStatus, t: (key: string) => string = (ke
       return t("Queued");
     case "running":
       return t("Running");
+    case "waiting_user":
+      return t("Waiting for user");
     case "completed":
       return t("Completed");
     case "failed":
@@ -2044,6 +2079,8 @@ export function statusColor(status?: JobStatus): string {
       return "gold";
     case "running":
       return "cyan";
+    case "waiting_user":
+      return "gold";
     case "completed":
       return "green";
     case "failed":

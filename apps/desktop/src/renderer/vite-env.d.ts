@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 
 import type {
+  AgentJob,
   AutopilotRun,
   AutopilotRunReport,
   AutopilotStartDataRunInput,
@@ -102,6 +103,7 @@ import type {
   TaskWorktree,
   TranscriptLoadResult,
   TranscriptPage,
+  UserQuestionAnswer,
 } from "@supbot/shared";
 
 declare global {
@@ -118,8 +120,11 @@ declare global {
       sendPrompt(input: SendPromptInput): Promise<SendPromptResult>;
       readClipboardText(): Promise<string>;
       cancelJob(id: string): Promise<void>;
+      interruptJob(id: string): Promise<AgentJob>;
+      resumeJob(id: string): Promise<AgentJob>;
       approveToolPermission(id: string): Promise<void>;
       denyToolPermission(id: string): Promise<void>;
+      answerUserQuestion(id: string, answers: UserQuestionAnswer[]): Promise<void>;
       setPermissionMode(mode: PermissionMode): Promise<PermissionMode>;
       setMemoryEnabled(enabled: boolean): Promise<boolean>;
       addPermissionRule(

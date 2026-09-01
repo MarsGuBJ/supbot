@@ -60,6 +60,7 @@ import {
   type CapabilityUpdateInput,
   nowIso,
   type PendingToolPermission,
+  type PendingUserQuestion,
   type PermissionMode,
   type PermissionRule,
   type PersonalityConfig,
@@ -93,6 +94,8 @@ import {
   type ToolMarketPackageFile,
   type ToolMarketProduct,
   type ToolMarketQuery,
+  type UserQuestionAnswer,
+  type UserQuestionItem,
 } from "@supbot/shared";
 import { AutopilotOrchestrator } from "./autopilotOrchestrator";
 import { describeError } from "./errorFormat";
@@ -154,6 +157,11 @@ interface PendingPermissionWaiter {
   resolve(decision: "approved" | "denied"): void;
 }
 
+interface PendingQuestionWaiter {
+  resolve(answers: UserQuestionAnswer[]): void;
+  reject(error: Error): void;
+}
+
 const MAX_CONVERSATION_MESSAGES = 200;
 const SNAPSHOT_RECENT_MESSAGES = 50;
 const MAX_JOBS = 200;
@@ -163,8 +171,10 @@ const PERSIST_DEBOUNCE_MS = 150;
 export class SupbotRuntime extends ServstationRuntimeFacade {
   private state: RuntimeState = createInitialState();
   private readonly runningJobs = new Map<string, RunningJob>();
+  private readonly interruptedJobs = new Set<string>();
   private readonly runningAutopilotRuns = new Map<string, RunningAutopilotRun>();
   private readonly permissionWaiters = new Map<string, PendingPermissionWaiter>();
+  private readonly questionWaiters = new Map<string, PendingQuestionWaiter>();
   private readonly toolRegistry = new ToolRegistry();
   private readonly mcpManager: McpManager;
   private readonly servstationA2AProvider: ServstationA2AProvider;
@@ -316,6 +326,11 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
 
   async init(): Promise<RuntimeSnapshot> {
     this.state = await this.storage.load();
+    // Questions left pending by a previous run have no live waiter; mark their cards as canceled.
+    for (const question of this.state.pendingUserQuestions) {
+      this.upsertQuestionBlock(question, { status: "canceled" });
+    }
+    this.state.pendingUserQuestions = [];
     await this.reconcileLocalPackages();
     await this.reconcileToolMarketCapabilities();
     await this.storage.save(this.state);
@@ -378,6 +393,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       autopilotCheckpoints: this.state.autopilotCheckpoints,
       dataArtifacts: this.state.dataArtifacts,
       pendingToolPermissions: this.state.pendingToolPermissions,
+      pendingUserQuestions: this.state.pendingUserQuestions,
       agentLoopTraces: this.state.agentLoopTraces,
       querySessions: this.state.querySessions,
       runtimeEvents: this.state.runtimeEvents,
@@ -652,6 +668,11 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     };
 
     this.appendMessage(conversation.id, userMessage);
+    for (const stale of this.state.jobs.filter(
+      (item) => item.conversationId === conversation.id && item.status === "waiting_user",
+    )) {
+      this.updateJob(stale.id, "canceled", "Superseded by a new prompt");
+    }
     this.state.jobs = [job, ...this.state.jobs].slice(0, MAX_JOBS);
     await this.persistAndBroadcast();
     await this.appendTranscript(conversation.id, { type: "message", message: userMessage });
@@ -669,9 +690,68 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     }
     this.runningJobs.get(jobId)?.controller.abort();
     this.resolveJobPermissions(jobId, "denied");
+    this.resolveJobQuestions(jobId);
     this.updateJob(jobId, "canceled", "Canceled by user");
     await this.persistAndBroadcast();
     return this.findJob(jobId)!;
+  }
+
+  async interruptJob(jobId: string): Promise<AgentJob> {
+    this.assertLoaded();
+    const job = this.findJob(jobId);
+    if (!job) {
+      throw new Error(`Job not found: ${jobId}`);
+    }
+    if (job.status !== "queued" && job.status !== "running") {
+      return job;
+    }
+    const running = this.runningJobs.get(jobId);
+    this.interruptedJobs.add(jobId);
+    running?.controller.abort();
+    this.resolveJobPermissions(jobId, "denied");
+    this.resolveJobQuestions(jobId);
+    if (!running) {
+      // The job was queued but never started; settle it here. The marker stays so a late runJob start bails out too.
+      this.updateJob(jobId, "waiting_user", "Interrupted by user");
+      await this.persistAndBroadcast();
+    }
+    return this.findJob(jobId)!;
+  }
+
+  async resumeJob(jobId: string): Promise<AgentJob> {
+    this.assertLoaded();
+    const job = this.findJob(jobId);
+    if (!job) {
+      throw new Error(`Job not found: ${jobId}`);
+    }
+    if (job.status !== "waiting_user") {
+      throw new Error(`Only interrupted (waiting_user) jobs can be resumed, got status: ${job.status}`);
+    }
+    const active = this.state.jobs.find(
+      (item) => item.conversationId === job.conversationId && (item.status === "queued" || item.status === "running"),
+    );
+    if (active) {
+      throw new Error(`Conversation already has an active job: ${active.id}`);
+    }
+    this.updateJob(jobId, "canceled", "Resumed in a follow-up job");
+    const now = nowIso();
+    const followUp: AgentJob = {
+      id: randomId("job"),
+      conversationId: job.conversationId,
+      projectId: job.projectId,
+      prompt: job.prompt,
+      status: "queued",
+      workspaceMode: job.workspaceMode,
+      diffStatus: "unavailable",
+      createdAt: now,
+      updatedAt: now,
+      progress: ["Resuming interrupted run"],
+    };
+    this.state.jobs = [followUp, ...this.state.jobs].slice(0, MAX_JOBS);
+    await this.persistAndBroadcast();
+    this.emitTyped({ type: "job", job: followUp });
+    void this.runJob(followUp.id);
+    return followUp;
   }
 
   async approveToolPermission(permissionId: string): Promise<void> {
@@ -1447,6 +1527,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
   async shutdown(): Promise<void> {
     this.stopScheduler();
     this.resolveAllPermissions("denied");
+    this.resolveAllQuestions();
     for (const running of this.runningJobs.values()) {
       running.controller.abort();
     }
@@ -1899,6 +1980,13 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     if (!job) {
       return;
     }
+    if (this.interruptedJobs.has(jobId)) {
+      // Interrupted while queued, before any controller existed.
+      this.interruptedJobs.delete(jobId);
+      this.updateJob(jobId, "waiting_user", "Interrupted by user");
+      await this.persistAndBroadcast();
+      return;
+    }
     const controller = new AbortController();
     this.runningJobs.set(jobId, { controller });
     const jobStillExists = () => Boolean(this.findJob(jobId) && this.findConversation(job.conversationId));
@@ -2042,12 +2130,17 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       if (!jobStillExists()) {
         return;
       }
+      const questionBlocks = (
+        this.findConversation(conversation.id)?.messages.find((message) => message.id === assistantSeed.id)?.blocks ||
+        []
+      ).filter((block): block is Extract<ChatMessageBlock, { type: "question" }> => block.type === "question");
       const finalMessage: ChatMessage = {
         ...assistantSeed,
         text: response.text,
         status: "completed",
         blocks: [
           ...toolBlocksFromRecords(response.trace.toolCalls),
+          ...questionBlocks,
           ...(response.compactBoundary
             ? [
                 {
@@ -2072,9 +2165,19 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       if (!jobStillExists()) {
         return;
       }
-      const status: JobStatus = controller.signal.aborted ? "canceled" : "failed";
-      const message = controller.signal.aborted ? "Canceled by user" : describeError(error);
-      this.updateAssistantMessageForJob(job.conversationId, jobId, status, message);
+      const interrupted = controller.signal.aborted && this.interruptedJobs.delete(jobId);
+      const status: JobStatus = controller.signal.aborted ? (interrupted ? "waiting_user" : "canceled") : "failed";
+      const message = controller.signal.aborted
+        ? interrupted
+          ? "Interrupted by user (Esc)"
+          : "Canceled by user"
+        : describeError(error);
+      if (interrupted) {
+        // Keep the partial assistant text and blocks so the run can be resumed with context intact.
+        this.markAssistantMessageStatus(job.conversationId, jobId, "waiting_user");
+      } else {
+        this.updateAssistantMessageForJob(job.conversationId, jobId, status, message);
+      }
       const failedMessage = this.findConversation(job.conversationId)?.messages.find((item) => item.jobId === jobId);
       if (failedMessage) {
         await this.appendTranscript(job.conversationId, { type: "message", message: failedMessage });
@@ -2082,7 +2185,9 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       this.updateJob(jobId, status, message);
       await this.finishJobWorktree(jobId, status, message);
       await this.persistAndBroadcast();
-      this.emitTyped({ type: "error", message });
+      if (!interrupted) {
+        this.emitTyped({ type: "error", message });
+      }
     } finally {
       this.runningJobs.delete(jobId);
       this.emitTyped({ type: "snapshot", snapshot: this.snapshot() });
@@ -2577,11 +2682,15 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     for (const executionId of executionIds) {
       this.runningJobs.get(executionId)?.controller.abort();
       this.resolveJobPermissions(executionId, "denied");
+      this.resolveJobQuestions(executionId);
     }
 
     this.state.conversations = this.state.conversations.filter((item) => !conversationIds.has(item.id));
     this.state.jobs = this.state.jobs.filter((item) => !belongsToRemovedConversation(item));
     this.state.pendingToolPermissions = this.state.pendingToolPermissions.filter(
+      (item) => !belongsToRemovedConversation(item),
+    );
+    this.state.pendingUserQuestions = this.state.pendingUserQuestions.filter(
       (item) => !belongsToRemovedConversation(item),
     );
     this.state.agentLoopTraces = this.state.agentLoopTraces.filter((item) => !belongsToRemovedConversation(item));
@@ -2640,6 +2749,26 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       const messages = conversation.messages.map((message) =>
         message.jobId === jobId ? { ...message, text, status } : message,
       );
+      return {
+        ...conversation,
+        lastMessagePreview: messagePreview(messages.at(-1)),
+        messages,
+      };
+    });
+  }
+
+  private markAssistantMessageStatus(conversationId: string, jobId: string, status: JobStatus): void {
+    this.state.conversations = this.state.conversations.map((conversation) => {
+      if (conversation.id !== conversationId) {
+        return conversation;
+      }
+      const messages = conversation.messages.map((message) => {
+        if (message.jobId !== jobId) {
+          return message;
+        }
+        const text = message.text.endsWith("is thinking...") ? "Interrupted." : message.text;
+        return { ...message, text, status };
+      });
       return {
         ...conversation,
         lastMessagePreview: messagePreview(messages.at(-1)),
@@ -3105,6 +3234,8 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       }): Promise<LocalPackageInstallResult> =>
         this.installPackageArchive(input.path, input.expectedSha256, allowedAttachmentPaths, signal),
       subagents: this.state.subagents,
+      askUserQuestion: (input: { questions: UserQuestionItem[] }) =>
+        this.requestUserQuestion(jobId, job?.conversationId || "", input.questions),
       runSubagent: async (input: {
         subagentType?: string;
         prompt: string;
@@ -3419,6 +3550,126 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     }
   }
 
+  private async requestUserQuestion(
+    jobId: string,
+    conversationId: string,
+    questions: UserQuestionItem[],
+  ): Promise<UserQuestionAnswer[]> {
+    const rootJob = this.findRootJob(jobId);
+    const targetJobId = rootJob?.id || jobId;
+    const targetConversationId = conversationId || rootJob?.conversationId || "";
+    if (this.runningJobs.get(targetJobId)?.controller.signal.aborted) {
+      throw new Error("Question canceled: the job was already aborted.");
+    }
+    const question: PendingUserQuestion = {
+      id: randomId("question"),
+      jobId,
+      conversationId: targetConversationId,
+      questions,
+      createdAt: nowIso(),
+    };
+    const decision = new Promise<UserQuestionAnswer[]>((resolve, reject) => {
+      this.questionWaiters.set(question.id, { resolve, reject });
+    });
+    // The waiter may be rejected (job canceled) before this function reaches `await decision`;
+    // attach a no-op handler so the rejection is never reported as unhandled.
+    decision.catch(() => undefined);
+    this.state.pendingUserQuestions = [
+      ...this.state.pendingUserQuestions.filter((item) => item.id !== question.id),
+      question,
+    ];
+    const target = this.findRunningAssistantMessage(targetConversationId, targetJobId);
+    if (target) {
+      const next: ChatMessage = {
+        ...target,
+        blocks: [
+          ...(target.blocks || []),
+          { type: "question", questionId: question.id, questions, status: "pending" as const },
+        ],
+      };
+      this.replaceMessage(targetConversationId, target.id, next);
+      this.emitTyped({ type: "message", conversationId: targetConversationId, message: next });
+    }
+    try {
+      await this.persistAndBroadcast();
+      if (this.questionWaiters.has(question.id)) {
+        this.emitTyped({ type: "user_question", question });
+      }
+      return await decision;
+    } catch (error) {
+      this.questionWaiters.delete(question.id);
+      this.state.pendingUserQuestions = this.state.pendingUserQuestions.filter((item) => item.id !== question.id);
+      throw error;
+    }
+  }
+
+  async answerUserQuestion(questionId: string, answers: UserQuestionAnswer[]): Promise<void> {
+    this.assertLoaded();
+    const question = this.state.pendingUserQuestions.find((item) => item.id === questionId);
+    const waiter = this.questionWaiters.get(questionId);
+    this.questionWaiters.delete(questionId);
+    this.state.pendingUserQuestions = this.state.pendingUserQuestions.filter((item) => item.id !== questionId);
+    if (question) {
+      const updated = this.upsertQuestionBlock(question, { status: "answered", answers });
+      if (updated) {
+        this.emitTyped({ type: "message", conversationId: question.conversationId, message: updated });
+      }
+    }
+    waiter?.resolve(answers);
+    await this.persistAndBroadcast();
+  }
+
+  private resolveJobQuestions(jobId: string): void {
+    const questions = this.state.pendingUserQuestions.filter(
+      (item) => item.jobId === jobId || item.jobId.startsWith(`${jobId}:`),
+    );
+    for (const question of questions) {
+      this.cancelQuestion(question);
+    }
+  }
+
+  private resolveAllQuestions(): void {
+    for (const question of [...this.state.pendingUserQuestions]) {
+      this.cancelQuestion(question);
+    }
+  }
+
+  private cancelQuestion(question: PendingUserQuestion): void {
+    const waiter = this.questionWaiters.get(question.id);
+    this.questionWaiters.delete(question.id);
+    this.state.pendingUserQuestions = this.state.pendingUserQuestions.filter((item) => item.id !== question.id);
+    const updated = this.upsertQuestionBlock(question, { status: "canceled" });
+    if (updated) {
+      this.emitTyped({ type: "message", conversationId: question.conversationId, message: updated });
+    }
+    waiter?.reject(new Error("Question canceled."));
+  }
+
+  private findRunningAssistantMessage(conversationId: string, jobId: string): ChatMessage | undefined {
+    return this.findConversation(conversationId)?.messages.find(
+      (message) => message.role === "assistant" && message.jobId === jobId && message.status === "running",
+    );
+  }
+
+  private upsertQuestionBlock(
+    question: PendingUserQuestion,
+    patch: { status: "pending" | "answered" | "canceled"; answers?: UserQuestionAnswer[] },
+  ): ChatMessage | undefined {
+    const conversation = this.findConversation(question.conversationId);
+    const message = conversation?.messages.find((item) =>
+      item.blocks?.some((block) => block.type === "question" && block.questionId === question.id),
+    );
+    if (!conversation || !message) {
+      return undefined;
+    }
+    const blocks = (message.blocks || []).map((block) =>
+      block.type === "question" && block.questionId === question.id ? { ...block, ...patch } : block,
+    );
+    const next: ChatMessage = { ...message, blocks };
+    this.replaceMessage(conversation.id, message.id, next);
+    return next;
+  }
+
   private async ensureJobWorktree(jobId: string, toolName: string): Promise<LocalToolHost | undefined> {
     const job = this.findRootJob(jobId);
     if (!job) {
@@ -3657,10 +3908,11 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         }
         const current = message.text.endsWith("is thinking...") ? "" : message.text;
         const text = `${current}${delta}`;
+        const preservedBlocks = (message.blocks || []).filter((block) => block.type === "question");
         return {
           ...message,
           text,
-          blocks: [{ type: "message_delta" as const, text }],
+          blocks: [...preservedBlocks, { type: "message_delta" as const, text }],
         };
       });
       return {
@@ -4726,6 +4978,10 @@ function delay(ms: number): Promise<void> {
 
 function toolBlocksFromRecords(records: ToolCallRecord[]): ChatMessageBlock[] {
   return records.flatMap((record) => {
+    // AskUserQuestion interactions render as interactive question cards on the message, not as tool cards.
+    if (record.toolName === "AskUserQuestion") {
+      return [];
+    }
     const status = record.status === "pending_permission" ? "pending" : record.status;
     const useBlock: ChatMessageBlock = {
       type: "tool_use",

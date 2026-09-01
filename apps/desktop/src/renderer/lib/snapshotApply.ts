@@ -4,6 +4,7 @@ import type {
   CompactBoundary,
   MemoryCandidate,
   PendingToolPermission,
+  PendingUserQuestion,
   RuntimeEventRecord,
   RuntimeSnapshot,
   ToolCallRecord,
@@ -32,10 +33,11 @@ export function applyMessageDelta(
           }
           const current = message.text.endsWith("is thinking...") ? "" : message.text;
           const text = `${current}${delta}`;
+          const preservedBlocks = (message.blocks || []).filter((block) => block.type === "question");
           return {
             ...message,
             text,
-            blocks: [{ type: "message_delta" as const, text }],
+            blocks: [...preservedBlocks, { type: "message_delta" as const, text }],
           };
         }),
       };
@@ -118,6 +120,13 @@ export function applyToolProgress(snapshot: RuntimeSnapshot, toolCall: ToolCallR
     ...snapshot,
     agentLoopTraces: nextTraces,
   };
+}
+
+export function applyUserQuestion(snapshot: RuntimeSnapshot, question: PendingUserQuestion): RuntimeSnapshot {
+  const pendingUserQuestions = snapshot.pendingUserQuestions.some((item) => item.id === question.id)
+    ? snapshot.pendingUserQuestions.map((item) => (item.id === question.id ? question : item))
+    : [question, ...snapshot.pendingUserQuestions];
+  return { ...snapshot, pendingUserQuestions };
 }
 
 export function applyPendingPermission(snapshot: RuntimeSnapshot, permission: PendingToolPermission): RuntimeSnapshot {

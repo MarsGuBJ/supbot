@@ -9,6 +9,7 @@ import {
   FolderOpenOutlined,
   HistoryOutlined,
   PaperClipOutlined,
+  PauseCircleOutlined,
   RobotOutlined,
   SearchOutlined,
   SendOutlined,
@@ -70,6 +71,10 @@ export function ChatPanel({
   setAttachments,
   sending,
   runningJob,
+  waitingJob,
+  interruptRunning,
+  resumeWaiting,
+  discardWaiting,
   pendingToolPermissions,
   approveToolPermission,
   denyToolPermission,
@@ -107,6 +112,10 @@ export function ChatPanel({
   setAttachments: React.Dispatch<React.SetStateAction<Attachment[]>>;
   sending: boolean;
   runningJob?: AgentJob;
+  waitingJob?: AgentJob;
+  interruptRunning: () => Promise<void>;
+  resumeWaiting: () => Promise<void>;
+  discardWaiting: () => Promise<void>;
   pendingToolPermissions: PendingToolPermission[];
   approveToolPermission: (id: string) => Promise<void>;
   denyToolPermission: (id: string) => Promise<void>;
@@ -417,6 +426,12 @@ export function ChatPanel({
     };
   }, [closePromptMenu, promptMenu]);
 
+  const escGuardRef = useRef({ menuOpen: false, interrupt: undefined as (() => Promise<void>) | undefined });
+  escGuardRef.current = {
+    menuOpen: Boolean(selectionMenu || promptMenu || cornerPopup || permissionOpen),
+    interrupt: runningJob ? interruptRunning : undefined,
+  };
+
   useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
       if (cornerRef.current && !cornerRef.current.contains(event.target as Node)) {
@@ -428,8 +443,16 @@ export function ChatPanel({
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        const { menuOpen, interrupt } = escGuardRef.current;
         setCornerPopup(null);
         setPermissionOpen(false);
+        // Never interrupt while an antd modal (e.g. config) is open — Esc belongs to the modal.
+        const modalOpen = Array.from(document.querySelectorAll(".ant-modal-wrap")).some(
+          (element) => (element as HTMLElement).offsetParent !== null,
+        );
+        if (!menuOpen && !modalOpen && interrupt) {
+          void interrupt();
+        }
       }
     };
     window.addEventListener("pointerdown", onPointerDown);
@@ -663,6 +686,10 @@ export function ChatPanel({
           {runningJob ? (
             <Tag color="blue">
               <ClockCircleOutlined /> {statusLabel(runningJob.status, t)}
+            </Tag>
+          ) : waitingJob ? (
+            <Tag color="gold">
+              <PauseCircleOutlined /> {statusLabel(waitingJob.status, t)}
             </Tag>
           ) : (
             <Tag color="green">
@@ -941,6 +968,21 @@ export function ChatPanel({
         }}
         onDrop={(event) => void handleFileDrop(event)}
       >
+        {waitingJob ? (
+          <div className="waiting-bar" role="status">
+            <span className="waiting-bar-text">
+              <PauseCircleOutlined /> {t("Run interrupted — waiting for your input")}
+            </span>
+            <span className="waiting-bar-actions">
+              <button type="button" className="waiting-bar-btn primary" onClick={() => void resumeWaiting()}>
+                {t("Resume")}
+              </button>
+              <button type="button" className="waiting-bar-btn" onClick={() => void discardWaiting()}>
+                {t("Discard")}
+              </button>
+            </span>
+          </div>
+        ) : null}
         <ComposerPermissionPrompt
           permissions={composerPermissions}
           approveToolPermission={approveToolPermission}

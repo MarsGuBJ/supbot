@@ -57,6 +57,7 @@ import type {
   SubagentConfig,
   ToolMarketConfigUpdate,
   ToolMarketQuery,
+  UserQuestionAnswer,
 } from "@supbot/shared";
 import {
   defaultServstationBaseUrl,
@@ -921,11 +922,16 @@ function registerIpc(): void {
   );
   ipcMain.handle("clipboard:readText", () => clipboard.readText());
   ipcMain.handle("job:cancel", (_event, id: string) => getRuntime().cancelJob(requiredString(id, "job id")));
+  ipcMain.handle("job:interrupt", (_event, id: string) => getRuntime().interruptJob(requiredString(id, "job id")));
+  ipcMain.handle("job:resume", (_event, id: string) => getRuntime().resumeJob(requiredString(id, "job id")));
   ipcMain.handle("tool:approve", (_event, id: string) =>
     getRuntime().approveToolPermission(requiredString(id, "permission id")),
   );
   ipcMain.handle("tool:deny", (_event, id: string) =>
     getRuntime().denyToolPermission(requiredString(id, "permission id")),
+  );
+  ipcMain.handle("question:answer", (_event, id: string, answers: unknown) =>
+    getRuntime().answerUserQuestion(requiredString(id, "question id"), validateUserQuestionAnswers(answers)),
   );
   ipcMain.handle("permission:setMode", (_event, mode: PermissionMode) =>
     getRuntime().setPermissionMode(validateRendererPermissionMode(mode)),
@@ -2068,6 +2074,22 @@ function requiredString(value: unknown, label: string): string {
     throw new Error(`${label} is required.`);
   }
   return value.trim();
+}
+
+function validateUserQuestionAnswers(value: unknown): UserQuestionAnswer[] {
+  if (!Array.isArray(value)) {
+    throw new Error("question answers must be an array.");
+  }
+  return value.map((item, index) => {
+    const entry = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
+    const answers = Array.isArray(entry.answers)
+      ? entry.answers.filter((answer): answer is string => typeof answer === "string")
+      : [];
+    return {
+      question: requiredString(entry.question, `answers[${index}].question`),
+      answers,
+    };
+  });
 }
 
 function optionalString(value: unknown, label: string): string | undefined {

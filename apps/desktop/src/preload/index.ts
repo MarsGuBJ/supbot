@@ -43,6 +43,7 @@ import type {
   SupbotEvent,
   ToolMarketConfigUpdate,
   ToolMarketQuery,
+  UserQuestionAnswer,
 } from "@supbot/shared";
 
 const api = {
@@ -61,8 +62,11 @@ const api = {
   sendPrompt: (input: SendPromptInput) => ipcRenderer.invoke("prompt:send", input),
   readClipboardText: () => ipcRenderer.invoke("clipboard:readText"),
   cancelJob: (id: string) => ipcRenderer.invoke("job:cancel", id),
+  interruptJob: (id: string) => ipcRenderer.invoke("job:interrupt", id),
+  resumeJob: (id: string) => ipcRenderer.invoke("job:resume", id),
   approveToolPermission: (id: string) => ipcRenderer.invoke("tool:approve", id),
   denyToolPermission: (id: string) => ipcRenderer.invoke("tool:deny", id),
+  answerUserQuestion: (id: string, answers: UserQuestionAnswer[]) => ipcRenderer.invoke("question:answer", id, answers),
   setPermissionMode: (mode: PermissionMode) => ipcRenderer.invoke("permission:setMode", mode),
   setMemoryEnabled: (enabled: boolean) => ipcRenderer.invoke("memory:setEnabled", enabled),
   addPermissionRule: (rule: Omit<PermissionRule, "id" | "createdAt" | "scope"> & { id?: string }) =>

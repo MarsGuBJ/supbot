@@ -112,6 +112,7 @@ import {
   applyPendingPermission,
   applyRuntimeEvent,
   applyToolProgress,
+  applyUserQuestion,
   clearPendingPermission,
 } from "./lib/snapshotApply";
 import type { DetailPanel, PromptContextMenu, SelectionContextMenu, Translator, WorkspaceView } from "./lib/types";
@@ -336,6 +337,9 @@ function App() {
       if (event.type === "tool_permission") {
         setSnapshot((current) => (current ? applyPendingPermission(current, event.permission) : current));
       }
+      if (event.type === "user_question") {
+        setSnapshot((current) => (current ? applyUserQuestion(current, event.question) : current));
+      }
       if (event.type === "permission_timeout") {
         setSnapshot((current) => (current ? clearPendingPermission(current, event.permission) : current));
       }
@@ -518,6 +522,13 @@ function App() {
       (job) => job.conversationId === conversationId && (job.status === "queued" || job.status === "running"),
     );
   }, [activeConversation?.id, activeConversationId, snapshot?.jobs]);
+  const waitingJob = useMemo(() => {
+    const conversationId = activeConversation?.id || activeConversationId;
+    if (!conversationId) {
+      return undefined;
+    }
+    return snapshot?.jobs.find((job) => job.conversationId === conversationId && job.status === "waiting_user");
+  }, [activeConversation?.id, activeConversationId, snapshot?.jobs]);
   const startNewConversation = async (projectId?: string | null) => {
     const targetProjectId = projectId === undefined ? activeProjectId || undefined : projectId || undefined;
     const conversation = await window.supbot.createConversation({ projectId: targetProjectId });
@@ -616,6 +627,42 @@ function App() {
     await window.supbot.cancelJob(runningJob.id);
     await refresh();
   };
+
+  const interruptRunning = useCallback(async () => {
+    if (!runningJob) {
+      return;
+    }
+    try {
+      await window.supbot.interruptJob(runningJob.id);
+      await refresh();
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    }
+  }, [runningJob, refresh, messageApi]);
+
+  const resumeWaiting = useCallback(async () => {
+    if (!waitingJob) {
+      return;
+    }
+    try {
+      await window.supbot.resumeJob(waitingJob.id);
+      await refresh();
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    }
+  }, [waitingJob, refresh, messageApi]);
+
+  const discardWaiting = useCallback(async () => {
+    if (!waitingJob) {
+      return;
+    }
+    try {
+      await window.supbot.cancelJob(waitingJob.id);
+      await refresh();
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    }
+  }, [waitingJob, refresh, messageApi]);
 
   const approveToolPermission = useCallback(
     async (id: string) => {
@@ -776,6 +823,10 @@ function App() {
                   setAttachments={setAttachments}
                   sending={sending}
                   runningJob={runningJob}
+                  waitingJob={waitingJob}
+                  interruptRunning={interruptRunning}
+                  resumeWaiting={resumeWaiting}
+                  discardWaiting={discardWaiting}
                   pendingToolPermissions={snapshot.pendingToolPermissions}
                   approveToolPermission={approveToolPermission}
                   denyToolPermission={denyToolPermission}
