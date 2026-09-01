@@ -3,6 +3,7 @@ import { CopyOutlined, DeleteOutlined, ReloadOutlined, SaveOutlined, ToolOutline
 import {
   Alert,
   Button,
+  Collapse,
   Empty,
   Form,
   Input,
@@ -59,6 +60,9 @@ export function McpServersCard({
 }) {
   const [form] = Form.useForm<McpServerFormValues>();
   const transport = Form.useWatch("transport", form) || "stdio";
+  const [quickForm] = Form.useForm<{ url: string; token?: string }>();
+  const [quickAdding, setQuickAdding] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [editing, setEditing] = useState<McpServerSnapshot | null>(null);
   const [busyId, setBusyId] = useState("");
   const [logServer, setLogServer] = useState<McpServerSnapshot | null>(null);
@@ -76,6 +80,25 @@ export function McpServersCard({
       .then(setPresets)
       .catch(() => setPresets([]));
   }, []);
+  const addRemote = async (values: { url: string; token?: string }) => {
+    setQuickAdding(true);
+    try {
+      const result = await window.supbot.addRemoteMcpServer({ url: values.url.trim(), token: values.token?.trim() });
+      messageApi.success(
+        t("Added {name} ({transport}, {count} tools).", {
+          name: result.server.name,
+          transport: result.transport,
+          count: result.toolCount,
+        }),
+      );
+      quickForm.resetFields();
+      await refresh();
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    } finally {
+      setQuickAdding(false);
+    }
+  };
   const save = async (values: McpServerFormValues) => {
     const input = formValuesToMcpInput(values);
     try {
@@ -108,6 +131,7 @@ export function McpServersCard({
   };
   const beginEdit = (server: McpServerSnapshot) => {
     setEditing(server);
+    setAdvancedOpen(true);
     form.setFieldsValue({
       name: server.name,
       transport: server.transport || "stdio",
@@ -210,7 +234,7 @@ export function McpServersCard({
             </div>
             <div className="muted">
               {t(
-                "Connect local stdio or remote (HTTP/SSE) MCP servers. Tools are registered through HyBot permissions.",
+                "Add a remote MCP server with just its URL. Transport, server name, and tools are discovered automatically. Advanced options cover local stdio servers, presets, and import/export.",
               )}
             </div>
           </div>
@@ -223,98 +247,132 @@ export function McpServersCard({
             </Tag>
           </Space>
         </div>
-        <div className="mcp-preset-bar">
-          <Select
-            className="mcp-preset-select"
-            placeholder={t("Load MCP preset")}
-            options={presets.map((preset) => ({ value: preset.id, label: preset.name }))}
-            onChange={applyPreset}
-          />
-          <Button onClick={() => void exportConfig()}>{t("Export MCP")}</Button>
-          <Button
-            onClick={() => {
-              setTransferText("");
-              setTransferOpen(true);
-            }}
-          >
-            {t("Import MCP")}
-          </Button>
-        </div>
-        <Form
-          form={form}
-          layout="vertical"
-          initialValues={{ transport: "stdio", enabled: true, autoConnect: false, requestTimeoutMs: 30000 }}
-          onFinish={(values) => void save(values)}
-        >
-          <div className="mcp-form-grid">
-            <Form.Item label={t("Name")} name="name" rules={[{ required: true }]}>
-              <Input placeholder="local-files" />
-            </Form.Item>
-            <Form.Item label={t("Transport")} name="transport" rules={[{ required: true }]}>
-              <Select
-                options={[
-                  { value: "stdio", label: t("Local command (stdio)") },
-                  { value: "http", label: t("Remote (streamable HTTP)") },
-                  { value: "sse", label: t("Remote (legacy SSE)") },
-                ]}
-              />
-            </Form.Item>
-            {transport === "stdio" ? (
-              <>
-                <Form.Item label={t("Command")} name="command" rules={[{ required: true }]}>
-                  <Input placeholder="node" />
-                </Form.Item>
-                <Form.Item label={t("Arguments")} name="argsText">
-                  <Input.TextArea rows={3} placeholder="D:\\tools\\mcp-server.js" />
-                </Form.Item>
-                <Form.Item label={t("Working directory")} name="cwd">
-                  <Input placeholder="D:\\projects\\my-server" />
-                </Form.Item>
-              </>
-            ) : (
-              <>
-                <Form.Item label={t("Server URL")} name="url" rules={[{ required: true }]}>
-                  <Input placeholder="https://example.com/mcp" />
-                </Form.Item>
-                <Form.Item label={t("Headers")} name="headersText">
-                  <Input.TextArea rows={3} placeholder="Authorization=Bearer token" />
-                </Form.Item>
-              </>
-            )}
-            <Form.Item label={t("Request timeout (ms)")} name="requestTimeoutMs">
-              <InputNumber min={1000} max={120000} step={1000} style={{ width: "100%" }} />
-            </Form.Item>
-            {transport === "stdio" ? (
-              <Form.Item label={t("Environment")} name="envText">
-                <Input.TextArea rows={3} placeholder="API_KEY=value" />
+        <div className="mcp-quick-add">
+          <Form form={quickForm} layout="vertical" onFinish={(values) => void addRemote(values)}>
+            <div className="mcp-form-grid">
+              <Form.Item
+                label={t("Server URL")}
+                name="url"
+                rules={[{ required: true }, { pattern: /^https?:\/\//, message: t("Enter an http(s) URL.") }]}
+              >
+                <Input className="mcp-quick-url" placeholder="https://example.com/mcp" />
               </Form.Item>
-            ) : null}
-            <div className="mcp-switches">
-              <Form.Item label={t("Enabled")} name="enabled" valuePropName="checked">
-                <Switch />
-              </Form.Item>
-              <Form.Item label={t("Auto connect")} name="autoConnect" valuePropName="checked">
-                <Switch />
+              <Form.Item label={t("Access token (optional)")} name="token">
+                <Input.Password className="mcp-quick-token" placeholder={t("Bearer token")} autoComplete="off" />
               </Form.Item>
             </div>
-          </div>
-          <Space wrap>
-            <Button type="primary" icon={<SaveOutlined />} htmlType="submit">
-              {editing ? t("Save") : t("Add server")}
+            <Button type="primary" htmlType="submit" loading={quickAdding}>
+              {quickAdding ? t("Discovering server…") : t("Add MCP server")}
             </Button>
-            <Button onClick={() => void diagnoseValues()}>{t("Diagnose draft")}</Button>
-            {editing ? (
-              <Button
-                onClick={() => {
-                  setEditing(null);
-                  form.resetFields();
-                }}
-              >
-                {t("Cancel")}
-              </Button>
-            ) : null}
-          </Space>
-        </Form>
+          </Form>
+        </div>
+        <Collapse
+          className="mcp-advanced-collapse"
+          activeKey={advancedOpen ? ["advanced"] : []}
+          onChange={(keys) => setAdvancedOpen((keys as string[]).includes("advanced"))}
+          items={[
+            {
+              key: "advanced",
+              label: t("Advanced options"),
+              children: (
+                <>
+                  <div className="mcp-preset-bar">
+                    <Select
+                      className="mcp-preset-select"
+                      placeholder={t("Load MCP preset")}
+                      options={presets.map((preset) => ({ value: preset.id, label: preset.name }))}
+                      onChange={applyPreset}
+                    />
+                    <Button onClick={() => void exportConfig()}>{t("Export MCP")}</Button>
+                    <Button
+                      onClick={() => {
+                        setTransferText("");
+                        setTransferOpen(true);
+                      }}
+                    >
+                      {t("Import MCP")}
+                    </Button>
+                  </div>
+                  <Form
+                    form={form}
+                    layout="vertical"
+                    initialValues={{ transport: "stdio", enabled: true, autoConnect: false, requestTimeoutMs: 30000 }}
+                    onFinish={(values) => void save(values)}
+                  >
+                    <div className="mcp-form-grid">
+                      <Form.Item label={t("Name")} name="name" rules={[{ required: true }]}>
+                        <Input placeholder="local-files" />
+                      </Form.Item>
+                      <Form.Item label={t("Transport")} name="transport" rules={[{ required: true }]}>
+                        <Select
+                          options={[
+                            { value: "stdio", label: t("Local command (stdio)") },
+                            { value: "http", label: t("Remote (streamable HTTP)") },
+                            { value: "sse", label: t("Remote (legacy SSE)") },
+                          ]}
+                        />
+                      </Form.Item>
+                      {transport === "stdio" ? (
+                        <>
+                          <Form.Item label={t("Command")} name="command" rules={[{ required: true }]}>
+                            <Input placeholder="node" />
+                          </Form.Item>
+                          <Form.Item label={t("Arguments")} name="argsText">
+                            <Input.TextArea rows={3} placeholder="D:\\tools\\mcp-server.js" />
+                          </Form.Item>
+                          <Form.Item label={t("Working directory")} name="cwd">
+                            <Input placeholder="D:\\projects\\my-server" />
+                          </Form.Item>
+                        </>
+                      ) : (
+                        <>
+                          <Form.Item label={t("Server URL")} name="url" rules={[{ required: true }]}>
+                            <Input placeholder="https://example.com/mcp" />
+                          </Form.Item>
+                          <Form.Item label={t("Headers")} name="headersText">
+                            <Input.TextArea rows={3} placeholder="Authorization=Bearer token" />
+                          </Form.Item>
+                        </>
+                      )}
+                      <Form.Item label={t("Request timeout (ms)")} name="requestTimeoutMs">
+                        <InputNumber min={1000} max={120000} step={1000} style={{ width: "100%" }} />
+                      </Form.Item>
+                      {transport === "stdio" ? (
+                        <Form.Item label={t("Environment")} name="envText">
+                          <Input.TextArea rows={3} placeholder="API_KEY=value" />
+                        </Form.Item>
+                      ) : null}
+                      <div className="mcp-switches">
+                        <Form.Item label={t("Enabled")} name="enabled" valuePropName="checked">
+                          <Switch />
+                        </Form.Item>
+                        <Form.Item label={t("Auto connect")} name="autoConnect" valuePropName="checked">
+                          <Switch />
+                        </Form.Item>
+                      </div>
+                    </div>
+                    <Space wrap>
+                      <Button type="primary" icon={<SaveOutlined />} htmlType="submit">
+                        {editing ? t("Save") : t("Add server")}
+                      </Button>
+                      <Button onClick={() => void diagnoseValues()}>{t("Diagnose draft")}</Button>
+                      {editing ? (
+                        <Button
+                          onClick={() => {
+                            setEditing(null);
+                            form.resetFields();
+                          }}
+                        >
+                          {t("Cancel")}
+                        </Button>
+                      ) : null}
+                    </Space>
+                  </Form>
+                </>
+              ),
+            },
+          ]}
+        />
       </div>
       <div className="mcp-server-list">
         {snapshot.mcpServers.map((server) => {

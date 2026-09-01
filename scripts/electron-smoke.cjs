@@ -816,6 +816,15 @@ async function main() {
     })()`,
   );
   await sleep(300);
+  const mcpAdvancedClick = await evaluate(
+    page.webSocketDebuggerUrl,
+    `(() => {
+      const header = document.querySelector(".mcp-advanced-collapse .ant-collapse-header");
+      header?.click();
+      return { clickedAdvanced: Boolean(header) };
+    })()`,
+  );
+  await sleep(300);
   const mcpUi = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => ({
@@ -823,6 +832,9 @@ async function main() {
       hasSeedServer: document.body.innerText.includes("Smoke MCP"),
       hasStatusGrid: Boolean(document.querySelector(".mcp-status-grid")),
       hasTimeoutField: document.body.innerText.includes("Request timeout") || document.body.innerText.includes("Timeout") || document.body.innerText.includes("请求超时"),
+      hasQuickAdd: Boolean(document.querySelector(".mcp-quick-add")),
+      hasQuickUrl: Boolean(document.querySelector(".mcp-quick-url")),
+      hasQuickToken: Boolean(document.querySelector(".mcp-quick-token")),
       hasPresetSelect: Boolean(document.querySelector(".mcp-preset-select")),
       hasTransferButtons: (document.body.innerText.includes("Export MCP") || document.body.innerText.includes("导出 MCP")) && (document.body.innerText.includes("Import MCP") || document.body.innerText.includes("导入 MCP")),
       hasDiagnoseButton: document.body.innerText.includes("Diagnose") || document.body.innerText.includes("诊断"),
@@ -885,10 +897,14 @@ async function main() {
   );
   if (
     !mcpTabClick?.clickedMcp ||
+    !mcpAdvancedClick?.clickedAdvanced ||
     !mcpUi?.hasPanel ||
     !mcpUi.hasSeedServer ||
     !mcpUi.hasStatusGrid ||
     !mcpUi.hasTimeoutField ||
+    !mcpUi.hasQuickAdd ||
+    !mcpUi.hasQuickUrl ||
+    !mcpUi.hasQuickToken ||
     !mcpUi.hasPresetSelect ||
     !mcpUi.hasTransferButtons ||
     !mcpUi.hasDiagnoseButton ||
@@ -907,7 +923,9 @@ async function main() {
     !mcpIpc.hasMcpRule ||
     mcpIpc.after !== mcpIpc.before
   ) {
-    throw new Error(`MCP server UI or IPC smoke checks failed: ${JSON.stringify({ mcpTabClick, mcpUi, mcpIpc })}`);
+    throw new Error(
+      `MCP server UI or IPC smoke checks failed: ${JSON.stringify({ mcpTabClick, mcpAdvancedClick, mcpUi, mcpIpc })}`,
+    );
   }
   const chatClick = await evaluate(
     page.webSocketDebuggerUrl,

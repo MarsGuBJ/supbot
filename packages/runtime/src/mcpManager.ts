@@ -73,6 +73,7 @@ interface McpConnection {
   manualDisconnect: boolean;
   protocolVersion?: string;
   capabilities?: unknown;
+  remoteServerName?: string;
 }
 
 export class McpManager implements ToolProvider {
@@ -247,6 +248,7 @@ export class McpManager implements ToolProvider {
       return finishDiagnostic({
         ok: true,
         serverName: server.name,
+        remoteServerName: connection.remoteServerName,
         startedAt,
         startTime,
         tools,
@@ -261,6 +263,7 @@ export class McpManager implements ToolProvider {
       return finishDiagnostic({
         ok: false,
         serverName: server.name,
+        remoteServerName: connection.remoteServerName,
         startedAt,
         startTime,
         tools: [],
@@ -290,6 +293,30 @@ export class McpManager implements ToolProvider {
     this.servers = [server, ...this.servers.filter((item) => item.id !== server.id)];
     this.connections.set(server.id, createDisconnectedConnection(server, now));
     return cloneServer(server);
+  }
+
+  async probeRemote(
+    url: string,
+    headers?: Record<string, string>,
+    timeoutMs = 15_000,
+  ): Promise<{ transport: "http" | "sse"; serverName?: string; toolCount: number }> {
+    const trimmed = url.trim();
+    const errors: string[] = [];
+    for (const transport of ["http", "sse"] as const) {
+      const result = await this.diagnose({
+        name: `probe:${trimmed}`,
+        transport,
+        url: trimmed,
+        headers,
+        requestTimeoutMs: timeoutMs,
+        enabled: true,
+      });
+      if (result.ok) {
+        return { transport, serverName: result.remoteServerName, toolCount: result.toolCount };
+      }
+      errors.push(`${transport}: ${result.error || "unknown error"}`);
+    }
+    throw new Error(`MCP server probe failed for ${trimmed}. ${errors.join("; ")}`);
   }
 
   update(serverId: string, update: McpServerUpdate): McpServerConfig {
@@ -934,13 +961,20 @@ function formatMcpProtocolError(error: McpProtocolError): string {
 function recordInitializeResult(connection: McpConnection, result: unknown): void {
   const payload =
     result && typeof result === "object" && !Array.isArray(result)
-      ? (result as { protocolVersion?: unknown; capabilities?: unknown })
+      ? (result as { protocolVersion?: unknown; capabilities?: unknown; serverInfo?: unknown })
       : undefined;
   if (typeof payload?.protocolVersion === "string") {
     connection.protocolVersion = payload.protocolVersion;
   }
   if (payload && "capabilities" in payload) {
     connection.capabilities = payload.capabilities;
+  }
+  const serverInfo =
+    payload?.serverInfo && typeof payload.serverInfo === "object" && !Array.isArray(payload.serverInfo)
+      ? (payload.serverInfo as { name?: unknown })
+      : undefined;
+  if (typeof serverInfo?.name === "string" && serverInfo.name.trim()) {
+    connection.remoteServerName = serverInfo.name.trim();
   }
 }
 
@@ -1117,6 +1151,7 @@ function importEnvPlaceholders(env: Record<string, unknown> | undefined): Record
 function finishDiagnostic(input: {
   ok: boolean;
   serverName: string;
+  remoteServerName?: string;
   startedAt: string;
   startTime: number;
   tools: McpToolInfo[];
@@ -1134,6 +1169,7 @@ function finishDiagnostic(input: {
   return {
     ok: input.ok,
     serverName: input.serverName,
+    remoteServerName: input.remoteServerName,
     startedAt: input.startedAt,
     finishedAt,
     durationMs: Date.now() - input.startTime,

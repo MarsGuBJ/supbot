@@ -10,6 +10,7 @@ import type {
   MemoryReplayRecallInput,
   MemorySearchQuery,
   MemoryUpdateInput,
+  McpRemoteAddInput,
   McpServerInput,
   McpServerUpdate,
   ModelConfigUpdate,
@@ -237,6 +238,7 @@ const api = {
   exportMcpConfig: () => ipcRenderer.invoke("mcp:export"),
   importMcpConfig: (input: unknown) => ipcRenderer.invoke("mcp:import", input),
   diagnoseMcpServer: (input: McpServerInput) => ipcRenderer.invoke("mcp:diagnoseServer", input),
+  addRemoteMcpServer: (input: McpRemoteAddInput) => ipcRenderer.invoke("mcp:add-remote", input),
   createScheduledJob: (input: ScheduledJobInput) => ipcRenderer.invoke("schedule:create", input),
   updateScheduledJob: (id: string, input: Partial<ScheduledJobInput>) =>
     ipcRenderer.invoke("schedule:update", id, input),

@@ -29,6 +29,8 @@ import type {
   McpDiagnosticResult,
   McpImportResult,
   McpLogRecord,
+  McpRemoteAddInput,
+  McpRemoteAddResult,
   McpServerConfig,
   McpServerInput,
   McpServerPreset,
@@ -274,6 +276,7 @@ declare global {
       exportMcpConfig(): Promise<McpConfigTransfer>;
       importMcpConfig(input: unknown): Promise<McpImportResult>;
       diagnoseMcpServer(input: McpServerInput): Promise<McpDiagnosticResult>;
+      addRemoteMcpServer(input: McpRemoteAddInput): Promise<McpRemoteAddResult>;
       createScheduledJob(input: ScheduledJobInput): Promise<ScheduledJob>;
       updateScheduledJob(id: string, input: Partial<ScheduledJobInput>): Promise<ScheduledJob>;
       deleteScheduledJob(id: string): Promise<void>;

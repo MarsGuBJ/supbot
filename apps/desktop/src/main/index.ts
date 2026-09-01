@@ -19,6 +19,7 @@ import type {
   DataSourceSpec,
   IdentityContext,
   McpConfigTransfer,
+  McpRemoteAddInput,
   McpServerInput,
   McpServerUpdate,
   MemoryAddInput,
@@ -1378,6 +1379,9 @@ function registerIpc(): void {
   ipcMain.handle("mcp:diagnoseServer", (_event, input: McpServerInput) =>
     getRuntime().diagnoseMcpServer(validateMcpServerInput(input)),
   );
+  ipcMain.handle("mcp:add-remote", (_event, input: McpRemoteAddInput) =>
+    getRuntime().addRemoteMcpServer(validateMcpRemoteAddInput(input)),
+  );
   ipcMain.handle("schedule:create", (_event, input: ScheduledJobInput) =>
     getRuntime().createScheduledJob(validateScheduledJobInput(input)),
   );
@@ -1995,6 +1999,28 @@ function validateMcpServerInput(input: McpServerInput): McpServerInput {
     enabled: optionalBoolean(value.enabled, "MCP enabled"),
     autoConnect: optionalBoolean(value.autoConnect, "MCP auto-connect"),
   };
+}
+
+function validateMcpRemoteAddInput(input: McpRemoteAddInput): McpRemoteAddInput {
+  const value = object(input, "remote MCP server");
+  const url = requiredString(value.url, "MCP server URL");
+  if (url.length > 2048) {
+    throw new Error("MCP server URL is too long.");
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("MCP server URL must be a valid URL.");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("MCP server URL must use http or https.");
+  }
+  const token = optionalString(value.token, "MCP access token");
+  if (token && token.length > 4096) {
+    throw new Error("MCP access token is too long.");
+  }
+  return { url, token };
 }
 
 function validateMcpServerUpdate(input: McpServerUpdate): McpServerUpdate {

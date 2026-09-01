@@ -30,6 +30,8 @@ import {
   type McpDiagnosticResult,
   type McpImportResult,
   type McpLogRecord,
+  type McpRemoteAddInput,
+  type McpRemoteAddResult,
   type McpServerConfig,
   type McpServerInput,
   type McpServerPreset,
@@ -1504,6 +1506,32 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     });
     await this.persistAndBroadcast();
     return result;
+  }
+
+  async addRemoteMcpServer(input: McpRemoteAddInput): Promise<McpRemoteAddResult> {
+    this.assertLoaded();
+    const url = input.url.trim();
+    const token = input.token?.trim();
+    const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+    const probe = await this.mcpManager.probeRemote(url, headers);
+    const name = probe.serverName || new URL(url).hostname;
+    const server = await this.addMcpServer({
+      name,
+      transport: probe.transport,
+      url,
+      headers,
+      requestTimeoutMs: 30000,
+      enabled: true,
+      autoConnect: true,
+    });
+    const toolCount = this.mcpManager.snapshot().mcpTools.filter((tool) => tool.serverId === server.id).length;
+    await this.recordMcpEvent("MCP remote server discovered", server.id, {
+      name: server.name,
+      transport: probe.transport,
+      toolCount,
+    });
+    await this.persistAndBroadcast();
+    return { server, transport: probe.transport, toolCount };
   }
 
   startScheduler(intervalMs = 30_000): void {

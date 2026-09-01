@@ -3419,6 +3419,61 @@ describe("SupbotRuntime", () => {
     }
   });
 
+  test("adds a remote MCP server from a URL with automatic transport and name discovery", async () => {
+    const runtime = await createRuntime();
+    const mock = await startMockHttpMcpServer();
+    try {
+      const result = await runtime.addRemoteMcpServer({ url: mock.url, token: "remote-token" });
+      expect(result.transport).toBe("http");
+      expect(result.toolCount).toBe(1);
+      expect(result.server.name).toBe("mock-remote");
+      expect(result.server.enabled).toBe(true);
+      expect(result.server.autoConnect).toBe(true);
+      expect(result.server.url).toBe(mock.url);
+      expect(result.server.headers?.Authorization).toBe("Bearer remote-token");
+      const snapshot = runtime.snapshot();
+      expect(snapshot.mcpServers.find((item) => item.id === result.server.id)?.status.state).toBe("connected");
+      expect(snapshot.mcpTools.some((item) => item.runtimeToolName === `mcp.${result.server.id}.echo`)).toBe(true);
+      expect(mock.authorizationHeaders).toContain("Bearer remote-token");
+    } finally {
+      await mock.close();
+    }
+  });
+
+  test("falls back to legacy SSE when the streamable HTTP probe fails", async () => {
+    const runtime = await createRuntime();
+    const mock = await startMockSseMcpServer();
+    try {
+      const result = await runtime.addRemoteMcpServer({ url: mock.url });
+      expect(result.transport).toBe("sse");
+      expect(result.server.name).toBe("mock-remote");
+      expect(result.server.headers).toBeUndefined();
+      const snapshot = runtime.snapshot();
+      expect(snapshot.mcpServers.find((item) => item.id === result.server.id)?.status.state).toBe("connected");
+      expect(snapshot.mcpTools.some((item) => item.runtimeToolName === `mcp.${result.server.id}.echo`)).toBe(true);
+      await runtime.disconnectMcpServer(result.server.id);
+    } finally {
+      await mock.close();
+    }
+  }, 30_000);
+
+  test("fails remote MCP add without persisting config when both transports fail", async () => {
+    const runtime = await createRuntime();
+    const server = createServer((_req, res) => {
+      res.writeHead(500).end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      await expect(runtime.addRemoteMcpServer({ url: `http://127.0.0.1:${port}/mcp` })).rejects.toThrow(
+        "MCP server probe failed",
+      );
+      expect(runtime.snapshot().mcpServers).toHaveLength(0);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   test("validates remote MCP server input", async () => {
     const runtime = await createRuntime();
     await expect(runtime.addMcpServer({ name: "missing url", transport: "http" })).rejects.toThrow("URL is required");

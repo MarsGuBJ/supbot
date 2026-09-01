@@ -363,9 +363,21 @@ export interface McpImportResult {
   skipped: number;
 }
 
+export interface McpRemoteAddInput {
+  url: string;
+  token?: string;
+}
+
+export interface McpRemoteAddResult {
+  server: McpServerConfig;
+  transport: "http" | "sse";
+  toolCount: number;
+}
+
 export interface McpDiagnosticResult {
   ok: boolean;
   serverName: string;
+  remoteServerName?: string;
   startedAt: string;
   finishedAt: string;
   durationMs: number;
