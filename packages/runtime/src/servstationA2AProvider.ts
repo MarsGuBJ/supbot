@@ -97,7 +97,7 @@ export class ServstationA2AProvider implements ToolProvider {
             },
             timeoutMs: {
               type: "number",
-              description: "Maximum time to wait for the remote result. Defaults to 120000 ms.",
+              description: "Maximum time to wait for the remote result. Defaults to 600000 ms.",
             },
             pollIntervalMs: {
               type: "number",
@@ -124,7 +124,7 @@ export class ServstationA2AProvider implements ToolProvider {
         ? parsed.requestId.trim()
         : this.host.randomId("a2a_req");
     const waitForResult = parsed.waitForResult !== false;
-    const timeoutMs = numberInput(parsed.timeoutMs, 120_000, 1_000, 300_000);
+    const timeoutMs = numberInput(parsed.timeoutMs, 600_000, 1_000, 600_000);
     const pollIntervalMs = numberInput(parsed.pollIntervalMs, 1_000, 250, 10_000);
     const connected = await this.connect(signal);
     const agentInstanceId = requiredString(connected.agentInstanceId, "agentInstanceId");
