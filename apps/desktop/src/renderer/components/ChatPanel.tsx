@@ -106,6 +106,7 @@ export function ChatPanel({
   onModelProviderChange,
   onOpenModelConfig,
   onOpenSkillView,
+  promptInjection,
 }: {
   conversation?: Conversation;
   attachments: Attachment[];
@@ -147,6 +148,7 @@ export function ChatPanel({
   onModelProviderChange: (providerId: string) => void;
   onOpenModelConfig: () => void;
   onOpenSkillView: () => void;
+  promptInjection?: { text: string; nonce: number };
 }) {
   const selectionMenuRef = useRef<HTMLDivElement | null>(null);
   const promptMenuRef = useRef<HTMLDivElement | null>(null);
@@ -193,6 +195,22 @@ export function ChatPanel({
   useEffect(() => {
     resizeTextarea();
   }, [prompt, resizeTextarea]);
+
+  useEffect(() => {
+    if (!promptInjection) {
+      return;
+    }
+    const currentValue = promptRef.current;
+    const separator = currentValue && !/\s$/.test(currentValue) ? " " : "";
+    const nextPrompt = `${currentValue}${separator}${promptInjection.text}`;
+    setPrompt(nextPrompt);
+    window.requestAnimationFrame(() => {
+      const textArea = promptInputRef.current;
+      textArea?.focus();
+      textArea?.setSelectionRange(nextPrompt.length, nextPrompt.length);
+      resizeTextarea();
+    });
+  }, [promptInjection, promptInjection?.nonce, resizeTextarea]);
 
   const handleSend = useCallback(async () => {
     const text = prompt.trim();

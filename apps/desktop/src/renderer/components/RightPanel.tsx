@@ -3,7 +3,6 @@ import {
   ApiOutlined,
   CompressOutlined,
   FolderOpenOutlined,
-  PlusOutlined,
   ReloadOutlined,
   StopOutlined,
   ToolOutlined,
@@ -21,9 +20,7 @@ import {
   type RuntimeSnapshot,
   type ServstationA2AConfigUpdate,
 } from "@supbot/shared";
-import { formatDateTime, formatSchedule, statusColor, statusLabel } from "@supbot/shared";
-import { AutopilotPanel } from "./AutopilotPanel";
-import { MemoryPanel } from "./MemoryPanel";
+import { formatDateTime, statusColor, statusLabel } from "@supbot/shared";
 import {
   assistantPreviewForJob,
   formatToolOutput,
@@ -54,9 +51,7 @@ export function RightPanel({
   panel,
   setPanel,
   collapsed,
-  refresh,
   t,
-  openSchedule,
   onLocateJob,
 }: {
   snapshot: RuntimeSnapshot;
@@ -64,9 +59,7 @@ export function RightPanel({
   panel: DetailPanel;
   setPanel: (panel: DetailPanel) => void;
   collapsed: boolean;
-  refresh: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
-  openSchedule: () => void;
   onLocateJob: (job: AgentJob) => void;
 }) {
   const conversationJobs = snapshot.jobs.filter((job) => job.conversationId === activeConversationId);
@@ -80,23 +73,6 @@ export function RightPanel({
             key: "tasks",
             label: t("Tasks"),
             children: <ConversationTasksPanel jobs={conversationJobs} onLocateJob={onLocateJob} t={t} />,
-          },
-          {
-            key: "memory",
-            label: t("Memory"),
-            children: (
-              <MemoryPanel snapshot={snapshot} activeConversationId={activeConversationId} refresh={refresh} t={t} />
-            ),
-          },
-          {
-            key: "schedule",
-            label: t("Schedule"),
-            children: <SchedulePanel snapshot={snapshot} openSchedule={openSchedule} refresh={refresh} t={t} />,
-          },
-          {
-            key: "autopilot",
-            label: t("Autopilot"),
-            children: <AutopilotPanel snapshot={snapshot} refresh={refresh} t={t} />,
           },
         ]}
       />
@@ -766,62 +742,6 @@ export function ToolApprovalsPanel({
             <Button size="small" danger onClick={() => void denyToolPermission(permission.id)}>
               {t("Deny")}
             </Button>
-          </Space>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-export function SchedulePanel({
-  snapshot,
-  openSchedule,
-  refresh,
-  t,
-}: {
-  snapshot: RuntimeSnapshot;
-  openSchedule: () => void;
-  refresh: () => void;
-  t: (key: string, vars?: Record<string, string | number>) => string;
-}) {
-  return (
-    <div className="activity-list">
-      <Button type="primary" icon={<PlusOutlined />} onClick={openSchedule}>
-        {t("New scheduled prompt")}
-      </Button>
-      {snapshot.scheduledJobs.map((job) => (
-        <div className="activity-item stacked" key={job.id}>
-          <div className="activity-head">
-            <strong>{job.title}</strong>
-            <Space size="small">
-              {job.projectId ? (
-                <Tag>{snapshot.projects.find((project) => project.id === job.projectId)?.name || t("Unfiled")}</Tag>
-              ) : null}
-              <Tag color={job.enabled ? "green" : "default"}>{job.enabled ? t("Enabled") : t("Off")}</Tag>
-            </Space>
-          </div>
-          <div className="muted">{formatSchedule(job, t)}</div>
-          <Space>
-            <Button
-              size="small"
-              onClick={async () => {
-                await window.supbot.updateScheduledJob(job.id, { enabled: !job.enabled });
-                await refresh();
-              }}
-            >
-              {job.enabled ? t("Disable") : t("Enable")}
-            </Button>
-            <Popconfirm
-              title={t("Delete scheduled prompt?")}
-              onConfirm={async () => {
-                await window.supbot.deleteScheduledJob(job.id);
-                await refresh();
-              }}
-            >
-              <Button size="small" danger>
-                {t("Delete")}
-              </Button>
-            </Popconfirm>
           </Space>
         </div>
       ))}

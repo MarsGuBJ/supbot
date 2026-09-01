@@ -3,6 +3,7 @@ import {
   ApiOutlined,
   AppstoreOutlined,
   CheckCircleOutlined,
+  CloseOutlined,
   DeleteOutlined,
   EditOutlined,
   PaperClipOutlined,
@@ -99,6 +100,7 @@ export function ConfigWorkspace({
   refresh,
   t,
   openSubagent,
+  onClose,
 }: {
   snapshot: RuntimeSnapshot;
   userDataPath: string;
@@ -107,6 +109,7 @@ export function ConfigWorkspace({
   refresh: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
   openSubagent: (subagent: SubagentConfig | null) => void;
+  onClose: () => void;
 }) {
   return (
     <section className="config-panel">
@@ -118,9 +121,14 @@ export function ConfigWorkspace({
             {t("Model, personality, local capabilities, and subagents live on this machine.")}
           </div>
         </div>
-        <Button icon={<ReloadOutlined />} onClick={refresh}>
-          {t("Refresh")}
-        </Button>
+        <Space>
+          <Button icon={<ReloadOutlined />} onClick={refresh}>
+            {t("Refresh")}
+          </Button>
+          <Button icon={<CloseOutlined />} onClick={onClose}>
+            {t("Close")}
+          </Button>
+        </Space>
       </div>
       <Tabs
         activeKey={focusTab}

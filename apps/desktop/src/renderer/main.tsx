@@ -95,6 +95,7 @@ import { RightPanel } from "./components/RightPanel";
 import { Topbar } from "./components/Topbar";
 import { readClipboardText, selectedTextWithin, selectionMemoryTitle, writeClipboardText } from "./lib/clipboard";
 import { formatFileSize } from "./lib/flowSchema";
+import { formatSkillPromptDirective } from "./lib/skills";
 import {
   servstationConversationTitle,
   servstationJobIsTerminal,
@@ -120,7 +121,7 @@ import { connectServstationAgent, hasUsableServstationOidcSession } from "./serv
 import { EnterpriseLoginOverlay } from "./components/EnterpriseLoginOverlay";
 import { ConfigWorkspace } from "./views/ConfigWorkspace";
 import { ManagePanel, type ManagePanelTab } from "./views/ManagePanel";
-import { MarketWorkspace } from "./views/MarketWorkspace";
+import { SkillHubWorkspace } from "./views/SkillHubWorkspace";
 import { AutopilotMenuView, ScheduleMenuView } from "./views/MenuWorkspaces";
 import { ServerAgentFlowWorkspace, ServerAgentFlows } from "./views/ServerAgentFlows";
 import { ServerAgentMailWorkspace } from "./views/ServerAgentMailWorkspace";
@@ -210,6 +211,7 @@ function App() {
   const [transcriptLoading, setTranscriptLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [focusConfigTab, setFocusConfigTab] = useState("model");
+  const [promptInjection, setPromptInjection] = useState<{ text: string; nonce: number } | undefined>(undefined);
   const [userDataPath, setUserDataPath] = useState("");
   const [updateState, setUpdateState] = useState<HBClientUpdateState>({ status: "idle", currentVersion: "" });
   const [messageApi, contextHolder] = message.useMessage();
@@ -543,6 +545,11 @@ function App() {
     setView("config");
   };
 
+  const handleInsertSkill = (name: string) => {
+    setPromptInjection({ text: formatSkillPromptDirective({ name }), nonce: Date.now() });
+    setView("chat");
+  };
+
   const selectProject = async (projectId: string) => {
     if (!projectId) {
       return;
@@ -858,6 +865,7 @@ function App() {
                   onModelProviderChange={(providerId) => void changeModelProvider(providerId)}
                   onOpenModelConfig={() => openConfig("model")}
                   onOpenSkillView={() => setView("skill")}
+                  promptInjection={promptInjection}
                 />
                 <RightPanel
                   snapshot={snapshot}
@@ -865,9 +873,7 @@ function App() {
                   panel={detailPanel}
                   setPanel={setDetailPanel}
                   collapsed={rightCollapsed}
-                  refresh={refresh}
                   t={t}
-                  openSchedule={() => setScheduleOpen(true)}
                   onLocateJob={locateJobMessage}
                 />
               </div>
@@ -891,11 +897,13 @@ function App() {
                   setEditingSubagent(subagent);
                   setSubagentOpen(true);
                 }}
+                onClose={() => setView("chat")}
               />
             ) : view === "skill" ? (
-              <MarketWorkspace
+              <SkillHubWorkspace
                 refresh={refresh}
                 snapshot={snapshot}
+                onInsertSkill={handleInsertSkill}
                 openMarketConfig={() => {
                   setFocusConfigTab("market");
                   setView("config");
@@ -953,7 +961,6 @@ function App() {
         onSave={async (input) => {
           await window.supbot.createScheduledJob(input);
           setScheduleOpen(false);
-          setDetailPanel("schedule");
           await refresh();
         }}
       />

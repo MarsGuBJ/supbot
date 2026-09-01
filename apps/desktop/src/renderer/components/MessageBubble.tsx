@@ -15,7 +15,7 @@ import {
   ToolOutlined,
 } from "@ant-design/icons";
 import { Alert, Button, message, Tag, Tooltip } from "antd";
-import type { ChatMessage, GeneratedFile } from "@supbot/shared";
+import type { ChatMessage, ChatMessageBlock, GeneratedFile } from "@supbot/shared";
 import { statusColor, statusLabel } from "@supbot/shared";
 import { formatToolPayload, shouldShowGeneratedFileInChat } from "../lib/chatFormat";
 import { writeClipboardText } from "../lib/clipboard";
@@ -182,85 +182,177 @@ export function MessageBlocks({
   t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
   const blocks = message.blocks?.length ? message.blocks : [{ type: "text" as const, text: message.text }];
+  const jobActive = message.status === "queued" || message.status === "running";
+  const groups = groupToolFlowBlocks(blocks);
   return (
     <>
-      {blocks.map((block, index) => {
-        if (block.type === "text") {
-          return block.text ? (
-            <div className="message-text" key={`${message.id}-${index}`}>
-              {block.text}
-            </div>
-          ) : null;
-        }
-        if (block.type === "tool_use") {
-          return <ToolUseBlock block={block} t={t} key={`${message.id}-${block.toolCallId}-use`} />;
-        }
-        if (block.type === "tool_result") {
-          return (
-            <ToolResultBlock
-              block={block}
-              messageId={message.id}
-              t={t}
-              key={`${message.id}-${block.toolCallId}-result`}
-            />
-          );
-        }
-        if (block.type === "thinking" || block.type === "message_delta") {
-          return block.text ? (
-            <div className="message-text is-live" key={`${message.id}-${index}`}>
-              {block.text}
-            </div>
-          ) : null;
-        }
-        if (block.type === "progress") {
-          return (
-            <div className="progress-card" key={`${message.id}-${index}`}>
-              <ClockCircleOutlined /> {block.text}
-            </div>
-          );
-        }
-        if (block.type === "compact_summary") {
-          return (
-            <div className="compact-card" key={`${message.id}-${index}`}>
-              <div className="tool-card-head">
-                <CompressOutlined />
-                <strong>{t("Compact summary")}</strong>
-              </div>
-              <pre>{block.summary.slice(0, 2400)}</pre>
-            </div>
-          );
-        }
-        if (block.type === "subagent_start") {
-          return (
-            <div className="subagent-card" key={`${message.id}-${index}`}>
-              <div className="tool-card-head">
-                <ThunderboltOutlined />
-                <strong>@{block.agentName}</strong>
-                <Tag>{t("running")}</Tag>
-              </div>
-              <pre>{block.prompt.slice(0, 1200)}</pre>
-            </div>
-          );
-        }
-        if (block.type === "subagent_done") {
-          return (
-            <div className={`subagent-card ${block.isError ? "is-error" : ""}`} key={`${message.id}-${index}`}>
-              <div className="tool-card-head">
-                {block.isError ? <CloseCircleOutlined /> : <CheckCircleOutlined />}
-                <strong>@{block.agentName}</strong>
-                <Tag>{t(block.isError ? "failed" : "completed")}</Tag>
-              </div>
-              <pre>{block.output.slice(0, 2400)}</pre>
-            </div>
-          );
-        }
-        if (block.type === "question") {
-          return <QuestionBlock block={block} t={t} key={`${message.id}-${block.questionId}`} />;
-        }
-        return <Alert key={`${message.id}-${index}`} type="error" message={block.message} />;
-      })}
+      {groups.map((group, index) =>
+        Array.isArray(group) ? (
+          <ToolProcessGroup
+            blocks={group}
+            messageId={message.id}
+            jobActive={jobActive}
+            t={t}
+            key={`${message.id}-tools-${index}-${group[0]?.toolCallId || ""}`}
+          />
+        ) : (
+          renderMessageBlock(group, message.id, index, t)
+        ),
+      )}
     </>
   );
+}
+
+type ToolFlowMessageBlock = ToolUseMessageBlock | ToolResultMessageBlock;
+
+function groupToolFlowBlocks(blocks: ChatMessageBlock[]): Array<ChatMessageBlock | ToolFlowMessageBlock[]> {
+  const groups: Array<ChatMessageBlock | ToolFlowMessageBlock[]> = [];
+  for (const block of blocks) {
+    if (block.type === "tool_use" || block.type === "tool_result") {
+      const last = groups[groups.length - 1];
+      if (Array.isArray(last)) {
+        last.push(block);
+      } else {
+        groups.push([block]);
+      }
+    } else {
+      groups.push(block);
+    }
+  }
+  return groups;
+}
+
+export function ToolProcessGroup({
+  blocks,
+  messageId,
+  jobActive,
+  t,
+}: {
+  blocks: ToolFlowMessageBlock[];
+  messageId: string;
+  jobActive: boolean;
+  t: (key: string, vars?: Record<string, string | number>) => string;
+}) {
+  const [toggled, setToggled] = useState<boolean | null>(null);
+  const expanded = toggled ?? jobActive;
+  const stepCount = new Set(blocks.map((block) => block.toolCallId)).size;
+  const hasError = blocks.some(
+    (block) =>
+      (block.type === "tool_result" && block.isError) ||
+      (block.type === "tool_use" && (block.status === "failed" || block.status === "denied")),
+  );
+  return (
+    <div className={`tool-card tool-process ${hasError ? "is-error" : ""} ${expanded ? "is-expanded" : "is-collapsed"}`}>
+      <div className="tool-card-head tool-result-head">
+        <ToolOutlined />
+        <strong>{t("Execution process")}</strong>
+        <Tag>{stepCount}</Tag>
+        <Tooltip title={t(expanded ? "Collapse" : "Expand")}>
+          <Button
+            type="text"
+            size="small"
+            className="tool-result-toggle"
+            icon={expanded ? <DownOutlined /> : <RightOutlined />}
+            aria-label={t(expanded ? "Collapse" : "Expand")}
+            aria-expanded={expanded}
+            onClick={() => setToggled(!expanded)}
+          />
+        </Tooltip>
+      </div>
+      {expanded ? (
+        <div className="tool-process-list">
+          {blocks.map((block) =>
+            block.type === "tool_use" ? (
+              <ToolUseBlock block={block} t={t} key={`${messageId}-${block.toolCallId}-use`} />
+            ) : (
+              <ToolResultBlock block={block} messageId={messageId} t={t} key={`${messageId}-${block.toolCallId}-result`} />
+            ),
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function renderMessageBlock(
+  block: ChatMessageBlock,
+  messageId: string,
+  index: number,
+  t: (key: string, vars?: Record<string, string | number>) => string,
+) {
+  if (block.type === "text") {
+    return block.text ? (
+      <div className="message-text" key={`${messageId}-${index}`}>
+        {block.text}
+      </div>
+    ) : null;
+  }
+  if (block.type === "tool_use") {
+    return <ToolUseBlock block={block} t={t} key={`${messageId}-${block.toolCallId}-use`} />;
+  }
+  if (block.type === "tool_result") {
+    return (
+      <ToolResultBlock
+        block={block}
+        messageId={messageId}
+        t={t}
+        key={`${messageId}-${block.toolCallId}-result`}
+      />
+    );
+  }
+  if (block.type === "thinking" || block.type === "message_delta") {
+    return block.text ? (
+      <div className="message-text is-live" key={`${messageId}-${index}`}>
+        {block.text}
+      </div>
+    ) : null;
+  }
+  if (block.type === "progress") {
+    return (
+      <div className="progress-card" key={`${messageId}-${index}`}>
+        <ClockCircleOutlined /> {block.text}
+      </div>
+    );
+  }
+  if (block.type === "compact_summary") {
+    return (
+      <div className="compact-card" key={`${messageId}-${index}`}>
+        <div className="tool-card-head">
+          <CompressOutlined />
+          <strong>{t("Compact summary")}</strong>
+        </div>
+        <pre>{block.summary.slice(0, 2400)}</pre>
+      </div>
+    );
+  }
+  if (block.type === "subagent_start") {
+    return (
+      <div className="subagent-card" key={`${messageId}-${index}`}>
+        <div className="tool-card-head">
+          <ThunderboltOutlined />
+          <strong>@{block.agentName}</strong>
+          <Tag>{t("running")}</Tag>
+        </div>
+        <pre>{block.prompt.slice(0, 1200)}</pre>
+      </div>
+    );
+  }
+  if (block.type === "subagent_done") {
+    return (
+      <div className={`subagent-card ${block.isError ? "is-error" : ""}`} key={`${messageId}-${index}`}>
+        <div className="tool-card-head">
+          {block.isError ? <CloseCircleOutlined /> : <CheckCircleOutlined />}
+          <strong>@{block.agentName}</strong>
+          <Tag>{t(block.isError ? "failed" : "completed")}</Tag>
+        </div>
+        <pre>{block.output.slice(0, 2400)}</pre>
+      </div>
+    );
+  }
+  if (block.type === "question") {
+    return <QuestionBlock block={block} t={t} key={`${messageId}-${block.questionId}`} />;
+  }
+  return <Alert key={`${messageId}-${index}`} type="error" message={block.message} />;
 }
 
 export type ToolUseMessageBlock = Extract<NonNullable<ChatMessage["blocks"]>[number], { type: "tool_use" }>;

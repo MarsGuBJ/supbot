@@ -305,6 +305,48 @@ async function main() {
   if (!versionDialog?.triggerFound || !versionDialog.visible || !versionDialog.closed) {
     throw new Error(`HyBot version dialog did not complete its open/close flow: ${JSON.stringify(versionDialog)}`);
   }
+  step("checking skill workspace tabs");
+  const skillWorkspaceUi = await evaluate(
+    page.webSocketDebuggerUrl,
+    `(async () => {
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const menuItems = [...document.querySelectorAll(".sidebar-menu .menu-item")];
+      const skillItem = menuItems.find(
+        (element) => element.textContent?.includes("专家·技能·插件") || element.textContent?.includes("Experts, skills & plugins"),
+      );
+      skillItem?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      await sleep(300);
+      const tabLabels = [...document.querySelectorAll(".main .ant-tabs-tab")].map((element) => element.textContent || "");
+      const activeTabLabel = document.querySelector(".main .ant-tabs-tab-active")?.textContent || "";
+      const result = {
+        clickedSkillNav: Boolean(skillItem),
+        tabLabels,
+        activeTabLabel,
+        hasSkillsTab: tabLabels.some((label) => label.includes("技能") || label.includes("Skills")),
+        hasExpertsTab: tabLabels.some((label) => label.includes("专家") || label.includes("Experts")),
+        hasMarketTab: tabLabels.some((label) => label.includes("工具市场") || label.includes("Tool Market")),
+        skillsActiveByDefault: activeTabLabel.includes("技能") || activeTabLabel.includes("Skills")
+      };
+      const projectsItem = [...document.querySelectorAll(".sidebar-menu .menu-item")].find(
+        (element) => element.textContent?.includes("项目") || element.textContent?.includes("Projects"),
+      );
+      projectsItem?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      await sleep(300);
+      result.backToChat = Boolean(document.querySelector(".chat-panel"));
+      return result;
+    })()`,
+  );
+  console.log(JSON.stringify({ skillWorkspaceUi }, null, 2));
+  if (
+    !skillWorkspaceUi?.clickedSkillNav ||
+    !skillWorkspaceUi.hasSkillsTab ||
+    !skillWorkspaceUi.hasExpertsTab ||
+    !skillWorkspaceUi.hasMarketTab ||
+    !skillWorkspaceUi.skillsActiveByDefault ||
+    !skillWorkspaceUi.backToChat
+  ) {
+    throw new Error(`Skill workspace tabs did not render correctly: ${JSON.stringify(skillWorkspaceUi)}`);
+  }
   const securityWarning = diagnostics.events.find((event) => {
     const text = `${event.args || ""} ${event.text || ""}`;
     return text.includes("Electron Security Warning") || text.includes("Insecure Content-Security-Policy");

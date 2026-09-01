@@ -1,5 +1,5 @@
 export type WorkspaceView = "chat" | "server" | "config" | "skill" | "schedule" | "autodrive";
-export type DetailPanel = "tasks" | "memory" | "schedule" | "autopilot" | null;
+export type DetailPanel = "tasks" | null;
 export type Translator = (key: string, vars?: Record<string, string | number>) => string;
 export type SelectionContextMenu = { x: number; y: number; text: string };
 export type PromptContextMenu = {
