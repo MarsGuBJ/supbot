@@ -27,15 +27,31 @@ export async function fetchWithRetry(
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   let lastError: unknown;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
-    const signal = combineSignals([options.signal, timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined]);
+    // The timeout only covers establishing the response (connect + headers).
+    // Once fetch resolves, the timer is cleared so a long-streaming body is
+    // never aborted mid-stream — only the caller's signal can still cancel it.
+    const timeoutController = new AbortController();
+    const timer =
+      timeoutMs > 0
+        ? setTimeout(() => {
+            timeoutController.abort(new DOMException("The operation timed out.", "TimeoutError"));
+          }, timeoutMs)
+        : undefined;
+    const signal = combineSignals([options.signal, timeoutMs > 0 ? timeoutController.signal : undefined]);
     try {
       const response = await fetch(url, { ...init, signal });
+      if (timer) {
+        clearTimeout(timer);
+      }
       if (!RETRYABLE_STATUS.has(response.status) || attempt === retries) {
         return response;
       }
       lastError = new Error(`HTTP ${response.status}`);
       await response.arrayBuffer().catch(() => undefined);
     } catch (error) {
+      if (timer) {
+        clearTimeout(timer);
+      }
       if (options.signal?.aborted) {
         throw error;
       }

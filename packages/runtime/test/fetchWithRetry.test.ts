@@ -99,4 +99,18 @@ describe("fetchWithRetry", () => {
     await expect(fetchWithRetry(url, {}, { timeoutMs: 100, retries: 0 })).rejects.toThrow();
     expect(Date.now() - started).toBeLessThan(5_000);
   });
+
+  test("does not abort a slow body once headers have arrived", async () => {
+    const url = await startServer((_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write("data: first\n\n");
+      setTimeout(() => {
+        res.write("data: last\n\n");
+        res.end();
+      }, 300);
+    });
+    const response = await fetchWithRetry(url, {}, { timeoutMs: 100, retries: 0 });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("data: first\n\ndata: last\n\n");
+  });
 });
