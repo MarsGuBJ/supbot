@@ -282,6 +282,7 @@ declare global {
       deleteScheduledJob(id: string): Promise<void>;
       pickAttachments(): Promise<Attachment[]>;
       importDroppedAttachments(files: File[]): Promise<Attachment[]>;
+      importClipboardAttachments(files: File[]): Promise<Attachment[]>;
       openFile(filePath: string): Promise<void>;
       downloadFile(filePath: string, suggestedName?: string): Promise<boolean>;
       userDataPath(): Promise<string>;

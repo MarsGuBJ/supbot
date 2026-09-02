@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { FileTextOutlined, FolderOpenOutlined, PlusOutlined, ThunderboltOutlined } from "@ant-design/icons";
-import { Button, Empty, Form, Input, Modal, Popconfirm, Select, Space, Tag, Tooltip, Typography, message } from "antd";
+import { Button, Empty, Form, Input, Modal, Popconfirm, Select, Space, Tag, Tooltip, message } from "antd";
 import type { AutopilotRun, RuntimeSnapshot } from "@supbot/shared";
 
 export function AutopilotPanel({
@@ -111,14 +111,6 @@ export function AutopilotPanel({
   return (
     <div className="autopilot-workbench">
       {contextHolder}
-      <div className="autopilot-hero">
-        <div>
-          <span className="eyebrow">{t("DATA AUTOPILOT")}</span>
-          <Typography.Title level={4}>{t("Project data runs")}</Typography.Title>
-        </div>
-        <Tag color={snapshot.status === "running" ? "cyan" : "default"}>{t(snapshot.status)}</Tag>
-      </div>
-
       <div className="autopilot-grid">
         <section className="autopilot-panel">
           <div className="autopilot-panel-head">

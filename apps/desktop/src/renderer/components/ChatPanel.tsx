@@ -34,6 +34,7 @@ import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { ComposerPermissionPrompt } from "./ComposerPermissionPrompt";
 import { MessageBubble } from "./MessageBubble";
 import { readClipboardText, selectedTextWithin } from "../lib/clipboard";
+import { filesFromPasteEvent, renamePastedFiles } from "../lib/pastedAttachments";
 import type { PromptContextMenu, SelectionContextMenu } from "../lib/types";
 import { enabledSkillCapabilities, formatSkillPromptDirective } from "../lib/skills";
 
@@ -240,6 +241,25 @@ export function ChatPanel({
         }
       } catch (error) {
         message.error(error instanceof Error ? error.message : t("Failed to attach dropped files."));
+      }
+    },
+    [setAttachments, t],
+  );
+
+  const handleFilePaste = useCallback(
+    async (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const files = filesFromPasteEvent(event);
+      if (!files.length) {
+        return;
+      }
+      event.preventDefault();
+      try {
+        const imported = await window.supbot.importClipboardAttachments(renamePastedFiles(files));
+        if (imported.length) {
+          setAttachments((items) => [...items, ...imported]);
+        }
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : t("Failed to attach pasted files."));
       }
     },
     [setAttachments, t],
@@ -1030,6 +1050,7 @@ export function ChatPanel({
             rows={1}
             placeholder={t("What can I help you with today? @ to reference files, / for skills and commands")}
             onChange={(event) => setPrompt(event.target.value)}
+            onPaste={(event) => void handleFilePaste(event)}
             onContextMenu={openPromptMenu}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {

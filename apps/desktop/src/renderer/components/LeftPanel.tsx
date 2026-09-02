@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AppstoreOutlined,
   CalendarOutlined,
-  CarOutlined,
   CloseOutlined,
   DeleteOutlined,
   DownOutlined,
@@ -283,13 +282,6 @@ export function LeftPanel({
       icon: <CalendarOutlined />,
       active: view === "schedule",
       action: () => setView("schedule"),
-    },
-    {
-      id: "autodrive",
-      label: t("Autopilot"),
-      icon: <CarOutlined />,
-      active: view === "autodrive",
-      action: () => setView("autodrive"),
     },
   ];
 

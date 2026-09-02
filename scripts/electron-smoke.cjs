@@ -259,22 +259,27 @@ async function main() {
   const collapsedToolUi = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => ({
-      hasToolCard: Boolean(document.querySelector(".tool-card")),
-      hasToolResultHeader: document.body.innerText.includes("工具结果") || document.body.innerText.includes("Tool result"),
-      hasToolResultToggle: Boolean(document.querySelector(".tool-card.result .tool-result-toggle[aria-expanded='false']")),
-      isToolResultCollapsed: Boolean(document.querySelector(".tool-card.result.is-collapsed")) && !document.querySelector(".tool-result-content"),
-      hasTruncatedMarker: document.body.innerText.includes("已截断") || document.body.innerText.includes("truncated")
+      hasToolCard: Boolean(document.querySelector(".tool-card.tool-process")),
+      hasToolProcessHeader: document.body.innerText.includes("执行过程") || document.body.innerText.includes("Execution process"),
+      hasToolProcessToggle: Boolean(document.querySelector(".tool-card.tool-process .tool-result-toggle[aria-expanded='false']")),
+      isToolProcessCollapsed: Boolean(document.querySelector(".tool-card.tool-process.is-collapsed")) && !document.querySelector(".tool-process-list")
     }))()`,
   );
   const expandedToolUi = await evaluate(
     page.webSocketDebuggerUrl,
     `(async () => {
-      const toggle = document.querySelector(".tool-card.result .tool-result-toggle");
-      toggle?.click();
-      await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+      const settle = () => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 50)));
+      const groupToggle = document.querySelector(".tool-card.tool-process .tool-result-toggle");
+      groupToggle?.click();
+      await settle();
+      const resultToggle = document.querySelector(".tool-card.result .tool-result-toggle");
+      resultToggle?.click();
+      await settle();
       return {
-        hasExpandedToggle: Boolean(document.querySelector(".tool-card.result .tool-result-toggle[aria-expanded='true']")),
+        hasExpandedToggle: Boolean(document.querySelector(".tool-card.tool-process .tool-result-toggle[aria-expanded='true']")),
+        hasToolResultCard: Boolean(document.querySelector(".tool-card.result")),
         hasToolResult: document.body.innerText.includes("Tool completed from smoke"),
+        hasTruncatedMarker: document.body.innerText.includes("已截断") || document.body.innerText.includes("truncated"),
         hasToolResultParts: Boolean(document.querySelector(".tool-result-part")),
         hasToolResultPartTypes: document.body.innerText.includes("image/png") && document.body.innerText.includes("resource text")
       };
@@ -356,16 +361,17 @@ async function main() {
   }
   if (
     !collapsedToolUi?.hasToolCard ||
-    !collapsedToolUi.hasToolResultHeader ||
-    !collapsedToolUi.hasToolResultToggle ||
-    !collapsedToolUi.isToolResultCollapsed ||
-    !collapsedToolUi.hasTruncatedMarker
+    !collapsedToolUi.hasToolProcessHeader ||
+    !collapsedToolUi.hasToolProcessToggle ||
+    !collapsedToolUi.isToolProcessCollapsed
   ) {
-    throw new Error("Tool result card was not collapsed by default.");
+    throw new Error("Tool process card was not collapsed by default.");
   }
   if (
     !expandedToolUi?.hasExpandedToggle ||
+    !expandedToolUi.hasToolResultCard ||
     !expandedToolUi.hasToolResult ||
+    !expandedToolUi.hasTruncatedMarker ||
     !expandedToolUi.hasToolResultParts ||
     !expandedToolUi.hasToolResultPartTypes
   ) {
@@ -479,10 +485,10 @@ async function main() {
   const autopilotClick = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => {
-      const autopilotTab = document.querySelector('#rc-tabs-0-tab-autopilot') ||
-        [...document.querySelectorAll('.activity-panel [role="tab"]')].find((el) => el.textContent?.includes("Autopilot") || el.textContent?.includes("自动驾驶"));
-      autopilotTab?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
-      return { clickedAutopilot: Boolean(autopilotTab), text: autopilotTab?.textContent || "" };
+      const autopilotNav = [...document.querySelectorAll(".sidebar-menu .menu-item")]
+        .find((el) => el.textContent?.includes("Autopilot") || el.textContent?.includes("自动驾驶"));
+      autopilotNav?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      return { clickedAutopilot: Boolean(autopilotNav), text: autopilotNav?.textContent || "" };
     })()`,
   );
   await sleep(300);
@@ -492,6 +498,7 @@ async function main() {
       const workbench = document.querySelector(".autopilot-workbench");
       const text = workbench?.textContent || "";
       return {
+        hasWorkspace: Boolean(document.querySelector(".autodrive-workspace")),
         hasPanel: Boolean(workbench),
         hasIcon: Boolean(workbench?.querySelector(".anticon-thunderbolt")),
         hasNewProjectButton: Boolean(workbench?.querySelector(".autopilot-new-project-button")),
@@ -530,6 +537,7 @@ async function main() {
   console.log(JSON.stringify({ autopilotClick, autopilotUi, projectModalUi }, null, 2));
   if (
     !autopilotClick?.clickedAutopilot ||
+    !autopilotUi?.hasWorkspace ||
     !autopilotUi?.hasPanel ||
     !autopilotUi.hasIcon ||
     !autopilotUi.hasNewProjectButton ||
@@ -554,12 +562,33 @@ async function main() {
   const memoryClick = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => {
-      const memoryTab = document.querySelector('#rc-tabs-0-tab-memory') ||
-        [...document.querySelectorAll('.activity-panel [role="tab"]')].find((el) => el.textContent?.includes("Memory") || el.textContent?.includes("记忆"));
-      memoryTab?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      const accountButton = document.querySelector(".sidebar-account");
+      accountButton?.click();
+      return { openedAccount: Boolean(accountButton) };
+    })()`,
+  );
+  await sleep(200);
+  const memoryConfigClick = await evaluate(
+    page.webSocketDebuggerUrl,
+    `(() => {
+      const configControl = [...document.querySelectorAll(".account-popup-row")]
+        .find((el) => el.textContent?.includes("配置") || el.textContent?.includes("Config"));
+      configControl?.click();
+      return { clickedConfig: Boolean(configControl) };
+    })()`,
+  );
+  Object.assign(memoryClick, memoryConfigClick);
+  await sleep(400);
+  const memoryTabClick = await evaluate(
+    page.webSocketDebuggerUrl,
+    `(() => {
+      const memoryTab = [...document.querySelectorAll('.config-panel [role="tab"]')]
+        .find((el) => el.textContent?.includes("Memory") || el.textContent?.includes("记忆"));
+      memoryTab?.click();
       return { clickedMemory: Boolean(memoryTab), text: memoryTab?.textContent || "" };
     })()`,
   );
+  Object.assign(memoryClick, memoryTabClick);
   await sleep(600);
   step("checking memory panel");
   const memoryInitial = await evaluate(
@@ -581,6 +610,7 @@ async function main() {
   );
   console.log(JSON.stringify({ memoryClick, memoryInitial }, null, 2));
   if (
+    !memoryClick?.clickedConfig ||
     !memoryClick?.clickedMemory ||
     !memoryInitial?.hasPanel ||
     !memoryInitial.hasSearch ||

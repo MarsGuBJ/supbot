@@ -1950,7 +1950,6 @@ button {
   align-content: start;
 }
 
-.autopilot-hero,
 .autopilot-panel,
 .autopilot-run-header,
 .autopilot-stage-row,
@@ -1959,18 +1958,6 @@ button {
 .autopilot-event {
   border: 1px solid rgba(104, 65, 45, 0.12);
   background: rgba(255, 255, 255, 0.72);
-}
-
-.autopilot-hero {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px;
-  border-radius: 8px;
-}
-
-.autopilot-hero h4 {
-  margin: 2px 0 0;
 }
 
 .autopilot-grid {
@@ -1995,6 +1982,10 @@ button {
 
 .autopilot-panel-head .ant-btn {
   flex: 0 0 auto;
+}
+
+.autopilot-workbench .section-title {
+  font-size: 14px;
 }
 
 .autopilot-folder-picker {
@@ -6007,6 +5998,32 @@ textarea.ant-input::placeholder {
 
 .schedule-empty {
   margin-top: 48px;
+}
+
+/* ---- Cron builder (schedule modal) ---- */
+
+.cron-builder-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+}
+
+.cron-builder-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cron-builder-label {
+  font-size: 12px;
+  color: var(--text-secondary, #666);
+}
+
+.cron-builder-preview {
+  margin-top: 8px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--text-secondary, #666);
 }
 
 /* ---- Enterprise workspace login page (prototype V5) ---- */

@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type {
+  Attachment,
   AutopilotStartDataRunInput,
   CapabilityUpdateInput,
   CreateConversationInput,
@@ -247,6 +248,33 @@ const api = {
   importDroppedAttachments: (files: File[]) => {
     const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean);
     return paths.length ? ipcRenderer.invoke("attachment:importPaths", paths) : Promise.resolve([]);
+  },
+  // Pasted clipboard files may be in-memory blobs without a filesystem path.
+  // Import path-backed files via their path and ship blob bytes to the main
+  // process, which persists them under userData.
+  importClipboardAttachments: async (files: File[]) => {
+    const paths: string[] = [];
+    const blobs: Array<{ name: string; mimeType?: string; data: Uint8Array }> = [];
+    for (const file of files) {
+      const filePath = webUtils.getPathForFile(file);
+      if (filePath) {
+        paths.push(filePath);
+        continue;
+      }
+      blobs.push({
+        name: file.name,
+        mimeType: file.type || undefined,
+        data: new Uint8Array(await file.arrayBuffer()),
+      });
+    }
+    const imported: Attachment[] = [];
+    if (paths.length) {
+      imported.push(...((await ipcRenderer.invoke("attachment:importPaths", paths)) as Attachment[]));
+    }
+    if (blobs.length) {
+      imported.push(...((await ipcRenderer.invoke("attachment:importData", blobs)) as Attachment[]));
+    }
+    return imported;
   },
   openFile: (filePath: string) => ipcRenderer.invoke("file:open", filePath),
   downloadFile: (filePath: string, suggestedName?: string) =>

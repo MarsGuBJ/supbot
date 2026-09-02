@@ -3,11 +3,12 @@ import {
   CheckCircleOutlined,
   ClockCircleOutlined,
   CloseCircleOutlined,
+  CloseOutlined,
   DeleteOutlined,
   PlusOutlined,
   ThunderboltOutlined,
 } from "@ant-design/icons";
-import { Button, Empty, Popconfirm, Switch, Tag, Typography, message } from "antd";
+import { Button, Empty, Popconfirm, Space, Switch, Tag, message } from "antd";
 import type { AgentJob, RuntimeSnapshot, ScheduledJob } from "@supbot/shared";
 import { formatDateTime, formatSchedule } from "@supbot/shared";
 import { AutopilotPanel } from "../components/AutopilotPanel";
@@ -17,11 +18,13 @@ export function ScheduleMenuView({
   snapshot,
   refresh,
   onCreateSchedule,
+  onClose,
   t,
 }: {
   snapshot: RuntimeSnapshot;
   refresh: () => void;
   onCreateSchedule: () => void;
+  onClose: () => void;
   t: Translator;
 }) {
   const [tab, setTab] = useState<"tasks" | "logs">("tasks");
@@ -70,11 +73,15 @@ export function ScheduleMenuView({
       <div className="menu-workspace-header">
         <div>
           <div className="eyebrow">{t("SCHEDULED TASKS")}</div>
-          <Typography.Title level={4}>{t("Scheduled tasks")}</Typography.Title>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={onCreateSchedule}>
-          {t("Create scheduled task")}
-        </Button>
+        <Space>
+          <Button type="primary" icon={<PlusOutlined />} onClick={onCreateSchedule}>
+            {t("Create scheduled task")}
+          </Button>
+          <Button icon={<CloseOutlined />} onClick={onClose}>
+            {t("Close")}
+          </Button>
+        </Space>
       </div>
       <div className="schedule-tabs" role="tablist">
         <button
@@ -185,10 +192,12 @@ function ScheduleRunRecord({ job, t }: { job: AgentJob; t: Translator }) {
 export function AutopilotMenuView({
   snapshot,
   refresh,
+  onClose,
   t,
 }: {
   snapshot: RuntimeSnapshot;
   refresh: () => void;
+  onClose: () => void;
   t: Translator;
 }) {
   return (
@@ -198,11 +207,15 @@ export function AutopilotMenuView({
           <div className="eyebrow">
             <ThunderboltOutlined /> {t("AUTOPILOT")}
           </div>
-          <Typography.Title level={4}>{t("Autopilot runs")}</Typography.Title>
         </div>
-        <Tag color={snapshot.autopilotRuns.some((run) => run.status === "running") ? "blue" : "default"}>
-          {t(snapshot.status)}
-        </Tag>
+        <Space>
+          <Tag color={snapshot.autopilotRuns.some((run) => run.status === "running") ? "blue" : "default"}>
+            {t(snapshot.status)}
+          </Tag>
+          <Button icon={<CloseOutlined />} onClick={onClose}>
+            {t("Close")}
+          </Button>
+        </Space>
       </div>
       <AutopilotPanel snapshot={snapshot} refresh={refresh} t={t} />
     </section>

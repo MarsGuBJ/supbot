@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell, type WebContents } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, safeStorage, shell, type WebContents } from "electron";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { cp, copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { hostname, userInfo } from "node:os";
@@ -13,6 +13,7 @@ import {
   type StorageAdapter,
 } from "@supbot/runtime";
 import type {
+  Attachment,
   AutopilotStartDataRunInput,
   CapabilityUpdateInput,
   CreateConversationInput,
@@ -748,6 +749,7 @@ function isAllowedAppUrl(rawUrl: string): boolean {
 
 async function createWindow(): Promise<void> {
   runtime = runtime ?? (await createRuntime());
+  Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
     width: 1360,
     height: 880,
@@ -1403,6 +1405,32 @@ function registerIpc(): void {
   ipcMain.handle("attachment:importPaths", (_event, paths: unknown) => {
     const filePaths = optionalStringArray(paths, "attachment paths") || [];
     return Promise.all(filePaths.map((filePath) => getRuntime().importAttachment(filePath)));
+  });
+  // Clipboard-pasted images/files have no filesystem path, so the renderer
+  // ships their bytes here; we persist them under userData and register an
+  // attachment record, mirroring importAttachment's shape.
+  ipcMain.handle("attachment:importData", async (_event, items: unknown) => {
+    const list = Array.isArray(items) ? items : [];
+    if (!list.length) {
+      return [];
+    }
+    const attachmentsDir = join(app.getPath("userData"), "data", "attachments");
+    await mkdir(attachmentsDir, { recursive: true });
+    return Promise.all(
+      list.map(async (item): Promise<Attachment> => {
+        const value = object(item, "pasted attachment");
+        const name = basename(requiredString(value.name, "pasted attachment name").trim()) || "pasted.bin";
+        const mimeType = optionalString(value.mimeType, "pasted attachment mime type");
+        const data = value.data instanceof Uint8Array ? value.data : undefined;
+        if (!data?.byteLength) {
+          throw new Error("pasted attachment data is required.");
+        }
+        const id = `att_${randomBytes(8).toString("hex")}`;
+        const filePath = join(attachmentsDir, `${id}-${name}`);
+        await writeFile(filePath, data);
+        return { id, name, path: filePath, size: data.byteLength, mimeType };
+      }),
+    );
   });
   ipcMain.handle("file:open", async (_event, filePath: string) => {
     const safePath = requiredPath(filePath, "file path");

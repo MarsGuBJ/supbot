@@ -32,6 +32,7 @@ import {
   Badge,
   Button,
   ConfigProvider,
+  DatePicker,
   Empty,
   Form,
   Input,
@@ -48,6 +49,7 @@ import {
   message,
 } from "antd";
 import type { TextAreaRef } from "antd/es/input/TextArea";
+import type { Dayjs } from "dayjs";
 import zhCN from "antd/locale/zh_CN";
 import enUS from "antd/locale/en_US";
 import type {
@@ -90,10 +92,12 @@ import {
 } from "./servstationProjects";
 import "./styles.css";
 import { ChatPanel } from "./components/ChatPanel";
+import { CronBuilder } from "./components/CronBuilder";
 import { LeftPanel } from "./components/LeftPanel";
 import { RightPanel } from "./components/RightPanel";
 import { Topbar } from "./components/Topbar";
 import { readClipboardText, selectedTextWithin, selectionMemoryTitle, writeClipboardText } from "./lib/clipboard";
+import { filesFromPasteEvent, renamePastedFiles } from "./lib/pastedAttachments";
 import { formatFileSize } from "./lib/flowSchema";
 import { formatSkillPromptDirective } from "./lib/skills";
 import {
@@ -912,6 +916,7 @@ function App() {
                   setFocusConfigTab("mcp");
                   setView("config");
                 }}
+                onClose={() => setView("chat")}
                 t={t}
               />
             ) : view === "schedule" ? (
@@ -919,10 +924,11 @@ function App() {
                 snapshot={snapshot}
                 refresh={refresh}
                 onCreateSchedule={() => setScheduleOpen(true)}
+                onClose={() => setView("chat")}
                 t={t}
               />
             ) : (
-              <AutopilotMenuView snapshot={snapshot} refresh={refresh} t={t} />
+              <AutopilotMenuView snapshot={snapshot} refresh={refresh} onClose={() => setView("chat")} t={t} />
             )}
           </section>
         </div>
@@ -1886,6 +1892,25 @@ function ServerAgentMessages({
     [closePromptMenu, copySelectedText, prompt, promptMenu, setPrompt, t],
   );
 
+  const handlePromptPaste = useCallback(
+    async (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const files = filesFromPasteEvent(event);
+      if (!files.length) {
+        return;
+      }
+      event.preventDefault();
+      try {
+        const imported = await window.supbot.importClipboardAttachments(renamePastedFiles(files));
+        if (imported.length) {
+          setAttachments((items) => [...items, ...imported]);
+        }
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : t("Failed to attach pasted files."));
+      }
+    },
+    [setAttachments, t],
+  );
+
   const runGeneratedFileDownload = useCallback(
     async (jobId: string, file: ServstationGeneratedFile) => {
       const key = `${jobId}:${file.fileId}`;
@@ -2262,6 +2287,7 @@ function ServerAgentMessages({
             autoSize={{ minRows: 2, maxRows: 6 }}
             placeholder={t("Message remote staff-agent...")}
             onChange={(event) => setPrompt(event.target.value)}
+            onPaste={(event) => void handlePromptPaste(event)}
             onContextMenu={openPromptMenu}
             onPressEnter={(event) => {
               if (!event.shiftKey) {
@@ -2644,7 +2670,8 @@ function ScheduleModal({
   onSave: (input: ScheduledJobInput) => Promise<void>;
   t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
-  const [form] = Form.useForm<ScheduledJobInput>();
+  // runAt is a Dayjs inside the form (DatePicker), converted to ISO on save.
+  const [form] = Form.useForm<Omit<ScheduledJobInput, "runAt"> & { runAt?: Dayjs }>();
   useEffect(() => {
     if (open) {
       form.setFieldValue("projectId", defaultProjectId);
@@ -2662,7 +2689,7 @@ function ScheduleModal({
         form={form}
         layout="vertical"
         initialValues={{ scheduleKind: "once", enabled: true }}
-        onFinish={(values) => void onSave(values)}
+        onFinish={(values) => void onSave({ ...values, runAt: values.runAt ? values.runAt.toISOString() : undefined })}
       >
         <Form.Item label={t("Title")} name="title" rules={[{ required: true }]}>
           <Input />
@@ -2690,11 +2717,23 @@ function ScheduleModal({
             ]}
           />
         </Form.Item>
-        <Form.Item label={t("Run at ISO time")} name="runAt">
-          <Input placeholder={new Date(Date.now() + 3600000).toISOString()} />
-        </Form.Item>
-        <Form.Item label={t("Cron expression")} name="cronExpr">
-          <Input placeholder="0 9 * * 1-5" />
+        <Form.Item noStyle shouldUpdate={(prev, next) => prev.scheduleKind !== next.scheduleKind}>
+          {({ getFieldValue }) =>
+            getFieldValue("scheduleKind") === "cron" ? (
+              <Form.Item label={t("Cron expression")} name="cronExpr">
+                <CronBuilder t={t} />
+              </Form.Item>
+            ) : (
+              <Form.Item label={t("Run at")} name="runAt">
+                <DatePicker
+                  showTime={{ format: "HH:mm" }}
+                  format="YYYY-MM-DD HH:mm"
+                  style={{ width: "100%" }}
+                  placeholder={t("Pick run time")}
+                />
+              </Form.Item>
+            )
+          }
         </Form.Item>
         <Form.Item label={t("Enabled")} name="enabled" valuePropName="checked">
           <Switch />

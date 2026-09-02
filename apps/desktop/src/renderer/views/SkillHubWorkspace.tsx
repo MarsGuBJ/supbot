@@ -1,4 +1,5 @@
-import { Empty, Tabs, Tag, Typography } from "antd";
+import { CloseOutlined } from "@ant-design/icons";
+import { Button, Empty, Tabs, Tag } from "antd";
 import type { CapabilityDefinition, RuntimeSnapshot, SubagentConfig } from "@supbot/shared";
 import { MarketWorkspace } from "./MarketWorkspace";
 
@@ -47,6 +48,7 @@ export function SkillHubWorkspace({
   onInsertSkill,
   openMarketConfig,
   openMcpConfig,
+  onClose,
   t,
 }: {
   refresh: () => Promise<void>;
@@ -54,6 +56,7 @@ export function SkillHubWorkspace({
   onInsertSkill: (name: string) => void;
   openMarketConfig: () => void;
   openMcpConfig: () => void;
+  onClose: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
   const skills: CapabilityDefinition[] = snapshot.capabilities
@@ -65,9 +68,13 @@ export function SkillHubWorkspace({
 
   return (
     <section className="skill-hub-panel">
-      <Typography.Title level={3}>{t("Experts, skills & plugins")}</Typography.Title>
       <Tabs
         defaultActiveKey="skills"
+        tabBarExtraContent={
+          <Button icon={<CloseOutlined />} onClick={onClose}>
+            {t("Close")}
+          </Button>
+        }
         items={[
           {
             key: "skills",
