@@ -1256,6 +1256,44 @@ describe("SupbotRuntime", () => {
     expect(restarted.snapshot().capabilities.some((item) => item.id === capability.id)).toBe(false);
   });
 
+  test("registers orphan skill directories that have no install receipt", async () => {
+    const rootDir = await createGitRoot();
+    const dataDir = await mkdtemp(join(tmpdir(), "supbot-test-"));
+    tempDirs.push(dataDir);
+    const orphanDir = join(dataDir, "skills", "orphan-skill");
+    await mkdir(orphanDir, { recursive: true });
+    await writeFile(
+      join(orphanDir, "SKILL.md"),
+      "---\nname: Orphan Skill\ndescription: Seeded without a receipt.\n---\n\n# Orphan\n",
+      "utf8",
+    );
+    const bareDir = join(dataDir, "skills", "bare-dir");
+    await mkdir(bareDir, { recursive: true });
+    await writeFile(join(bareDir, "SKILL.md"), "# No front matter\n", "utf8");
+
+    const runtime = new SupbotRuntime(new JsonFileStorage(dataDir), { rootDir });
+    await runtime.init();
+    const capabilities = runtime.snapshot().capabilities;
+    expect(capabilities.find((item) => item.id === "local.skill.orphan-skill")).toMatchObject({
+      kind: "skill",
+      name: "Orphan Skill",
+      description: "Seeded without a receipt.",
+      enabled: true,
+    });
+    expect(capabilities.find((item) => item.id === "local.skill.bare-dir")).toMatchObject({
+      kind: "skill",
+      name: "bare-dir",
+      description: "",
+    });
+
+    // A deleted orphan capability stays deleted after restart.
+    await runtime.deleteCapability("local.skill.orphan-skill");
+    const restarted = new SupbotRuntime(new JsonFileStorage(dataDir), { rootDir });
+    await restarted.init();
+    expect(restarted.snapshot().capabilities.some((item) => item.id === "local.skill.orphan-skill")).toBe(false);
+    expect(restarted.snapshot().capabilities.some((item) => item.id === "local.skill.bare-dir")).toBe(true);
+  });
+
   test("edits and deletes capabilities", async () => {
     const runtime = await createRuntime();
     const updated = await runtime.updateCapability("tool.scheduler", {

@@ -335,6 +335,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     this.state.pendingUserQuestions = [];
     await this.reconcileLocalPackages();
     await this.reconcileToolMarketCapabilities();
+    await this.reconcileOrphanSkillCapabilities();
     await this.storage.save(this.state);
     this.mcpManager.setServers(this.state.mcpServers);
     this.worktreeManager.setWorktrees(this.state.worktrees);
@@ -3502,6 +3503,54 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     ];
   }
 
+  /**
+   * Fallback so the skills page always reflects the skills on disk. The
+   * receipt-based scan and tool-market reconcile can both miss a skill dir
+   * (missing receipt from seeding or older installs, strict manifest parse
+   * failure, a market receipt without a declared capability); any directory
+   * under dataDir/skills with a SKILL.md still gets a capability, parsed
+   * leniently. Directories owned by tool-market installs are skipped so they
+   * are not double-registered alongside their market.* capability.
+   */
+  private async reconcileOrphanSkillCapabilities(): Promise<void> {
+    const skillsRoot = join(this.storage.getDataDir(), "skills");
+    const entries = await readdir(skillsRoot, { withFileTypes: true }).catch(() => []);
+    if (!entries.length) {
+      return;
+    }
+    const marketSkillDirs = new Set(
+      (await this.listInstalledToolMarketProducts())
+        .filter((product) => (product.localDeployment?.kind || product.type) === "skill")
+        .map((product) => marketInstallSlug(product.id)),
+    );
+    const deletedCapabilityIds = new Set(this.state.deletedCapabilityIds);
+    const knownSkillNames = new Set(
+      this.state.capabilities
+        .filter((capability) => capability.kind === "skill")
+        .map((capability) => capability.name.trim().toLowerCase()),
+    );
+    for (const entry of entries) {
+      if (!entry.isDirectory() || marketSkillDirs.has(entry.name)) {
+        continue;
+      }
+      const skillFile = join(skillsRoot, entry.name, "SKILL.md");
+      if (!(await pathExists(skillFile))) {
+        continue;
+      }
+      const metadata = parseSkillMetadataLoose(await readFile(skillFile, "utf8").catch(() => ""));
+      const name = metadata.name || entry.name;
+      const id = `local.skill.${slug(name)}`;
+      if (deletedCapabilityIds.has(id) || knownSkillNames.has(name.trim().toLowerCase())) {
+        continue;
+      }
+      if (this.state.capabilities.some((capability) => capability.id === id)) {
+        continue;
+      }
+      this.state.capabilities.push({ id, name, kind: "skill", description: metadata.description || "", enabled: true });
+      knownSkillNames.add(name.trim().toLowerCase());
+    }
+  }
+
   private async reevaluatePendingPermissions(): Promise<void> {
     const policy = new PermissionPolicy();
     for (const permission of [...this.state.pendingToolPermissions]) {
@@ -4970,6 +5019,30 @@ function slug(value: string): string {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-|-$/g, "") || randomId("subagent")
   );
+}
+
+/** Lenient SKILL.md front-matter reader for the orphan-skill fallback; never throws. */
+function parseSkillMetadataLoose(content: string): { name?: string; description?: string } {
+  const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!frontmatter) {
+    return {};
+  }
+  const metadata: { name?: string; description?: string } = {};
+  for (const line of frontmatter[1]!.split(/\r?\n/)) {
+    const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+    if (!match) {
+      continue;
+    }
+    const key = match[1]!.toLowerCase();
+    const value = (match[2] || "").trim().replace(/^['"]|['"]$/g, "");
+    if (key === "name" && value) {
+      metadata.name = value;
+    }
+    if (key === "description") {
+      metadata.description = value;
+    }
+  }
+  return metadata;
 }
 
 function normalizeToolMarketSource(value: ToolMarketConfigUpdate["source"]): ToolMarketConfig["source"] {
