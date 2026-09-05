@@ -93,6 +93,7 @@ import {
 } from "./servstationProjects";
 import "./styles.css";
 import { ChatPanel } from "./components/ChatPanel";
+import { FileTypeIcon } from "./components/FileTypeIcon";
 import { CronBuilder } from "./components/CronBuilder";
 import { LeftPanel } from "./components/LeftPanel";
 import { RightPanel } from "./components/RightPanel";
@@ -2236,7 +2237,7 @@ function ServerAgentMessages({
                           key={downloadKey}
                           type="link"
                           size="small"
-                          icon={<DownloadOutlined />}
+                          icon={<FileTypeIcon name={file.fileName} />}
                           loading={downloadingFileKeys.has(downloadKey)}
                           disabled={disabled}
                           aria-label={`${t("Download")} ${file.fileName}`}

@@ -23,6 +23,7 @@ import { formatToolPayload, shouldAnimateRunningStatus, shouldShowGeneratedFileI
 import { writeClipboardText } from "../lib/clipboard";
 import { resolveLocalFileHref } from "../lib/filePreview";
 import { QuestionBlock } from "./QuestionBlock";
+import { FileTypeIcon } from "./FileTypeIcon";
 
 export const MessageBubble = memo(function MessageBubble({
   message: item,
@@ -145,9 +146,9 @@ export const MessageBubble = memo(function MessageBubble({
                     : void window.supbot.openFile(file.path)
                 }
               >
-                <PaperClipOutlined />
-                <span>{file.name}</span>
-                <small>{file.size} bytes</small>
+                <FileTypeIcon name={file.name} />
+                <span className="generated-file-name">{file.name}</span>
+                <small className="generated-file-size">{file.size} bytes</small>
               </button>
               <Tooltip title={t("Download")}>
                 <Button

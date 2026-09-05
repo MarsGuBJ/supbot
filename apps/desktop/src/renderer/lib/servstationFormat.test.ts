@@ -105,6 +105,8 @@ describe("Servstation generated files", () => {
     expect(source).toContain("window.supbot.fetchServstationJobFile(jobId, file.fileId)");
     expect(source).toContain('className="server-agent-result-files"');
     expect(source).toContain("data-testid={`server-agent-result-file-${item.jobId}-${file.fileId}`}");
+    expect(source).toContain("<FileTypeIcon name={file.fileName} />");
+    expect(source).toContain('className="server-agent-result-file"');
     expect(source).toContain("downloadServstationJobFile(content, file.fileName)");
   });
 });
