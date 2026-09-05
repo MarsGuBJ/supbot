@@ -3319,8 +3319,6 @@ button {
   justify-items: start;
   gap: 3px;
   margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px solid var(--line);
 }
 
 .server-agent-result-file.ant-btn {
