@@ -610,6 +610,81 @@ describe("model client helpers", () => {
     });
     expect(result.text).toContain("PPT saved to");
   });
+
+  test("sums token usage across agent loop turns", async () => {
+    const controller = new AbortController();
+    const firstTurn = {
+      text: "",
+      toolCalls: [
+        {
+          id: "call_usage_1",
+          type: "function" as const,
+          function: { name: "Shell", arguments: JSON.stringify({ command: "echo hi" }) },
+        },
+      ],
+      usage: { promptTokens: 10, completionTokens: 4, totalTokens: 14 },
+    };
+    const secondTurn = {
+      text: "usage counted",
+      toolCalls: [],
+      usage: { promptTokens: 20, completionTokens: 6, totalTokens: 26 },
+    };
+    const turns = [firstTurn, secondTurn];
+    let call = 0;
+    const result = await queryLoop({
+      jobId: "job_usage",
+      conversationId: "conv_usage",
+      messages: [{ role: "user", content: "count tokens" }],
+      model: {
+        complete: async () => turns[Math.min(call, turns.length - 1)]!,
+        stream: async function* () {
+          const turn = turns[Math.min(call, turns.length - 1)]!;
+          call += 1;
+          yield { type: "done" as const, result: turn };
+          return turn;
+        },
+      },
+      modelRequest: {
+        modelConfig: defaultModelConfig,
+        tools: [],
+        signal: controller.signal,
+      },
+      registry: new ToolRegistry([
+        {
+          name: "Shell",
+          description: "fake shell",
+          risk: "read",
+          concurrency: "exclusive",
+          interruptBehavior: "cancel",
+          parameters: {
+            type: "object",
+            properties: { command: { type: "string" } },
+            required: ["command"],
+            additionalProperties: false,
+          },
+          summarize: () => "fake shell",
+          execute: async () => ({ text: "ok" }),
+        },
+      ]),
+      toolContext: {
+        signal: controller.signal,
+        host: {
+          dataDir: tempDirs[tempDirs.length - 1] || tmpdir(),
+          workspacePath: tempDirs[tempDirs.length - 1] || tmpdir(),
+          randomId: (prefix: string) => `${prefix}_test`,
+          nowIso: () => new Date().toISOString(),
+        },
+        subagents: [],
+        runSubagent: async () => ({ text: "unused" }),
+      },
+      permissionMode: "bypassPermissions",
+      getPermissionRules: () => [],
+      requestPermission: async () => "approved",
+      onEvent: () => undefined,
+    });
+    expect(result.usage).toEqual({ promptTokens: 20, completionTokens: 6, totalTokens: 26 });
+    expect(result.totalUsage).toEqual({ promptTokens: 30, completionTokens: 10, totalTokens: 40 });
+  });
 });
 
 describe("SupbotRuntime", () => {
@@ -2576,6 +2651,82 @@ describe("SupbotRuntime", () => {
       expect(assistant?.text).toBe("Read complete.");
       expect(assistant?.blocks?.some((block) => block.type === "tool_use" && block.toolName === "ReadFile")).toBe(true);
       expect(calls).toBe(2);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  test("accumulates token usage on the conversation and the model provider", async () => {
+    const runtime = await createRuntime();
+    const filePath = join(tempDirs[tempDirs.length - 1], "token-usage.txt");
+    await writeFile(filePath, "token usage file content", "utf8");
+    let calls = 0;
+    const server = createServer((request, response) => {
+      request.resume();
+      request.on("end", () => {
+        calls += 1;
+        response.setHeader("Content-Type", "application/json");
+        if (calls === 1) {
+          response.end(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content: null,
+                    tool_calls: [
+                      {
+                        id: "call_usage_read",
+                        type: "function",
+                        function: { name: "ReadFile", arguments: JSON.stringify({ path: filePath }) },
+                      },
+                    ],
+                  },
+                },
+              ],
+              usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 },
+            }),
+          );
+          return;
+        }
+        if (calls === 2) {
+          response.end(
+            JSON.stringify({
+              choices: [{ message: { content: "First answer." } }],
+              usage: { prompt_tokens: 20, completion_tokens: 6, total_tokens: 26 },
+            }),
+          );
+          return;
+        }
+        response.end(
+          JSON.stringify({
+            choices: [{ message: { content: "Second answer." } }],
+            usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 },
+          }),
+        );
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address() as AddressInfo;
+      await runtime.updateModelConfig({
+        providerName: "Mock",
+        baseUrl: `http://127.0.0.1:${address.port}/v1`,
+        model: "mock-model",
+        temperature: 0.1,
+        maxTokens: 1000,
+        apiKey: "test-key",
+      });
+      const first = await runtime.sendPrompt({ prompt: "read the file" });
+      await waitForJob(runtime, first.job.id);
+      const second = await runtime.sendPrompt({ conversationId: first.conversation.id, prompt: "again" });
+      await waitForJob(runtime, second.job.id);
+      const snapshot = runtime.snapshot();
+      const conversation = snapshot.conversations.find((item) => item.id === first.conversation.id);
+      expect(conversation?.tokenUsage).toEqual({ promptTokens: 35, completionTokens: 12, totalTokens: 47 });
+      // contextUsage keeps overwrite semantics (last turn only).
+      expect(conversation?.contextUsage?.promptTokens).toBe(5);
+      const provider = snapshot.modelProviders.find((item) => item.id === snapshot.activeModelProviderId);
+      expect(provider?.tokenUsage).toEqual({ promptTokens: 35, completionTokens: 12, totalTokens: 47 });
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }

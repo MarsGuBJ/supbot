@@ -13,6 +13,7 @@ import { Tooltip } from "antd";
 import type { HBClientUpdateState, RuntimeSnapshot } from "@supbot/shared";
 import { formatDateTime } from "@supbot/shared";
 import { translate, type Language } from "../i18n";
+import { formatTokenCount } from "../lib/chatFormat";
 import type { WorkspaceView } from "../lib/types";
 
 const notifyReadAtKey = "hbclient.notifications.readAt";
@@ -56,6 +57,22 @@ function useClickOutside(ref: React.RefObject<HTMLElement | null>, onOutside: ()
     return () => document.removeEventListener("mousedown", onDown);
   }, [ref, onOutside]);
 }
+
+// Rough token estimate: CJK characters count as ~1 token each, other text ~4 chars per token.
+function estimateTokens(text: string): number {
+  let cjk = 0;
+  for (const ch of text) {
+    const code = ch.codePointAt(0) || 0;
+    if ((code >= 0x3000 && code <= 0x9fff) || (code >= 0xff00 && code <= 0xffef)) {
+      cjk += 1;
+    }
+  }
+  return Math.ceil(cjk + (text.length - cjk) / 4);
+}
+
+const CONTEXT_TOKEN_LIMIT = 1_000_000;
+// Mirrors ContextManager's default maxConversationMessages.
+const ACTIVE_MESSAGE_CAP = 48;
 
 function VersionDropdown({
   view,
@@ -177,6 +194,27 @@ export function Topbar({
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
     : undefined;
 
+  const contextTokens = useMemo(() => {
+    if (!activeConversation) {
+      return 0;
+    }
+    const messages = activeConversation.messages || [];
+    const boundaryIndex = compactBoundary?.messageId
+      ? messages.findIndex((message) => message.id === compactBoundary.messageId)
+      : -1;
+    const active = (boundaryIndex >= 0 ? messages.slice(boundaryIndex + 1) : messages).slice(-ACTIVE_MESSAGE_CAP);
+    let total = compactBoundary?.summary ? estimateTokens(compactBoundary.summary) : 0;
+    for (const message of active) {
+      total += estimateTokens(message.text || "");
+    }
+    return total;
+  }, [activeConversation, compactBoundary]);
+  // Prefer the prompt token count reported by the model on the last turn; fall back to a local estimate.
+  const recordedUsage = activeConversation?.contextUsage;
+  const displayTokens = recordedUsage ? recordedUsage.promptTokens : contextTokens;
+  const contextRatio = Math.min(1, displayTokens / CONTEXT_TOKEN_LIMIT);
+  const sessionTokenUsage = activeConversation?.tokenUsage;
+
   const notifications = useMemo<NotifyItem[]>(() => {
     const items: NotifyItem[] = [];
     if (["available", "downloading", "downloaded", "installing"].includes(updateState.status)) {
@@ -287,6 +325,33 @@ export function Topbar({
                         : "No conversation"}
                   </span>
                 </div>
+                <div className="topbar-context-progress-label">
+                  <span>
+                    {recordedUsage
+                      ? chinese
+                        ? "上下文长度"
+                        : "Context length"
+                      : chinese
+                        ? "上下文长度（估算）"
+                        : "Context length (est.)"}
+                  </span>
+                  <span>
+                    {recordedUsage ? "" : "~"}
+                    {formatTokenCount(displayTokens)} / 1M
+                  </span>
+                </div>
+                <div
+                  className="topbar-context-progress"
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(contextRatio * 100)}
+                >
+                  <div
+                    className={`topbar-context-progress-fill${contextRatio >= 0.8 ? " high" : ""}`}
+                    style={{ width: `${contextRatio * 100}%` }}
+                  />
+                </div>
                 {compactBoundary ? (
                   <div className="topbar-context-usage-note">
                     {chinese ? "最近压缩" : "Last compacted"}: {formatDateTime(compactBoundary.createdAt)} ·{" "}
@@ -317,6 +382,13 @@ export function Topbar({
               </div>
             </div>
           </div>
+        ) : null}
+        {view !== "server" && sessionTokenUsage ? (
+          <Tooltip
+            title={`${translate(language, "Session tokens")}: ${translate(language, "Input")} ${formatTokenCount(sessionTokenUsage.promptTokens)} / ${translate(language, "Output")} ${formatTokenCount(sessionTokenUsage.completionTokens)}`}
+          >
+            <span className="topbar-token-usage">Σ {formatTokenCount(sessionTokenUsage.totalTokens)}</span>
+          </Tooltip>
         ) : null}
         {view !== "server" ? (
           <button

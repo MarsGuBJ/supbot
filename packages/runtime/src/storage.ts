@@ -26,6 +26,7 @@ import {
   type MemorySnapshot,
   type ModelConfig,
   type ModelProviderConfig,
+  type ModelUsage,
   type PendingToolPermission,
   type PendingUserQuestion,
   type PermissionMode,
@@ -507,6 +508,7 @@ function normalizeModelProvider(
     apiKeySecret,
     apiKeySaved: Boolean(apiKeySecret),
     apiKeyStorage: apiKeySecret ? normalizeApiKeyStorage(input.apiKeyStorage) : undefined,
+    tokenUsage: normalizeModelUsage(input.tokenUsage),
     createdAt: typeof input.createdAt === "string" && input.createdAt ? input.createdAt : now,
     updatedAt: typeof input.updatedAt === "string" && input.updatedAt ? input.updatedAt : now,
   };
@@ -534,6 +536,25 @@ function uniqueModelProviderId(rawId: string, seen: Set<string>): string {
 
 function normalizeApiKeyStorage(value: unknown): ModelProviderConfig["apiKeyStorage"] {
   return value === "safeStorage" || value === "file" ? value : undefined;
+}
+
+function normalizeModelUsage(value: unknown): ModelUsage | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const input = value as Partial<ModelUsage>;
+  if (
+    typeof input.promptTokens !== "number" ||
+    typeof input.completionTokens !== "number" ||
+    typeof input.totalTokens !== "number"
+  ) {
+    return undefined;
+  }
+  return {
+    promptTokens: input.promptTokens,
+    completionTokens: input.completionTokens,
+    totalTokens: input.totalTokens,
+  };
 }
 
 function finiteNumberOr(value: unknown, fallback: number): number {

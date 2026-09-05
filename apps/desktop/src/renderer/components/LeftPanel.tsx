@@ -719,7 +719,7 @@ export function ProjectConversationGroup({
   refresh: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
   const [showAll, setShowAll] = useState(false);
   const [creating, setCreating] = useState(false);
   const projectId = project?.id || "";

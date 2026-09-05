@@ -6,6 +6,7 @@ import type {
   AutopilotRunReport,
   AutopilotStartDataRunInput,
   Attachment,
+  FilePreviewResult,
   CapabilityUpdateInput,
   Conversation,
   CreateConversationInput,
@@ -284,6 +285,8 @@ declare global {
       importDroppedAttachments(files: File[]): Promise<Attachment[]>;
       importClipboardAttachments(files: File[]): Promise<Attachment[]>;
       openFile(filePath: string): Promise<void>;
+      showFileInFolder(filePath: string): Promise<void>;
+      previewFile(filePath: string): Promise<FilePreviewResult>;
       downloadFile(filePath: string, suggestedName?: string): Promise<boolean>;
       userDataPath(): Promise<string>;
       onEvent(listener: (event: SupbotEvent) => void): () => void;

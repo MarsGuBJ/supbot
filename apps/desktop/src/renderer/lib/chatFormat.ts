@@ -117,3 +117,13 @@ export function truncateText(value: string, maxLength: number): string {
   const chars = Array.from(value);
   return chars.length > maxLength ? `${chars.slice(0, maxLength).join("")}...` : value;
 }
+
+export function formatTokenCount(value: number): string {
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(2)}M`;
+  }
+  if (value >= 1_000) {
+    return `${(value / 1_000).toFixed(1)}K`;
+  }
+  return String(value);
+}

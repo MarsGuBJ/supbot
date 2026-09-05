@@ -57,6 +57,7 @@ import type {
   Attachment,
   ChatMessage,
   HBClientUpdateState,
+  LocalFileReference,
   PermissionMode,
   Project,
   RuntimeSnapshot,
@@ -205,6 +206,7 @@ function App() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [sending, setSending] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(true);
+  const [activeFile, setActiveFile] = useState<LocalFileReference | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
   const [manageTab, setManageTab] = useState<ManagePanelTab>("model");
   const [subagentOpen, setSubagentOpen] = useState(false);
@@ -230,6 +232,45 @@ function App() {
     [language],
   );
   const slashCommandList = useMemo(() => buildSlashCommands(t), [t]);
+
+  const openConversationFile = useCallback((file: LocalFileReference) => {
+    if (!file.path) {
+      return;
+    }
+    setActiveFile(file);
+    setDetailPanel("file");
+    setRightCollapsed(false);
+  }, []);
+
+  const closeConversationFile = useCallback(() => {
+    setActiveFile(null);
+    setDetailPanel("tasks");
+  }, []);
+
+  const runFileAction = useCallback(
+    async (file: LocalFileReference, action: "default" | "folder" | "save") => {
+      try {
+        if (action === "default") {
+          await window.supbot.openFile(file.path);
+        } else if (action === "folder") {
+          await window.supbot.showFileInFolder(file.path);
+        } else {
+          const saved = await window.supbot.downloadFile(file.path, file.name);
+          if (saved) {
+            messageApi.success(t("File saved."));
+          }
+        }
+      } catch (error) {
+        messageApi.error(error instanceof Error ? error.message : t("File action failed."));
+      }
+    },
+    [messageApi, t],
+  );
+
+  useEffect(() => {
+    setActiveFile(null);
+    setDetailPanel("tasks");
+  }, [activeConversationId]);
 
   const updateMessageStickiness = useCallback(() => {
     const element = scrollRef.current;
@@ -869,6 +910,7 @@ function App() {
                   onModelProviderChange={(providerId) => void changeModelProvider(providerId)}
                   onOpenModelConfig={() => openConfig("model")}
                   onOpenSkillView={() => setView("skill")}
+                  onOpenFile={openConversationFile}
                   promptInjection={promptInjection}
                 />
                 <RightPanel
@@ -879,6 +921,11 @@ function App() {
                   collapsed={rightCollapsed}
                   t={t}
                   onLocateJob={locateJobMessage}
+                  activeFile={activeFile}
+                  onOpenDefaultApp={(file) => runFileAction(file, "default")}
+                  onShowInFolder={(file) => runFileAction(file, "folder")}
+                  onSaveAs={(file) => runFileAction(file, "save")}
+                  onCloseFile={closeConversationFile}
                 />
               </div>
             ) : view === "server" ? (
@@ -2353,7 +2400,7 @@ function ServerAgentProjectGroup({
   onStartProjectConversation: (project: ServstationProject) => void;
   t: Translator;
 }) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const project = group.project;

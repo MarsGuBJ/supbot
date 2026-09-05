@@ -32,6 +32,31 @@ export const defaultServstationScope = "openid profile email";
 export const defaultServstationRedirectUri = "http://localhost:8800/oauth2/callback";
 export const defaultServstationUser = "dev-user";
 
+export interface ModelUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
+export interface ConversationContextUsage extends ModelUsage {
+  updatedAt: string;
+}
+
+/** Field-wise sum of two usage records; returns undefined when both are missing. */
+export function addModelUsage(a?: ModelUsage, b?: ModelUsage): ModelUsage | undefined {
+  if (!a) {
+    return b ? { ...b } : undefined;
+  }
+  if (!b) {
+    return { ...a };
+  }
+  return {
+    promptTokens: a.promptTokens + b.promptTokens,
+    completionTokens: a.completionTokens + b.completionTokens,
+    totalTokens: a.totalTokens + b.totalTokens,
+  };
+}
+
 export interface ModelConfig {
   providerName: string;
   baseUrl: string;
@@ -61,6 +86,8 @@ export interface ModelProviderConfig {
   maxTokens: number;
   apiKeySaved: boolean;
   apiKeyStorage?: "safeStorage" | "file";
+  /** Cumulative tokens consumed through this provider across all conversations. */
+  tokenUsage?: ModelUsage;
   createdAt: string;
   updatedAt: string;
 }
@@ -400,6 +427,26 @@ export interface Attachment {
   path?: string;
   size: number;
   mimeType?: string;
+}
+
+export type FilePreviewKind = "text" | "json" | "html" | "pdf" | "image" | "office" | "binary";
+
+export interface LocalFileReference {
+  path: string;
+  name: string;
+  size?: number;
+  mimeType?: string;
+}
+
+export interface FilePreviewResult {
+  path: string;
+  name: string;
+  size: number;
+  mimeType: string;
+  kind: FilePreviewKind;
+  previewable: boolean;
+  tooLarge?: boolean;
+  contentBase64?: string;
 }
 
 export interface GeneratedFile {
@@ -1632,6 +1679,9 @@ export interface Conversation {
   lastMessageAt?: string;
   messageCount?: number;
   lastMessagePreview?: string;
+  contextUsage?: ConversationContextUsage;
+  /** Cumulative tokens consumed in this conversation (main chat, autopilot, subagents). */
+  tokenUsage?: ModelUsage;
   messages: ChatMessage[];
 }
 

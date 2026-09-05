@@ -7,6 +7,7 @@ import type {
   ModelConfig,
   MemoryCandidate,
   MemorySnapshot,
+  ModelUsage,
   PendingToolPermission,
   PermissionMode,
   PermissionRule,
@@ -64,6 +65,8 @@ export interface QueryEngineResult {
   trace: AgentLoopTrace;
   generatedFiles: GeneratedFile[];
   compactBoundary?: CompactBoundary;
+  usage?: ModelUsage;
+  totalUsage?: ModelUsage;
 }
 
 export class QueryEngine {

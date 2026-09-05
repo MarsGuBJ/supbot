@@ -1,4 +1,6 @@
 import { memo, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   CheckCircleOutlined,
   ClockCircleOutlined,
@@ -15,22 +17,41 @@ import {
   ToolOutlined,
 } from "@ant-design/icons";
 import { Alert, Button, message, Tag, Tooltip } from "antd";
-import type { ChatMessage, ChatMessageBlock, GeneratedFile } from "@supbot/shared";
+import type { ChatMessage, ChatMessageBlock, GeneratedFile, LocalFileReference } from "@supbot/shared";
 import { statusColor, statusLabel } from "@supbot/shared";
 import { formatToolPayload, shouldShowGeneratedFileInChat } from "../lib/chatFormat";
 import { writeClipboardText } from "../lib/clipboard";
+import { resolveLocalFileHref } from "../lib/filePreview";
 import { QuestionBlock } from "./QuestionBlock";
 
 export const MessageBubble = memo(function MessageBubble({
   message: item,
   highlighted = false,
   t,
+  onOpenFile,
+  knownFiles: externalKnownFiles = [],
 }: {
   message: ChatMessage;
   highlighted?: boolean;
   t: (key: string, vars?: Record<string, string | number>) => string;
+  onOpenFile?: (file: LocalFileReference) => void;
+  knownFiles?: LocalFileReference[];
 }) {
   const visibleGeneratedFiles = item.generatedFiles?.filter(shouldShowGeneratedFileInChat) || [];
+  const messageFiles: LocalFileReference[] = [
+    ...(item.generatedFiles || []).map((file) => ({ path: file.path, name: file.name, size: file.size })),
+    ...(item.attachments || [])
+      .filter((attachment): attachment is typeof attachment & { path: string } => Boolean(attachment.path))
+      .map((attachment) => ({
+        path: attachment.path,
+        name: attachment.name,
+        size: attachment.size,
+        mimeType: attachment.mimeType,
+      })),
+  ];
+  const knownFiles = [...externalKnownFiles, ...messageFiles].filter(
+    (file, index, files) => files.findIndex((candidate) => candidate.path === file.path) === index,
+  );
   const copyable = (item.role === "user" || item.role === "assistant") && item.text.trim().length > 0;
   const copyMessage = async () => {
     try {
@@ -82,21 +103,47 @@ export const MessageBubble = memo(function MessageBubble({
           />
         </Tooltip>
       ) : null}
-      <MessageBlocks message={item} t={t} />
+      <MessageBlocks message={item} t={t} onOpenFile={onOpenFile} knownFiles={knownFiles} />
       {item.attachments?.length ? (
         <div className="attachment-row">
-          {item.attachments.map((attachment) => (
-            <Tag key={attachment.id}>
-              <PaperClipOutlined /> {attachment.name}
-            </Tag>
-          ))}
+          {item.attachments.map((attachment) =>
+            attachment.path ? (
+              <button
+                type="button"
+                className="attachment-file-link"
+                key={attachment.id}
+                onClick={() =>
+                  onOpenFile?.({
+                    path: attachment.path!,
+                    name: attachment.name,
+                    size: attachment.size,
+                    mimeType: attachment.mimeType,
+                  })
+                }
+              >
+                <PaperClipOutlined /> {attachment.name}
+              </button>
+            ) : (
+              <Tag key={attachment.id}>
+                <PaperClipOutlined /> {attachment.name}
+              </Tag>
+            ),
+          )}
         </div>
       ) : null}
       {visibleGeneratedFiles.length ? (
         <div className="generated-files">
           {visibleGeneratedFiles.map((file) => (
             <span className="generated-file-item" key={file.id}>
-              <button className="generated-file" type="button" onClick={() => void window.supbot.openFile(file.path)}>
+              <button
+                className="generated-file"
+                type="button"
+                onClick={() =>
+                  onOpenFile
+                    ? onOpenFile({ path: file.path, name: file.name, size: file.size })
+                    : void window.supbot.openFile(file.path)
+                }
+              >
                 <PaperClipOutlined />
                 <span>{file.name}</span>
                 <small>{file.size} bytes</small>
@@ -177,13 +224,18 @@ export const MessageBubble = memo(function MessageBubble({
 export function MessageBlocks({
   message,
   t,
+  onOpenFile,
+  knownFiles,
 }: {
   message: ChatMessage;
   t: (key: string, vars?: Record<string, string | number>) => string;
+  onOpenFile?: (file: LocalFileReference) => void;
+  knownFiles: LocalFileReference[];
 }) {
   const blocks = message.blocks?.length ? message.blocks : [{ type: "text" as const, text: message.text }];
   const jobActive = message.status === "queued" || message.status === "running";
   const groups = groupToolFlowBlocks(blocks);
+  const renderMarkdown = message.role === "assistant";
   return (
     <>
       {groups.map((group, index) =>
@@ -196,10 +248,51 @@ export function MessageBlocks({
             key={`${message.id}-tools-${index}-${group[0]?.toolCallId || ""}`}
           />
         ) : (
-          renderMessageBlock(group, message.id, index, t)
+          renderMessageBlock(group, message.id, index, t, renderMarkdown, onOpenFile, knownFiles)
         ),
       )}
     </>
+  );
+}
+
+function MarkdownText({
+  text,
+  live = false,
+  knownFiles,
+  onOpenFile,
+}: {
+  text: string;
+  live?: boolean;
+  knownFiles: LocalFileReference[];
+  onOpenFile?: (file: LocalFileReference) => void;
+}) {
+  return (
+    <div className={`message-text markdown-body${live ? " is-live" : ""}`}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ node, ...props }) => {
+            void node;
+            const localFile = resolveLocalFileHref(typeof props.href === "string" ? props.href : undefined, knownFiles);
+            if (localFile && onOpenFile) {
+              return (
+                <a
+                  {...props}
+                  href={props.href}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    onOpenFile(localFile);
+                  }}
+                />
+              );
+            }
+            return <a {...props} target="_blank" rel="noreferrer" />;
+          },
+        }}
+      >
+        {text}
+      </ReactMarkdown>
+    </div>
   );
 }
 
@@ -242,7 +335,9 @@ export function ToolProcessGroup({
       (block.type === "tool_use" && (block.status === "failed" || block.status === "denied")),
   );
   return (
-    <div className={`tool-card tool-process ${hasError ? "is-error" : ""} ${expanded ? "is-expanded" : "is-collapsed"}`}>
+    <div
+      className={`tool-card tool-process ${hasError ? "is-error" : ""} ${expanded ? "is-expanded" : "is-collapsed"}`}
+    >
       <div className="tool-card-head tool-result-head">
         <ToolOutlined />
         <strong>{t("Execution process")}</strong>
@@ -265,7 +360,12 @@ export function ToolProcessGroup({
             block.type === "tool_use" ? (
               <ToolUseBlock block={block} t={t} key={`${messageId}-${block.toolCallId}-use`} />
             ) : (
-              <ToolResultBlock block={block} messageId={messageId} t={t} key={`${messageId}-${block.toolCallId}-result`} />
+              <ToolResultBlock
+                block={block}
+                messageId={messageId}
+                t={t}
+                key={`${messageId}-${block.toolCallId}-result`}
+              />
             ),
           )}
         </div>
@@ -279,33 +379,47 @@ function renderMessageBlock(
   messageId: string,
   index: number,
   t: (key: string, vars?: Record<string, string | number>) => string,
+  renderMarkdown = false,
+  onOpenFile?: (file: LocalFileReference) => void,
+  knownFiles: LocalFileReference[] = [],
 ) {
   if (block.type === "text") {
-    return block.text ? (
+    if (!block.text) {
+      return null;
+    }
+    return renderMarkdown ? (
+      <MarkdownText text={block.text} key={`${messageId}-${index}`} onOpenFile={onOpenFile} knownFiles={knownFiles} />
+    ) : (
       <div className="message-text" key={`${messageId}-${index}`}>
         {block.text}
       </div>
-    ) : null;
+    );
   }
   if (block.type === "tool_use") {
     return <ToolUseBlock block={block} t={t} key={`${messageId}-${block.toolCallId}-use`} />;
   }
   if (block.type === "tool_result") {
     return (
-      <ToolResultBlock
-        block={block}
-        messageId={messageId}
-        t={t}
-        key={`${messageId}-${block.toolCallId}-result`}
-      />
+      <ToolResultBlock block={block} messageId={messageId} t={t} key={`${messageId}-${block.toolCallId}-result`} />
     );
   }
   if (block.type === "thinking" || block.type === "message_delta") {
-    return block.text ? (
+    if (!block.text) {
+      return null;
+    }
+    return renderMarkdown ? (
+      <MarkdownText
+        text={block.text}
+        live
+        key={`${messageId}-${index}`}
+        onOpenFile={onOpenFile}
+        knownFiles={knownFiles}
+      />
+    ) : (
       <div className="message-text is-live" key={`${messageId}-${index}`}>
         {block.text}
       </div>
-    ) : null;
+    );
   }
   if (block.type === "progress") {
     return (

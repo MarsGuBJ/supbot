@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type {
   Attachment,
+  FilePreviewResult,
   AutopilotStartDataRunInput,
   CapabilityUpdateInput,
   CreateConversationInput,
@@ -277,6 +278,8 @@ const api = {
     return imported;
   },
   openFile: (filePath: string) => ipcRenderer.invoke("file:open", filePath),
+  showFileInFolder: (filePath: string) => ipcRenderer.invoke("file:showInFolder", filePath),
+  previewFile: (filePath: string): Promise<FilePreviewResult> => ipcRenderer.invoke("file:preview", filePath),
   downloadFile: (filePath: string, suggestedName?: string) =>
     ipcRenderer.invoke("file:download", filePath, suggestedName),
   userDataPath: () => ipcRenderer.invoke("path:userData"),

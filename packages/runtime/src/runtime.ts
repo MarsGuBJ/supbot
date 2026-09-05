@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
+  addModelUsage,
   clampNumber,
   type AgentJob,
   type Attachment,
@@ -59,6 +60,7 @@ import {
   type ModelProviderConfig,
   type ModelProviderUpdate,
   type ModelTestResult,
+  type ModelUsage,
   type CapabilityUpdateInput,
   nowIso,
   type PendingToolPermission,
@@ -2159,6 +2161,10 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       if (!jobStillExists()) {
         return;
       }
+      if (response.usage) {
+        this.recordContextUsage(conversation.id, response.usage);
+      }
+      this.recordTokenUsage(conversation.id, modelProvider.id, response.totalUsage ?? response.usage);
       const questionBlocks = (
         this.findConversation(conversation.id)?.messages.find((message) => message.id === assistantSeed.id)?.blocks ||
         []
@@ -2690,6 +2696,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       },
     });
     const result = await query.submitTurn();
+    this.recordTokenUsage(`autopilot_${run.id}`, modelProvider.id, result.totalUsage ?? result.usage);
     return { text: result.text, generatedFiles: result.generatedFiles };
   }
 
@@ -2754,6 +2761,28 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         messages: [...conversation.messages, message].slice(-MAX_CONVERSATION_MESSAGES),
       };
     });
+  }
+
+  private recordContextUsage(conversationId: string, usage: ModelUsage): void {
+    this.state.conversations = this.state.conversations.map((conversation) =>
+      conversation.id === conversationId
+        ? { ...conversation, contextUsage: { ...usage, updatedAt: nowIso() } }
+        : conversation,
+    );
+  }
+
+  private recordTokenUsage(conversationId: string, providerId: string, usage?: ModelUsage): void {
+    if (!usage) {
+      return;
+    }
+    this.state.conversations = this.state.conversations.map((conversation) =>
+      conversation.id === conversationId
+        ? { ...conversation, tokenUsage: addModelUsage(conversation.tokenUsage, usage) }
+        : conversation,
+    );
+    this.state.modelProviders = this.state.modelProviders.map((provider) =>
+      provider.id === providerId ? { ...provider, tokenUsage: addModelUsage(provider.tokenUsage, usage) } : provider,
+    );
   }
 
   private replaceMessage(conversationId: string, messageId: string, message: ChatMessage): void {
@@ -3326,13 +3355,15 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
             this.emitTyped({ type: "permission_timeout", permission });
           },
         });
-        return runner.run({
+        const subagentResult = await runner.run({
           parentJobId: jobId,
           subagentType: input.subagentType,
           prompt: input.prompt,
           signal: input.signal,
           depth,
         });
+        this.recordTokenUsage(job?.conversationId || "", modelProvider.id, subagentResult.totalUsage);
+        return subagentResult;
       },
     };
   }
@@ -4301,6 +4332,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       maxTokens: provider.maxTokens,
       apiKeySaved: Boolean(provider.apiKeySecret),
       apiKeyStorage: provider.apiKeySecret ? provider.apiKeyStorage || this.secretStorageKind : undefined,
+      tokenUsage: provider.tokenUsage,
       createdAt: provider.createdAt,
       updatedAt: provider.updatedAt,
     };

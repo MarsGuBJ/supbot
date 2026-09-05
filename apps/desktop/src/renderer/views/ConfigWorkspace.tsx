@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ApiOutlined,
   AppstoreOutlined,
@@ -52,7 +52,7 @@ import {
 import { formatDateTime } from "@supbot/shared";
 import { McpServersCard } from "../components/McpServersCard";
 import { MemoryPanel } from "../components/MemoryPanel";
-import { truncateText } from "../lib/chatFormat";
+import { truncateText, formatTokenCount } from "../lib/chatFormat";
 import { matchPresetByBaseUrl, modelProviderPresets } from "../lib/modelProviderPresets";
 
 export const hiddenSlashCommandCapabilityIds = new Set(["tool.file", "tool.shell"]);
@@ -471,9 +471,11 @@ export function ModelConfigCard({
   const providers = snapshot.modelProviders.length ? snapshot.modelProviders : [snapshotProviderFallback(snapshot)];
   const activeProviderId = snapshot.activeModelProviderId || providers[0]?.id || "";
   const watchedBaseUrl = Form.useWatch("baseUrl", form) || "";
+  const watchedApiKey = Form.useWatch("apiKey", form) || "";
   const selectedPreset = matchPresetByBaseUrl(watchedBaseUrl);
   const [fetchedModels, setFetchedModels] = useState<string[]>([]);
   const [fetchingModels, setFetchingModels] = useState(false);
+  const autoFetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const applyPreset = (key: string) => {
     const preset = modelProviderPresets.find((item) => item.key === key);
     if (!preset) {
@@ -482,10 +484,18 @@ export function ModelConfigCard({
     form.setFieldsValue({ providerName: preset.providerName, baseUrl: preset.baseUrl, model: "" });
     setFetchedModels([]);
   };
-  const fetchModels = async () => {
+  const fetchModels = async (silent = false) => {
     const values = form.getFieldsValue();
     if (!values.baseUrl?.trim()) {
-      messageApi.warning(t("Fill in Base URL first."));
+      if (!silent) {
+        messageApi.warning(t("Fill in Base URL first."));
+      }
+      return;
+    }
+    if (!values.apiKey?.trim() && !editingProvider?.apiKeySaved) {
+      if (!silent) {
+        messageApi.warning(t("Enter the API key first."));
+      }
       return;
     }
     setFetchingModels(true);
@@ -493,16 +503,42 @@ export function ModelConfigCard({
       const result = await window.supbot.listModelProviderModels(editingProvider?.id, values);
       if (result.ok) {
         setFetchedModels(result.models);
-        messageApi.success(t("Fetched {count} models.", { count: result.models.length }));
+        if (!silent) {
+          messageApi.success(t("Fetched {count} models.", { count: result.models.length }));
+        }
       } else {
-        messageApi.warning(result.message);
+        if (silent) {
+          setFetchedModels([]);
+        } else {
+          messageApi.warning(result.message);
+        }
       }
     } catch (error) {
-      messageApi.error((error as Error).message);
+      if (silent) {
+        setFetchedModels([]);
+      } else {
+        messageApi.error((error as Error).message);
+      }
     } finally {
       setFetchingModels(false);
     }
   };
+  useEffect(() => {
+    if (!modalOpen || !watchedApiKey.trim() || !watchedBaseUrl.trim()) {
+      return;
+    }
+    if (autoFetchTimer.current) {
+      clearTimeout(autoFetchTimer.current);
+    }
+    autoFetchTimer.current = setTimeout(() => {
+      void fetchModels(true);
+    }, 800);
+    return () => {
+      if (autoFetchTimer.current) {
+        clearTimeout(autoFetchTimer.current);
+      }
+    };
+  }, [modalOpen, watchedApiKey, watchedBaseUrl]);
   const openProviderForm = (provider?: ModelProviderConfig) => {
     setEditingProvider(provider || null);
     form.setFieldsValue(provider ? modelProviderFormValues(provider) : newModelProviderValues(snapshot));
@@ -656,6 +692,15 @@ export function ModelConfigCard({
                     <span>
                       {provider.model} / temp {provider.temperature} / {provider.maxTokens}
                     </span>
+                    {provider.tokenUsage ? (
+                      <Tooltip
+                        title={`${t("Input")} ${formatTokenCount(provider.tokenUsage.promptTokens)} / ${t("Output")} ${formatTokenCount(provider.tokenUsage.completionTokens)}`}
+                      >
+                        <span className="muted">
+                          {t("Total tokens")}: {formatTokenCount(provider.tokenUsage.totalTokens)}
+                        </span>
+                      </Tooltip>
+                    ) : null}
                   </Space>
                 }
               />
@@ -704,19 +749,6 @@ export function ModelConfigCard({
           <Form.Item label={t("Base URL")} name="baseUrl" rules={[{ required: true }]}>
             <Input placeholder="https://api.openai.com/v1" />
           </Form.Item>
-          <Form.Item label={t("Model")} required>
-            <Space.Compact style={{ width: "100%" }}>
-              <Form.Item name="model" noStyle rules={[{ required: true }]}>
-                <AutoComplete
-                  placeholder={t("Fetch models or type one manually.")}
-                  options={fetchedModels.map((model) => ({ value: model }))}
-                />
-              </Form.Item>
-              <Button icon={<ReloadOutlined />} loading={fetchingModels} onClick={() => void fetchModels()}>
-                {t("Fetch models")}
-              </Button>
-            </Space.Compact>
-          </Form.Item>
           <Form.Item
             label={t("API key")}
             name="apiKey"
@@ -733,6 +765,19 @@ export function ModelConfigCard({
               <Switch />
             </Form.Item>
           ) : null}
+          <Form.Item label={t("Model")} required>
+            <Space.Compact style={{ width: "100%" }}>
+              <Form.Item name="model" noStyle rules={[{ required: true }]}>
+                <AutoComplete
+                  placeholder={t("Fetch models or type one manually.")}
+                  options={fetchedModels.map((model) => ({ value: model }))}
+                />
+              </Form.Item>
+              <Button icon={<ReloadOutlined />} loading={fetchingModels} onClick={() => void fetchModels()}>
+                {t("Fetch models")}
+              </Button>
+            </Space.Compact>
+          </Form.Item>
           <Form.Item label={t("Temperature")} name="temperature">
             <Slider min={0} max={2} step={0.1} />
           </Form.Item>

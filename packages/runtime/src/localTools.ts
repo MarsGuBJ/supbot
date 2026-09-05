@@ -2,12 +2,13 @@ import { spawn } from "node:child_process";
 import type { Dirent } from "node:fs";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import type { GeneratedFile } from "@supbot/shared";
+import type { GeneratedFile, ModelUsage } from "@supbot/shared";
 import { resolveProjectWriteTarget } from "./projectManager";
 
 export interface LocalToolResult {
   text: string;
   generatedFiles?: GeneratedFile[];
+  totalUsage?: ModelUsage;
 }
 
 export interface LocalToolHost {

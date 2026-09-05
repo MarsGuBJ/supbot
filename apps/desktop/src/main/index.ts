@@ -73,6 +73,7 @@ import { configureUserDataPath } from "./appIdentity";
 import { TrayManager, isTerminalJobStatus, jobNotificationText } from "./trayManager";
 import { HBClientUpdateManager } from "./updateManager";
 import { removeOidcLoginWindowListeners } from "./oidcLoginWindowLifecycle";
+import { buildFilePreviewResult, MAX_FILE_PREVIEW_BYTES } from "./filePreview";
 
 let mainWindow: BrowserWindow | null = null;
 let runtime: SupbotRuntime | null = null;
@@ -88,7 +89,7 @@ const defaultBotstationPassword = "dev-user";
 const allowedDevServerOrigin =
   process.env.HBCLIENT_DEV_SERVER_URL || process.env.SUPBOT_DEV_SERVER_URL || "http://127.0.0.1:5173";
 const productionCsp =
-  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'none'";
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'none'";
 const appIconPath = join(__dirname, `../../build/icon.${process.platform === "linux" ? "png" : "ico"}`);
 let productionCspInstalled = false;
 
@@ -1439,6 +1440,29 @@ function registerIpc(): void {
       throw new Error("HyBot can only open files or folders it created, imported, or tracks as a worktree.");
     }
     await shell.openPath(safePath);
+  });
+  ipcMain.handle("file:showInFolder", async (_event, filePath: string) => {
+    const safePath = requiredPath(filePath, "file path");
+    const userDataPath = app.getPath("userData");
+    if (!getRuntime().isKnownSafePath(safePath) && !pathIsInside(userDataPath, safePath)) {
+      throw new Error("HyBot can only show files or folders it created, imported, or tracks as a worktree.");
+    }
+    shell.showItemInFolder(safePath);
+  });
+  ipcMain.handle("file:preview", async (_event, filePath: string) => {
+    const safePath = requiredPath(filePath, "file path");
+    const userDataPath = app.getPath("userData");
+    if (!getRuntime().isKnownSafePath(safePath) && !pathIsInside(userDataPath, safePath)) {
+      throw new Error("HyBot can only preview files it created, imported, or tracks as a worktree.");
+    }
+    const info = await stat(safePath);
+    if (!info.isFile()) {
+      throw new Error("Only files can be previewed.");
+    }
+    if (info.size > MAX_FILE_PREVIEW_BYTES) {
+      return buildFilePreviewResult(safePath, info.size);
+    }
+    return buildFilePreviewResult(safePath, info.size, await readFile(safePath));
   });
   ipcMain.handle("file:download", async (_event, filePath: string, suggestedName?: unknown) => {
     const safePath = requiredPath(filePath, "file path");

@@ -1,9 +1,21 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, test } from "vitest";
-import { listProviderModels, normalizeModelsUrl } from "../src/modelAdapter";
+import type { ModelConfig } from "@supbot/shared";
+import { listProviderModels, normalizeModelsUrl, OpenAIChatCompletionsAdapter } from "../src/modelAdapter";
 
 const servers: Server[] = [];
+
+function testModelConfig(baseUrl: string): ModelConfig {
+  return {
+    providerName: "test",
+    baseUrl,
+    model: "test-model",
+    temperature: 0.2,
+    maxTokens: 1024,
+    apiKeySaved: true,
+  };
+}
 
 async function startServer(handler: Parameters<typeof createServer>[0]): Promise<string> {
   const server = createServer(handler);
@@ -60,5 +72,77 @@ describe("listProviderModels", () => {
       res.end(JSON.stringify({ models: [] }));
     });
     await expect(listProviderModels(weirdUrl)).rejects.toThrow("not OpenAI-compatible");
+  });
+});
+
+describe("OpenAIChatCompletionsAdapter usage", () => {
+  test("complete() parses usage from the JSON response", async () => {
+    const baseUrl = await startServer((_req, res) => {
+      res.setHeader("content-type", "application/json");
+      res.end(
+        JSON.stringify({
+          choices: [{ message: { content: "hello" } }],
+          usage: { prompt_tokens: 123, completion_tokens: 45, total_tokens: 168 },
+        }),
+      );
+    });
+    const adapter = new OpenAIChatCompletionsAdapter();
+    const result = await adapter.complete({
+      modelConfig: testModelConfig(baseUrl),
+      apiKey: "test-key",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    expect(result.text).toBe("hello");
+    expect(result.usage).toEqual({ promptTokens: 123, completionTokens: 45, totalTokens: 168 });
+  });
+
+  test("complete() omits usage when the provider does not report it", async () => {
+    const baseUrl = await startServer((_req, res) => {
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ choices: [{ message: { content: "hello" } }] }));
+    });
+    const adapter = new OpenAIChatCompletionsAdapter();
+    const result = await adapter.complete({
+      modelConfig: testModelConfig(baseUrl),
+      apiKey: "test-key",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    expect(result.usage).toBeUndefined();
+  });
+
+  test("stream() requests usage and parses the final usage chunk", async () => {
+    let requestBody = "";
+    const baseUrl = await startServer((req, res) => {
+      req.on("data", (chunk) => {
+        requestBody += chunk;
+      });
+      req.on("end", () => {
+        res.setHeader("content-type", "text/event-stream");
+        res.end(
+          [
+            'data: {"choices":[{"delta":{"content":"he"}}]}',
+            'data: {"choices":[{"delta":{"content":"llo"}}]}',
+            'data: {"choices":[],"usage":{"prompt_tokens":200,"completion_tokens":10,"total_tokens":210}}',
+            "data: [DONE]",
+            "",
+          ].join("\n"),
+        );
+      });
+    });
+    const adapter = new OpenAIChatCompletionsAdapter();
+    const stream = adapter.stream({
+      modelConfig: testModelConfig(baseUrl),
+      apiKey: "test-key",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    let result;
+    for await (const event of stream) {
+      if (event.type === "done") {
+        result = event.result;
+      }
+    }
+    expect(result?.text).toBe("hello");
+    expect(result?.usage).toEqual({ promptTokens: 200, completionTokens: 10, totalTokens: 210 });
+    expect(JSON.parse(requestBody).stream_options).toEqual({ include_usage: true });
   });
 });

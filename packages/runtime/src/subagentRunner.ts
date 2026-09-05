@@ -131,6 +131,7 @@ export class SubagentRunner {
       return {
         text: `@${subagent.name} result:\n\n${result.text}`,
         generatedFiles: result.generatedFiles as GeneratedFile[],
+        totalUsage: result.totalUsage ?? result.usage,
       };
     } catch (error) {
       await this.emitSubagentEvent({

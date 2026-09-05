@@ -1,4 +1,4 @@
-import type { ChatMessage, ModelConfig, PersonalityConfig, SubagentConfig } from "@supbot/shared";
+import type { ChatMessage, ModelConfig, ModelUsage, PersonalityConfig, SubagentConfig } from "@supbot/shared";
 import { buildContext, type OpenAiToolCall } from "./contextBuilder";
 import { fetchWithRetry } from "./fetchWithRetry";
 
@@ -28,6 +28,7 @@ export interface ModelTurnRequest {
 export interface ModelTurnResult {
   text: string;
   toolCalls: AdapterToolCall[];
+  usage?: ModelUsage;
 }
 
 export type ModelStreamEvent =
@@ -98,7 +99,7 @@ export class OpenAIChatCompletionsAdapter implements ModelAdapter {
           "content-type": "application/json",
           authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({ ...chatCompletionsBody(input), stream: true }),
+        body: JSON.stringify({ ...chatCompletionsBody(input), stream: true, stream_options: { include_usage: true } }),
       },
       { signal: input.signal },
     );
@@ -126,6 +127,7 @@ export class OpenAIChatCompletionsAdapter implements ModelAdapter {
     const toolCallParts = new Map<number, ToolCallAccumulator>();
     let buffer = "";
     let text = "";
+    let usage: ModelUsage | undefined;
     let streamDone = false;
 
     while (!streamDone) {
@@ -146,6 +148,10 @@ export class OpenAIChatCompletionsAdapter implements ModelAdapter {
           break;
         }
         const event = parseStreamPayload(payload);
+        const eventUsage = parseUsage(event?.usage);
+        if (eventUsage) {
+          usage = eventUsage;
+        }
         const delta = event?.choices?.[0]?.delta;
         if (!delta) {
           continue;
@@ -167,7 +173,7 @@ export class OpenAIChatCompletionsAdapter implements ModelAdapter {
     if (!text.trim() && !toolCalls.length) {
       throw new Error("Model returned an empty stream.");
     }
-    const result = { text, toolCalls };
+    const result = { text, toolCalls, usage };
     yield { type: "done", result };
     return result;
   }
@@ -177,6 +183,7 @@ function parseChatCompletionJson(json: unknown): ModelTurnResult {
   const parsed = json as {
     choices?: Array<{ message?: { content?: string | null; tool_calls?: AdapterToolCall[] } }>;
     output_text?: string;
+    usage?: unknown;
   };
   const message = parsed.choices?.[0]?.message;
   const text = parsed.output_text || message?.content || "";
@@ -184,7 +191,18 @@ function parseChatCompletionJson(json: unknown): ModelTurnResult {
   if (!text.trim() && !toolCalls.length) {
     throw new Error("Model returned an empty response.");
   }
-  return { text, toolCalls };
+  return { text, toolCalls, usage: parseUsage(parsed.usage) };
+}
+
+function parseUsage(raw: unknown): ModelUsage | undefined {
+  const usage = raw as { prompt_tokens?: unknown; completion_tokens?: unknown; total_tokens?: unknown } | undefined;
+  if (!usage || typeof usage.prompt_tokens !== "number") {
+    return undefined;
+  }
+  const promptTokens = usage.prompt_tokens;
+  const completionTokens = typeof usage.completion_tokens === "number" ? usage.completion_tokens : 0;
+  const totalTokens = typeof usage.total_tokens === "number" ? usage.total_tokens : promptTokens + completionTokens;
+  return { promptTokens, completionTokens, totalTokens };
 }
 
 function chatCompletionsBody(input: ModelTurnRequest): Record<string, unknown> {
@@ -225,10 +243,13 @@ async function* completeAsStream(
 
 function parseStreamPayload(
   payload: string,
-): { choices?: Array<{ delta?: { content?: string; tool_calls?: StreamToolCallDelta[] } }> } | undefined {
+):
+  | { choices?: Array<{ delta?: { content?: string; tool_calls?: StreamToolCallDelta[] } }>; usage?: unknown }
+  | undefined {
   try {
     return JSON.parse(payload) as {
       choices?: Array<{ delta?: { content?: string; tool_calls?: StreamToolCallDelta[] } }>;
+      usage?: unknown;
     };
   } catch {
     return undefined;

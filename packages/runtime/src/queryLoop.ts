@@ -1,13 +1,14 @@
 import type {
   AgentLoopTrace,
   GeneratedFile,
+  ModelUsage,
   PendingToolPermission,
   PermissionMode,
   PermissionRule,
   RuntimeEventRecord,
   ToolCallRecord,
 } from "@supbot/shared";
-import { nowIso } from "@supbot/shared";
+import { addModelUsage, nowIso } from "@supbot/shared";
 import { describeError } from "./errorFormat";
 import { generatedResultFilePattern } from "./localTools";
 import type { AdapterMessage, AdapterToolCall, ModelAdapter } from "./modelAdapter";
@@ -44,6 +45,10 @@ export interface QueryLoopResult {
   trace: AgentLoopTrace;
   generatedFiles: GeneratedFile[];
   events: RuntimeEventRecord[];
+  /** Usage from the most recent model call, when the provider reports it. */
+  usage?: ModelUsage;
+  /** Sum of usage across all model calls in this loop. */
+  totalUsage?: ModelUsage;
 }
 
 export async function queryLoop(input: QueryLoopInput): Promise<QueryLoopResult> {
@@ -60,6 +65,8 @@ export async function queryLoop(input: QueryLoopInput): Promise<QueryLoopResult>
   const generatedFiles: GeneratedFile[] = [];
   const events: RuntimeEventRecord[] = [];
   const toolExecutor = new ToolExecutor();
+  let usage: ModelUsage | undefined;
+  let totalUsage: ModelUsage | undefined;
 
   try {
     for (let turn = 1; turn <= maxTurns; turn += 1) {
@@ -90,10 +97,14 @@ export async function queryLoop(input: QueryLoopInput): Promise<QueryLoopResult>
       if (!result) {
         result = await input.model.complete({ ...modelRequest, messages });
       }
+      if (result.usage) {
+        usage = result.usage;
+        totalUsage = addModelUsage(totalUsage, result.usage);
+      }
 
       if (!result.toolCalls.length) {
         await emit(input, events, { type: "turn_complete", text: result.text, trace, generatedFiles });
-        return { text: result.text, trace, generatedFiles, events };
+        return { text: result.text, trace, generatedFiles, events, usage, totalUsage };
       }
 
       messages.push({
@@ -117,7 +128,7 @@ export async function queryLoop(input: QueryLoopInput): Promise<QueryLoopResult>
     const artifactCompletionText = artifactCompletionFromTrace(trace);
     if (artifactCompletionText) {
       await emit(input, events, { type: "turn_complete", text: artifactCompletionText, trace, generatedFiles });
-      return { text: artifactCompletionText, trace, generatedFiles, events };
+      return { text: artifactCompletionText, trace, generatedFiles, events, usage, totalUsage };
     }
     throw new Error(`Agent loop reached maxTurns (${maxTurns}) before producing a final answer.`);
   } catch (error) {

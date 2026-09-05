@@ -28,6 +28,7 @@ import type {
   PendingToolPermission,
   PermissionMode,
   Project,
+  LocalFileReference,
 } from "@supbot/shared";
 import { buildSlashCommands, conversationTitle, statusLabel } from "@supbot/shared";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
@@ -107,6 +108,7 @@ export function ChatPanel({
   onModelProviderChange,
   onOpenModelConfig,
   onOpenSkillView,
+  onOpenFile,
   promptInjection,
 }: {
   conversation?: Conversation;
@@ -149,6 +151,7 @@ export function ChatPanel({
   onModelProviderChange: (providerId: string) => void;
   onOpenModelConfig: () => void;
   onOpenSkillView: () => void;
+  onOpenFile: (file: LocalFileReference) => void;
   promptInjection?: { text: string; nonce: number };
 }) {
   const selectionMenuRef = useRef<HTMLDivElement | null>(null);
@@ -611,13 +614,15 @@ export function ChatPanel({
   );
 
   const conversationFiles = useMemo(() => {
-    const files: { key: string; name: string; path?: string }[] = [];
+    const files: Array<{ key: string; name: string; path: string }> = [];
     for (const item of messages) {
       for (const file of item.generatedFiles || []) {
         files.push({ key: `gen-${item.id}-${file.name}`, name: file.name, path: file.path });
       }
       for (const attachment of item.attachments || []) {
-        files.push({ key: `att-${item.id}-${attachment.name}`, name: attachment.name, path: attachment.path });
+        if (attachment.path) {
+          files.push({ key: `att-${item.id}-${attachment.name}`, name: attachment.name, path: attachment.path });
+        }
       }
     }
     return files;
@@ -845,7 +850,7 @@ export function ChatPanel({
                     key={file.key}
                     onClick={() => {
                       if (file.path) {
-                        void window.supbot.downloadFile(file.path, file.name);
+                        onOpenFile({ path: file.path, name: file.name });
                       }
                     }}
                     disabled={!file.path}
@@ -912,7 +917,13 @@ export function ChatPanel({
           components={virtuosoComponents}
           computeItemKey={(_index, item) => item.id}
           itemContent={(_index, item) => (
-            <MessageBubble message={item} highlighted={item.id === highlightMessageId} t={t} />
+            <MessageBubble
+              message={item}
+              highlighted={item.id === highlightMessageId}
+              t={t}
+              onOpenFile={onOpenFile}
+              knownFiles={conversationFiles}
+            />
           )}
           startReached={() => {
             if (hasOlderMessages && !historyLoading) {

@@ -1,13 +1,36 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ApiOutlined,
+  CloseOutlined,
   CompressOutlined,
+  DownloadOutlined,
+  FileImageOutlined,
+  FilePdfOutlined,
+  FileTextOutlined,
+  FileUnknownOutlined,
+  FileWordOutlined,
   FolderOpenOutlined,
   ReloadOutlined,
   StopOutlined,
   ToolOutlined,
+  ZoomInOutlined,
+  ZoomOutOutlined,
 } from "@ant-design/icons";
-import { Button, Divider, Empty, Popconfirm, Space, Switch, Tabs, Tag, message } from "antd";
+import {
+  Alert,
+  Button,
+  Divider,
+  Dropdown,
+  Empty,
+  Popconfirm,
+  Select,
+  Space,
+  Spin,
+  Switch,
+  Tabs,
+  Tag,
+  message,
+} from "antd";
 import {
   defaultServstationBaseUrl,
   defaultServstationClientId,
@@ -16,6 +39,8 @@ import {
   defaultServstationScope,
   defaultServstationUser,
   type AgentJob,
+  type FilePreviewResult,
+  type LocalFileReference,
   type RemoteBridgeConfig,
   type RuntimeSnapshot,
   type ServstationA2AConfigUpdate,
@@ -31,6 +56,7 @@ import {
   truncateText,
 } from "../lib/chatFormat";
 import { compareCreatedAt, shouldShowJobRuntimeEvent } from "../lib/snapshotApply";
+import { decodeBase64Utf8, formatJsonPreview } from "../lib/filePreview";
 import type { DetailPanel } from "../lib/types";
 import { connectServstationAgent } from "../servstationConnection";
 
@@ -53,6 +79,11 @@ export function RightPanel({
   collapsed,
   t,
   onLocateJob,
+  activeFile,
+  onOpenDefaultApp,
+  onShowInFolder,
+  onSaveAs,
+  onCloseFile,
 }: {
   snapshot: RuntimeSnapshot;
   activeConversationId: string;
@@ -61,12 +92,18 @@ export function RightPanel({
   collapsed: boolean;
   t: (key: string, vars?: Record<string, string | number>) => string;
   onLocateJob: (job: AgentJob) => void;
+  activeFile: LocalFileReference | null;
+  onOpenDefaultApp: (file: LocalFileReference) => Promise<void>;
+  onShowInFolder: (file: LocalFileReference) => Promise<void>;
+  onSaveAs: (file: LocalFileReference) => Promise<void>;
+  onCloseFile: () => void;
 }) {
   const conversationJobs = snapshot.jobs.filter((job) => job.conversationId === activeConversationId);
+  const activeKey = panel === "file" && activeFile ? "file" : "tasks";
   return (
     <aside className={`activity-panel ${collapsed ? "is-collapsed" : ""}`}>
       <Tabs
-        activeKey={panel || "tasks"}
+        activeKey={activeKey}
         onChange={(key) => setPanel(key as DetailPanel)}
         items={[
           {
@@ -74,10 +111,275 @@ export function RightPanel({
             label: t("Tasks"),
             children: <ConversationTasksPanel jobs={conversationJobs} onLocateJob={onLocateJob} t={t} />,
           },
+          ...(activeFile
+            ? [
+                {
+                  key: "file",
+                  label: (
+                    <span className="file-tab-label" title={activeFile.name}>
+                      <FileTextOutlined /> {activeFile.name}
+                    </span>
+                  ),
+                  children: (
+                    <FilePreviewPanel
+                      file={activeFile}
+                      t={t}
+                      onOpenDefaultApp={onOpenDefaultApp}
+                      onShowInFolder={onShowInFolder}
+                      onSaveAs={onSaveAs}
+                      onClose={onCloseFile}
+                    />
+                  ),
+                },
+              ]
+            : []),
         ]}
       />
     </aside>
   );
+}
+
+function fileKindIcon(kind: FilePreviewResult["kind"] | undefined) {
+  switch (kind) {
+    case "image":
+      return <FileImageOutlined />;
+    case "pdf":
+      return <FilePdfOutlined />;
+    case "office":
+      return <FileWordOutlined />;
+    case "binary":
+      return <FileUnknownOutlined />;
+    default:
+      return <FileTextOutlined />;
+  }
+}
+
+function fileKindLabel(kind: FilePreviewResult["kind"], t: (key: string) => string): string {
+  return t(
+    {
+      text: "Text file",
+      json: "JSON file",
+      html: "HTML file",
+      pdf: "PDF file",
+      image: "Image file",
+      office: "Office file",
+      binary: "Binary file",
+    }[kind],
+  );
+}
+
+function FilePreviewPanel({
+  file,
+  t,
+  onOpenDefaultApp,
+  onShowInFolder,
+  onSaveAs,
+  onClose,
+}: {
+  file: LocalFileReference;
+  t: (key: string, vars?: Record<string, string | number>) => string;
+  onOpenDefaultApp: (file: LocalFileReference) => Promise<void>;
+  onShowInFolder: (file: LocalFileReference) => Promise<void>;
+  onSaveAs: (file: LocalFileReference) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [preview, setPreview] = useState<FilePreviewResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [zoom, setZoom] = useState(100);
+  const [messageApi, contextHolder] = message.useMessage();
+
+  useEffect(() => {
+    let canceled = false;
+    setLoading(true);
+    setError("");
+    setPreview(null);
+    setZoom(100);
+    void window.supbot
+      .previewFile(file.path)
+      .then((result) => {
+        if (!canceled) {
+          setPreview(result);
+        }
+      })
+      .catch((reason) => {
+        if (!canceled) {
+          setError(reason instanceof Error ? reason.message : t("Preview failed."));
+        }
+      })
+      .finally(() => {
+        if (!canceled) {
+          setLoading(false);
+        }
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [file.path, t]);
+
+  const menuItems = useMemo(
+    () => [
+      {
+        key: "default",
+        icon: fileKindIcon(preview?.kind),
+        label: t("Default app"),
+        onClick: () => void onOpenDefaultApp(file),
+      },
+      {
+        key: "folder",
+        icon: <FolderOpenOutlined />,
+        label: t("Open containing folder"),
+        onClick: () => void onShowInFolder(file),
+      },
+      { type: "divider" as const },
+      {
+        key: "save",
+        icon: <DownloadOutlined />,
+        label: t("Save as..."),
+        onClick: () => void onSaveAs(file),
+      },
+    ],
+    [file, onOpenDefaultApp, onSaveAs, onShowInFolder, preview?.kind, t],
+  );
+
+  const displayText =
+    preview?.contentBase64 && (preview.kind === "text" || preview.kind === "json" || preview.kind === "html")
+      ? decodeBase64Utf8(preview.contentBase64)
+      : "";
+  const jsonPreview = preview?.kind === "json" ? formatJsonPreview(displayText) : undefined;
+  const dataUrl = preview?.contentBase64 ? `data:${preview.mimeType};base64,${preview.contentBase64}` : undefined;
+
+  const runAction = async (action: () => Promise<void>, successKey?: string) => {
+    try {
+      await action();
+      if (successKey) {
+        messageApi.success(t(successKey));
+      }
+    } catch (reason) {
+      messageApi.error(reason instanceof Error ? reason.message : t("File action failed."));
+    }
+  };
+
+  return (
+    <div className="file-preview-panel">
+      {contextHolder}
+      <div className="file-preview-toolbar">
+        <div className="file-preview-title" title={file.name}>
+          <span className="file-preview-icon">{fileKindIcon(preview?.kind)}</span>
+          <span>
+            <strong>{file.name}</strong>
+            <small>
+              {preview ? `${fileKindLabel(preview.kind, t)} · ${formatBytes(preview.size)}` : t("Loading...")}
+            </small>
+          </span>
+        </div>
+        <div className="file-preview-actions">
+          {preview && preview.kind !== "office" && preview.kind !== "binary" ? (
+            <Space.Compact size="small">
+              <Button
+                icon={<ZoomOutOutlined />}
+                aria-label={t("Zoom out")}
+                disabled={zoom <= 50}
+                onClick={() => setZoom((value) => Math.max(50, value - 10))}
+              />
+              <Select
+                aria-label={t("Zoom")}
+                value={zoom}
+                onChange={setZoom}
+                options={[50, 75, 100, 125, 150, 200].map((value) => ({ value, label: `${value}%` }))}
+                popupMatchSelectWidth={false}
+                style={{ width: 72 }}
+              />
+              <Button
+                icon={<ZoomInOutlined />}
+                aria-label={t("Zoom in")}
+                disabled={zoom >= 200}
+                onClick={() => setZoom((value) => Math.min(200, value + 10))}
+              />
+            </Space.Compact>
+          ) : null}
+          <Button
+            type="text"
+            icon={<DownloadOutlined />}
+            aria-label={t("Save as...")}
+            onClick={() => void runAction(() => onSaveAs(file), "File saved.")}
+          />
+          <Dropdown menu={{ items: menuItems }} trigger={["click"]} placement="bottomRight">
+            <Button type="text" className="file-open-button">
+              {t("Open")} <span aria-hidden="true">⌄</span>
+            </Button>
+          </Dropdown>
+          <Button type="text" icon={<CloseOutlined />} aria-label={t("Close")} onClick={onClose} />
+        </div>
+      </div>
+      <div className="file-preview-content">
+        {loading ? (
+          <div className="file-preview-state">
+            <Spin />
+            <span>{t("Loading file...")}</span>
+          </div>
+        ) : error ? (
+          <Alert type="error" showIcon message={t("Preview failed.")} description={error} />
+        ) : !preview ? (
+          <Empty description={t("No file selected")} />
+        ) : preview.tooLarge ? (
+          <FileFallbackCard preview={preview} file={file} t={t} onOpenDefaultApp={onOpenDefaultApp} />
+        ) : preview.kind === "office" || preview.kind === "binary" ? (
+          <FileFallbackCard preview={preview} file={file} t={t} onOpenDefaultApp={onOpenDefaultApp} />
+        ) : preview.kind === "image" && dataUrl ? (
+          <div className="file-image-viewport">
+            <img src={dataUrl} alt={file.name} style={{ maxWidth: `${zoom}%`, maxHeight: `${zoom}%` }} />
+          </div>
+        ) : preview.kind === "pdf" && dataUrl ? (
+          <iframe className="file-pdf-frame" src={dataUrl} title={file.name} />
+        ) : preview.kind === "html" ? (
+          <iframe className="file-html-frame" srcDoc={displayText} sandbox="" title={file.name} />
+        ) : (
+          <div className="file-text-viewport" style={{ fontSize: `${zoom}%` }}>
+            <pre>{jsonPreview?.text || displayText}</pre>
+            {jsonPreview && !jsonPreview.valid ? (
+              <Tag color="warning">{t("Invalid JSON; showing raw text")}</Tag>
+            ) : null}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FileFallbackCard({
+  preview,
+  file,
+  t,
+  onOpenDefaultApp,
+}: {
+  preview: FilePreviewResult;
+  file: LocalFileReference;
+  t: (key: string, vars?: Record<string, string | number>) => string;
+  onOpenDefaultApp: (file: LocalFileReference) => Promise<void>;
+}) {
+  return (
+    <div className="file-fallback-card">
+      <span className="file-fallback-icon">{fileKindIcon(preview.kind)}</span>
+      <strong>{file.name}</strong>
+      <span>
+        {preview.tooLarge ? t("This file is too large to preview.") : t("Use the default app to view this file.")}
+      </span>
+      <Button type="primary" icon={<FolderOpenOutlined />} onClick={() => void onOpenDefaultApp(file)}>
+        {t("Open in default app")}
+      </Button>
+    </div>
+  );
+}
+
+function formatBytes(size: number): string {
+  if (size < 1024) {
+    return `${size} B`;
+  }
+  if (size < 1024 * 1024) {
+    return `${(size / 1024).toFixed(1)} KB`;
+  }
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function ConversationTasksPanel({
