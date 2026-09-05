@@ -19,7 +19,7 @@ import {
 import { Alert, Button, message, Tag, Tooltip } from "antd";
 import type { ChatMessage, ChatMessageBlock, GeneratedFile, LocalFileReference } from "@supbot/shared";
 import { statusColor, statusLabel } from "@supbot/shared";
-import { formatToolPayload, shouldShowGeneratedFileInChat } from "../lib/chatFormat";
+import { formatToolPayload, shouldAnimateRunningStatus, shouldShowGeneratedFileInChat } from "../lib/chatFormat";
 import { writeClipboardText } from "../lib/clipboard";
 import { resolveLocalFileHref } from "../lib/filePreview";
 import { QuestionBlock } from "./QuestionBlock";
@@ -53,6 +53,7 @@ export const MessageBubble = memo(function MessageBubble({
     (file, index, files) => files.findIndex((candidate) => candidate.path === file.path) === index,
   );
   const copyable = (item.role === "user" || item.role === "assistant") && item.text.trim().length > 0;
+  const animateRunningStatus = shouldAnimateRunningStatus(item);
   const copyMessage = async () => {
     try {
       await writeClipboardText(item.text);
@@ -184,7 +185,14 @@ export const MessageBubble = memo(function MessageBubble({
           <span className="msg-header-name">
             {item.role === "assistant" ? "HyBot" : item.role === "tool" ? t("Tool") : t("System")}
           </span>
-          {item.status ? <Tag color={statusColor(item.status)}>{statusLabel(item.status, t)}</Tag> : null}
+          {item.status ? (
+            <Tag
+              className={`message-status-tag${animateRunningStatus ? " is-running-active" : ""}`}
+              color={statusColor(item.status)}
+            >
+              {statusLabel(item.status, t)}
+            </Tag>
+          ) : null}
         </div>
         <div className="message-bubble">{messageContent}</div>
         {copyable ? (

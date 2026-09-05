@@ -1,4 +1,4 @@
-import type { AgentJob, RuntimeEventRecord, RuntimeSnapshot, ToolCallRecord } from "@supbot/shared";
+import type { AgentJob, ChatMessage, RuntimeEventRecord, RuntimeSnapshot, ToolCallRecord } from "@supbot/shared";
 
 export const hiddenChatGeneratedFileExtensions = new Set([
   ".bat",
@@ -31,6 +31,17 @@ export function generatedFileExtension(file: { name: string; path: string }): st
 
 export function shouldShowGeneratedFileInChat(file: { name: string; path: string }): boolean {
   return !hiddenChatGeneratedFileExtensions.has(generatedFileExtension(file));
+}
+
+export function shouldAnimateRunningStatus(message: ChatMessage): boolean {
+  return (
+    message.status === "running" &&
+    !message.blocks?.some((block) => block.type === "question" && block.status === "pending")
+  );
+}
+
+export function hasPendingUserQuestion(message: ChatMessage | undefined): boolean {
+  return Boolean(message?.blocks?.some((block) => block.type === "question" && block.status === "pending"));
 }
 
 export function formatToolPayload(value: unknown): string {

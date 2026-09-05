@@ -38,6 +38,7 @@ import { readClipboardText, selectedTextWithin } from "../lib/clipboard";
 import { filesFromPasteEvent, renamePastedFiles } from "../lib/pastedAttachments";
 import type { PromptContextMenu, SelectionContextMenu } from "../lib/types";
 import { enabledSkillCapabilities, formatSkillPromptDirective } from "../lib/skills";
+import { hasPendingUserQuestion } from "../lib/chatFormat";
 
 const VirtualMessageList = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   ({ className, ...props }, ref) => (
@@ -644,6 +645,11 @@ export function ChatPanel({
 
   const activePermission = permissionOptions.find((item) => item.value === permissionMode) || permissionOptions[0];
   const modelSelectValue = activeModelProviderId || (modelProviders.length ? "" : "__current__");
+  const runningStatusAnimating = Boolean(
+    runningJob &&
+    runningJob.status === "running" &&
+    !messages.some((item) => item.jobId === runningJob.id && item.role === "assistant" && hasPendingUserQuestion(item)),
+  );
 
   return (
     <section className="chat-panel">
@@ -727,7 +733,12 @@ export function ChatPanel({
             </button>
           </Tooltip>
           {runningJob ? (
-            <Tag color="blue">
+            <Tag
+              className={
+                runningStatusAnimating ? "chat-running-status-tag is-running-active" : "chat-running-status-tag"
+              }
+              color="blue"
+            >
               <ClockCircleOutlined /> {statusLabel(runningJob.status, t)}
             </Tag>
           ) : waitingJob ? (

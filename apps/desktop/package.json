@@ -20,7 +20,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build:renderer": "vite build",
     "build:main": "esbuild src/main/index.ts src/preload/index.ts --bundle --platform=node --target=node22 --format=cjs --outdir=dist --external:electron --external:@aws-sdk/client-s3",
-    "test": "vitest run src/main/appIdentity.test.ts src/main/filePreview.test.ts src/main/updateManager.test.ts src/main/oidcLoginWindowLifecycle.test.ts src/main/trayManager.test.ts src/renderer/lib/filePreview.test.ts src/renderer/lib/servstationFormat.test.ts src/renderer/lib/skills.test.ts src/renderer/lib/modelProviderPresets.test.ts src/renderer/servstationAutopilot.test.ts src/renderer/servstationCapabilities.test.ts src/renderer/servstationConnection.test.ts src/renderer/servstationProjects.test.ts src/renderer/pastedAttachments.test.ts src/renderer/cronBuilder.test.ts",
+    "test": "vitest run src/main/appIdentity.test.ts src/main/filePreview.test.ts src/main/updateManager.test.ts src/main/oidcLoginWindowLifecycle.test.ts src/main/trayManager.test.ts src/renderer/lib/chatFormat.test.ts src/renderer/lib/filePreview.test.ts src/renderer/lib/servstationFormat.test.ts src/renderer/lib/skills.test.ts src/renderer/lib/modelProviderPresets.test.ts src/renderer/servstationAutopilot.test.ts src/renderer/servstationCapabilities.test.ts src/renderer/servstationConnection.test.ts src/renderer/servstationProjects.test.ts src/renderer/pastedAttachments.test.ts src/renderer/cronBuilder.test.ts",
     "dev": "npm run build:main && concurrently -k \"vite --host 127.0.0.1 --port 5273 --strictPort\" \"cross-env HBCLIENT_DEV_SERVER_URL=http://127.0.0.1:5273 electron .\"",
     "start": "electron .",
     "prepare:default-skills": "node ../../scripts/prepare-bundled-skills.cjs",
