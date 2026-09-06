@@ -2,6 +2,8 @@ import type { ChatMessage, ModelConfig, ModelUsage, PersonalityConfig, SubagentC
 import { buildContext, type OpenAiToolCall } from "./contextBuilder";
 import { fetchWithRetry } from "./fetchWithRetry";
 
+export const MODEL_NOT_CONFIGURED_MESSAGE = "请先配置大模型后再对话。";
+
 export type AdapterMessage =
   | { role: "system"; content: string }
   | { role: "user"; content: string }
@@ -56,7 +58,7 @@ export class OpenAIChatCompletionsAdapter implements ModelAdapter {
   async complete(input: ModelTurnRequest): Promise<ModelTurnResult> {
     const apiKey = normalizeModelApiKey(input.apiKey);
     if (!apiKey) {
-      return { text: localFallbackFromMessages(input.messages), toolCalls: [] };
+      return { text: localFallbackFromMessages(), toolCalls: [] };
     }
 
     const url = normalizeChatCompletionsUrl(input.modelConfig.baseUrl);
@@ -300,18 +302,8 @@ function materializeToolCalls(parts: Map<number, ToolCallAccumulator>): AdapterT
     .filter((toolCall) => toolCall.function.name);
 }
 
-function localFallbackFromMessages(messages: AdapterMessage[]): string {
-  const last =
-    messages.filter((message): message is { role: "user"; content: string } => message.role === "user").at(-1)
-      ?.content || "";
-  return [
-    "本地回退模式：尚未配置 API 密钥。",
-    "",
-    "你的消息已经保存，本地运行时工作正常。请在“配置 > 模型”中添加 OpenAI-compatible Base URL、API 密钥和模型名，以启用真实模型调用。",
-    "",
-    "Local fallback: no API key is configured yet. Add an OpenAI-compatible base URL, API key, and model in Config > Model to enable real model calls.",
-    last ? `\n最近提示词 / Last prompt: ${last}` : "",
-  ].join("\n");
+function localFallbackFromMessages(): string {
+  return MODEL_NOT_CONFIGURED_MESSAGE;
 }
 
 export interface OpenAiToolDefinition {
@@ -357,7 +349,7 @@ export async function generateReply(input: GenerateReplyInput): Promise<Generate
     return { text: result.text, toolCalls: result.toolCalls };
   } catch (error) {
     if (!input.apiKey?.trim()) {
-      return { text: localFallbackReply(input) };
+      return { text: localFallbackReply() };
     }
     throw error;
   }
@@ -420,16 +412,6 @@ export function normalizeModelApiKey(value?: string): string {
   return apiKey;
 }
 
-function localFallbackReply(input: GenerateReplyInput): string {
-  const last = input.messages.filter((message) => message.role === "user").at(-1)?.text || "";
-  const zhSubagent = input.subagent ? `（@${input.subagent.name}）` : "";
-  const enSubagent = input.subagent ? ` via @${input.subagent.name}` : "";
-  return [
-    `本地回退模式${zhSubagent}：尚未配置 API 密钥。`,
-    "",
-    "你的消息已经保存，本地运行时工作正常。请在“配置 > 模型”中添加 OpenAI-compatible Base URL、API 密钥和模型名，以启用真实模型调用。",
-    "",
-    `Local fallback${enSubagent}: no API key is configured yet. Add an OpenAI-compatible base URL, API key, and model in Config > Model to enable real model calls.`,
-    last ? `\n最近提示词 / Last prompt: ${last}` : "",
-  ].join("\n");
+function localFallbackReply(): string {
+  return MODEL_NOT_CONFIGURED_MESSAGE;
 }

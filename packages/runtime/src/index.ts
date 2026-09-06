@@ -1,4 +1,4 @@
-export { generateReply, normalizeChatCompletionsUrl } from "./modelAdapter";
+export { generateReply, normalizeChatCompletionsUrl, MODEL_NOT_CONFIGURED_MESSAGE } from "./modelAdapter";
 export { fetchWithRetry, type FetchWithRetryOptions } from "./fetchWithRetry";
 export { AutopilotOrchestrator } from "./autopilotOrchestrator";
 export { JsonFileStorage, createInitialState, type RuntimeState, type StorageAdapter } from "./storage";

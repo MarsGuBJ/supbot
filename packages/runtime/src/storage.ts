@@ -45,6 +45,7 @@ import {
   type TaskWorktree,
   type ToolMarketConfig,
 } from "@supbot/shared";
+import { MODEL_NOT_CONFIGURED_MESSAGE } from "./modelAdapter";
 
 export interface ModelProviderState extends ModelProviderConfig {
   apiKeySecret?: string;
@@ -805,21 +806,15 @@ function normalizeDataArtifact(artifact: DataArtifact): DataArtifact | undefined
 }
 
 function normalizeMessage(message: ChatMessage): ChatMessage {
-  if (message.role !== "assistant" || !message.text.startsWith("Local fallback")) {
+  if (
+    message.role !== "assistant" ||
+    (!message.text.startsWith("Local fallback") && !message.text.startsWith("本地回退模式"))
+  ) {
     return message;
   }
-  const lastPrompt = message.text.match(/Last prompt:\s*([\s\S]*)$/)?.[1]?.trim();
-  const subagent = message.text.match(/^Local fallback( via @[A-Za-z0-9_-]+)?:/)?.[1]?.trim();
   return {
     ...message,
-    text: [
-      `本地回退模式${subagent ? `（${subagent.replace("via ", "")}）` : ""}：尚未配置 API 密钥。`,
-      "",
-      "你的消息已经保存，本地运行时工作正常。请在“配置 > 模型”中添加 OpenAI-compatible Base URL、API 密钥和模型名，以启用真实模型调用。",
-      "",
-      `${message.text.split("\n", 1)[0]} Add an OpenAI-compatible base URL, API key, and model in Config > Model to enable real model calls.`,
-      lastPrompt ? `\n最近提示词 / Last prompt: ${lastPrompt}` : "",
-    ].join("\n"),
+    text: MODEL_NOT_CONFIGURED_MESSAGE,
   };
 }
 

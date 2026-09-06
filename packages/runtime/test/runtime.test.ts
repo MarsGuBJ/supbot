@@ -847,7 +847,7 @@ describe("SupbotRuntime", () => {
     await expect(runtime.deleteModelProvider(tertiary.id)).rejects.toThrow("At least one model provider is required.");
   });
 
-  test("creates a conversation and runs a fallback local job", async () => {
+  test("prompts for model configuration when no model is configured", async () => {
     const runtime = await createRuntime();
     const result = await runtime.sendPrompt({ prompt: "hello local agent" });
     expect(result.conversation.messages).toHaveLength(1);
@@ -858,8 +858,7 @@ describe("SupbotRuntime", () => {
     const conversation = snapshot.conversations.find((item) => item.id === result.conversation.id);
     expect(conversation?.messages.some((message) => message.role === "assistant")).toBe(true);
     const assistant = conversation?.messages.find((message) => message.role === "assistant");
-    expect(assistant?.text).toContain("本地回退模式");
-    expect(assistant?.text).toContain("Local fallback");
+    expect(assistant?.text).toBe("请先配置大模型后再对话。");
     expect(snapshot.jobs.find((job) => job.id === result.job.id)?.status).toBe("completed");
     expect(snapshot.memory).toMatchObject({ pages: [], facts: [], chunks: [], links: [], candidates: [] });
   });
