@@ -4,6 +4,8 @@ import {
   ClockCircleOutlined,
   CompressOutlined,
   CopyOutlined,
+  DeleteOutlined,
+  EditOutlined,
   FileTextOutlined,
   FileSearchOutlined,
   FolderOpenOutlined,
@@ -14,7 +16,7 @@ import {
   SearchOutlined,
   SendOutlined,
   StarOutlined,
-  StopOutlined,
+  ImportOutlined,
   ToolOutlined,
 } from "@ant-design/icons";
 import { Popover, Tag, Tooltip, message } from "antd";
@@ -39,6 +41,13 @@ import { filesFromPasteEvent, renamePastedFiles } from "../lib/pastedAttachments
 import type { PromptContextMenu, SelectionContextMenu } from "../lib/types";
 import { enabledSkillCapabilities, formatSkillPromptDirective } from "../lib/skills";
 import { hasPendingUserQuestion } from "../lib/chatFormat";
+import {
+  enqueuePrompt,
+  removeQueuedPrompt,
+  restoreQueuedPrompt,
+  type PromptQueues,
+  type QueuedPrompt,
+} from "../lib/promptQueue";
 
 const VirtualMessageList = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   ({ className, ...props }, ref) => (
@@ -82,7 +91,6 @@ export function ChatPanel({
   approveToolPermission,
   denyToolPermission,
   send,
-  stopRunning,
   pickAttachments,
   copyLatest,
   copySelectedText,
@@ -118,14 +126,13 @@ export function ChatPanel({
   sending: boolean;
   runningJob?: AgentJob;
   waitingJob?: AgentJob;
-  interruptRunning: () => Promise<void>;
+  interruptRunning: () => Promise<boolean>;
   resumeWaiting: () => Promise<void>;
   discardWaiting: () => Promise<void>;
   pendingToolPermissions: PendingToolPermission[];
   approveToolPermission: (id: string) => Promise<void>;
   denyToolPermission: (id: string) => Promise<void>;
-  send: (text: string) => Promise<boolean>;
-  stopRunning: () => void;
+  send: (text: string, attachments?: Attachment[]) => Promise<boolean>;
   pickAttachments: () => void;
   copyLatest: () => void;
   copySelectedText: (text: string) => Promise<void>;
@@ -169,6 +176,8 @@ export function ChatPanel({
   const [cornerPopup, setCornerPopup] = useState<CornerPopup>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [prompt, setPrompt] = useState("");
+  const [promptQueues, setPromptQueues] = useState<PromptQueues>({});
+  const [queueActionId, setQueueActionId] = useState<string | null>(null);
   const promptRef = useRef(prompt);
   promptRef.current = prompt;
   const conversationDraftsRef = useRef(new Map<string, string>());
@@ -228,6 +237,87 @@ export function ChatPanel({
       setPrompt(text);
     }
   }, [prompt, send]);
+
+  const currentConversationId = conversation?.id || "";
+  const queuedPrompts = promptQueues[currentConversationId] || [];
+  const updateQueue = setPromptQueues;
+  const queuePrompt = useCallback(() => {
+    const text = prompt.trim();
+    if (!text || !currentConversationId) {
+      return;
+    }
+    const item: QueuedPrompt = {
+      id: `queued-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      text,
+      attachments: attachments.map((attachment) => ({ ...attachment })),
+    };
+    updateQueue(enqueuePrompt(promptQueues, currentConversationId, item));
+    setPrompt("");
+    setAttachments([]);
+  }, [attachments, currentConversationId, prompt, promptQueues, setAttachments, updateQueue]);
+
+  const submitPrompt = useCallback(() => {
+    if (runningJob) {
+      queuePrompt();
+    } else {
+      void handleSend();
+    }
+  }, [handleSend, queuePrompt, runningJob]);
+
+  const editQueuedPrompt = useCallback(
+    (item: QueuedPrompt) => {
+      if (!currentConversationId) {
+        return;
+      }
+      updateQueue(removeQueuedPrompt(promptQueues, currentConversationId, item.id));
+      setPrompt(item.text);
+      setAttachments(item.attachments.map((attachment) => ({ ...attachment })));
+      window.requestAnimationFrame(() => {
+        const textarea = promptInputRef.current;
+        textarea?.focus();
+        textarea?.setSelectionRange(item.text.length, item.text.length);
+        resizeTextarea();
+      });
+    },
+    [currentConversationId, promptQueues, resizeTextarea, setAttachments, updateQueue],
+  );
+
+  const deleteQueuedPrompt = useCallback(
+    (item: QueuedPrompt) => {
+      if (currentConversationId) {
+        updateQueue(removeQueuedPrompt(promptQueues, currentConversationId, item.id));
+      }
+    },
+    [currentConversationId, promptQueues, updateQueue],
+  );
+
+  const insertQueuedPrompt = useCallback(
+    async (item: QueuedPrompt) => {
+      if (!currentConversationId || queueActionId) {
+        return;
+      }
+      setQueueActionId(item.id);
+      updateQueue(removeQueuedPrompt(promptQueues, currentConversationId, item.id));
+      try {
+        if (runningJob) {
+          const interrupted = await interruptRunning();
+          if (!interrupted) {
+            updateQueue((current) => restoreQueuedPrompt(current, currentConversationId, item));
+            return;
+          }
+        }
+        const sent = await send(item.text, item.attachments);
+        if (!sent) {
+          updateQueue((current) => restoreQueuedPrompt(current, currentConversationId, item));
+        }
+      } catch {
+        updateQueue((current) => restoreQueuedPrompt(current, currentConversationId, item));
+      } finally {
+        setQueueActionId(null);
+      }
+    },
+    [currentConversationId, interruptRunning, promptQueues, queueActionId, runningJob, send, updateQueue],
+  );
 
   const [dropActive, setDropActive] = useState(false);
   const handleFileDrop = useCallback(
@@ -468,7 +558,7 @@ export function ChatPanel({
     };
   }, [closePromptMenu, promptMenu]);
 
-  const escGuardRef = useRef({ menuOpen: false, interrupt: undefined as (() => Promise<void>) | undefined });
+  const escGuardRef = useRef({ menuOpen: false, interrupt: undefined as (() => Promise<boolean>) | undefined });
   escGuardRef.current = {
     menuOpen: Boolean(selectionMenu || promptMenu || cornerPopup || permissionOpen),
     interrupt: runningJob ? interruptRunning : undefined,
@@ -1028,6 +1118,61 @@ export function ChatPanel({
         }}
         onDrop={(event) => void handleFileDrop(event)}
       >
+        {queuedPrompts.length ? (
+          <div className="prompt-queue" aria-label={t("Queued prompts")}>
+            <div className="prompt-queue-header">
+              <span>{t("Queued prompts")}</span>
+              <span className="prompt-queue-count">{queuedPrompts.length}</span>
+            </div>
+            <div className="prompt-queue-list">
+              {queuedPrompts.map((item) => {
+                const actionBusy = queueActionId === item.id;
+                return (
+                  <div className="prompt-queue-item" key={item.id}>
+                    <span className="prompt-queue-text" title={item.text}>
+                      {item.text}
+                    </span>
+                    <span className="prompt-queue-actions">
+                      <Tooltip title={t("Insert queued prompt")}>
+                        <button
+                          type="button"
+                          className="prompt-queue-action"
+                          aria-label={t("Insert queued prompt")}
+                          disabled={Boolean(queueActionId)}
+                          onClick={() => void insertQueuedPrompt(item)}
+                        >
+                          <ImportOutlined />
+                        </button>
+                      </Tooltip>
+                      <Tooltip title={t("Edit queued prompt")}>
+                        <button
+                          type="button"
+                          className="prompt-queue-action"
+                          aria-label={t("Edit queued prompt")}
+                          disabled={Boolean(queueActionId) || actionBusy}
+                          onClick={() => editQueuedPrompt(item)}
+                        >
+                          <EditOutlined />
+                        </button>
+                      </Tooltip>
+                      <Tooltip title={t("Delete queued prompt")}>
+                        <button
+                          type="button"
+                          className="prompt-queue-action danger"
+                          aria-label={t("Delete queued prompt")}
+                          disabled={Boolean(queueActionId) || actionBusy}
+                          onClick={() => deleteQueuedPrompt(item)}
+                        >
+                          <DeleteOutlined />
+                        </button>
+                      </Tooltip>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
         {waitingJob ? (
           <div className="waiting-bar" role="status">
             <span className="waiting-bar-text">
@@ -1077,11 +1222,7 @@ export function ChatPanel({
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
-                if (runningJob) {
-                  void stopRunning();
-                } else {
-                  void handleSend();
-                }
+                submitPrompt();
               }
             }}
           />
@@ -1186,15 +1327,15 @@ export function ChatPanel({
                   <option value="__custom__">{t("Configure custom model…")}</option>
                 </select>
               </div>
-              <Tooltip title={runningJob ? t("Stop") : t("Send")}>
+              <Tooltip title={runningJob ? t("Submit prompt") : t("Send")}>
                 <button
                   type="button"
-                  className={`send-btn ${runningJob ? "is-stop" : ""}`}
-                  disabled={(!prompt.trim() && !runningJob) || sending}
-                  aria-label={runningJob ? t("Stop") : t("Send")}
-                  onClick={runningJob ? stopRunning : () => void handleSend()}
+                  className="send-btn"
+                  disabled={!prompt.trim() || sending}
+                  aria-label={runningJob ? t("Submit prompt") : t("Send")}
+                  onClick={submitPrompt}
                 >
-                  {runningJob ? <StopOutlined /> : <SendOutlined />}
+                  <SendOutlined />
                 </button>
               </Tooltip>
             </div>

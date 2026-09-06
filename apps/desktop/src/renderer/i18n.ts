@@ -68,6 +68,11 @@ const zh: Record<string, string> = {
   "Message HyBot, use /config, or mention @research...": "给 HyBot 发消息，使用 /config，或提及 @research...",
   Stop: "停止",
   Send: "发送",
+  "Submit prompt": "提交提示词",
+  "Queued prompts": "待处理提示词",
+  "Insert queued prompt": "插入提示词",
+  "Edit queued prompt": "编辑提示词",
+  "Delete queued prompt": "删除提示词",
   You: "你",
   System: "系统",
   History: "历史",
@@ -694,7 +699,6 @@ const zh: Record<string, string> = {
   "No scheduled prompts": "暂无计划提示词",
   "Autopilot goal": "Autopilot 目标",
   "Describe the outcome for the server Agent...": "描述希望服务端 Agent 完成的结果...",
-  "Submit prompt": "提交提示词",
   Phase: "阶段",
   Steps: "步骤",
   Evidence: "证据",
@@ -892,6 +896,7 @@ const zh: Record<string, string> = {
   "Please enter your username.": "请输入用户名。",
   "Password reset is not available yet.": "密码重置功能开发中",
   "HyBot © 2026 · Intelligent work platform": "中诚信和逸科技 © 2026 HyBot · 智能工作平台",
+  "Resize right panel": "拖拽调整右侧面板宽度",
 };
 
 export function translate(language: Language, key: string, vars?: Record<string, string | number>): string {

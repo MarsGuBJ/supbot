@@ -197,6 +197,20 @@ function mergeMessages(existing: ChatMessage[], incoming: ChatMessage[]): ChatMe
   ];
 }
 
+const RIGHT_PANEL_MIN_WIDTH = 260;
+const RIGHT_PANEL_MAX_WIDTH = 600;
+const RIGHT_PANEL_WIDTH_STORAGE_KEY = "hbclient.rightPanelWidth";
+
+function clampRightPanelWidth(width: number): number {
+  return Math.min(RIGHT_PANEL_MAX_WIDTH, Math.max(RIGHT_PANEL_MIN_WIDTH, Math.round(width)));
+}
+
+function loadRightPanelWidth(): number {
+  const fallback = clampRightPanelWidth(window.innerWidth * 0.25 || 320);
+  const saved = Number(window.localStorage.getItem(RIGHT_PANEL_WIDTH_STORAGE_KEY));
+  return Number.isFinite(saved) && saved > 0 ? clampRightPanelWidth(saved) : fallback;
+}
+
 function App() {
   const [language, setLanguageState] = useState<Language>(() => loadLanguage());
   const [snapshot, setSnapshot] = useState<RuntimeSnapshot | null>(null);
@@ -207,6 +221,8 @@ function App() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [sending, setSending] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(true);
+  const [rightWidth, setRightWidth] = useState(() => loadRightPanelWidth());
+  const rightResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const [activeFile, setActiveFile] = useState<LocalFileReference | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
   const [manageTab, setManageTab] = useState<ManagePanelTab>("model");
@@ -233,6 +249,37 @@ function App() {
     [language],
   );
   const slashCommandList = useMemo(() => buildSlashCommands(t), [t]);
+
+  useEffect(() => {
+    window.localStorage.setItem(RIGHT_PANEL_WIDTH_STORAGE_KEY, String(rightWidth));
+  }, [rightWidth]);
+
+  const onRightResizeStart = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      rightResizeRef.current = { startX: event.clientX, startWidth: rightWidth };
+      event.currentTarget.setPointerCapture(event.pointerId);
+      document.body.classList.add("right-resizing");
+    },
+    [rightWidth],
+  );
+
+  const onRightResizeMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = rightResizeRef.current;
+    if (!drag) {
+      return;
+    }
+    setRightWidth(clampRightPanelWidth(drag.startWidth + (drag.startX - event.clientX)));
+  }, []);
+
+  const onRightResizeEnd = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!rightResizeRef.current) {
+      return;
+    }
+    rightResizeRef.current = null;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    document.body.classList.remove("right-resizing");
+  }, []);
 
   const openConversationFile = useCallback((file: LocalFileReference) => {
     if (!file.path) {
@@ -646,7 +693,7 @@ function App() {
     return true;
   };
 
-  const send = async (text: string): Promise<boolean> => {
+  const send = async (text: string, queuedAttachments?: Attachment[]): Promise<boolean> => {
     if (!text || sending) {
       return false;
     }
@@ -660,7 +707,7 @@ function App() {
         conversationId: activeConversation?.id,
         projectId: activeProjectId || undefined,
         prompt: text,
-        attachments,
+        attachments: queuedAttachments ?? attachments,
       });
       setActiveConversationId(result.conversation.id);
       await refresh();
@@ -673,23 +720,17 @@ function App() {
     }
   };
 
-  const stopRunning = async () => {
-    if (!runningJob) {
-      return;
-    }
-    await window.supbot.cancelJob(runningJob.id);
-    await refresh();
-  };
-
   const interruptRunning = useCallback(async () => {
     if (!runningJob) {
-      return;
+      return false;
     }
     try {
       await window.supbot.interruptJob(runningJob.id);
       await refresh();
+      return true;
     } catch (error) {
       messageApi.error((error as Error).message);
+      return false;
     }
   }, [runningJob, refresh, messageApi]);
 
@@ -884,7 +925,6 @@ function App() {
                   approveToolPermission={approveToolPermission}
                   denyToolPermission={denyToolPermission}
                   send={send}
-                  stopRunning={stopRunning}
                   pickAttachments={pickAttachments}
                   copyLatest={copyLatest}
                   copySelectedText={copySelectedText}
@@ -914,12 +954,23 @@ function App() {
                   onOpenFile={openConversationFile}
                   promptInjection={promptInjection}
                 />
+                <div
+                  className="right-panel-resizer"
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label={t("Resize right panel")}
+                  onPointerDown={onRightResizeStart}
+                  onPointerMove={onRightResizeMove}
+                  onPointerUp={onRightResizeEnd}
+                  onPointerCancel={onRightResizeEnd}
+                />
                 <RightPanel
                   snapshot={snapshot}
                   activeConversationId={activeConversation?.id || ""}
                   panel={detailPanel}
                   setPanel={setDetailPanel}
                   collapsed={rightCollapsed}
+                  width={rightWidth}
                   t={t}
                   onLocateJob={locateJobMessage}
                   activeFile={activeFile}

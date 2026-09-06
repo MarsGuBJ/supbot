@@ -77,6 +77,7 @@ export function RightPanel({
   panel,
   setPanel,
   collapsed,
+  width,
   t,
   onLocateJob,
   activeFile,
@@ -90,6 +91,7 @@ export function RightPanel({
   panel: DetailPanel;
   setPanel: (panel: DetailPanel) => void;
   collapsed: boolean;
+  width: number;
   t: (key: string, vars?: Record<string, string | number>) => string;
   onLocateJob: (job: AgentJob) => void;
   activeFile: LocalFileReference | null;
@@ -101,7 +103,7 @@ export function RightPanel({
   const conversationJobs = snapshot.jobs.filter((job) => job.conversationId === activeConversationId);
   const activeKey = panel === "file" && activeFile ? "file" : "tasks";
   return (
-    <aside className={`activity-panel ${collapsed ? "is-collapsed" : ""}`}>
+    <aside className={`activity-panel ${collapsed ? "is-collapsed" : ""}`} style={{ width }}>
       <Tabs
         activeKey={activeKey}
         onChange={(key) => setPanel(key as DetailPanel)}
