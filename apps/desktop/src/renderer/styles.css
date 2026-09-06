@@ -5844,6 +5844,7 @@ body.right-resizing iframe {
   width: 100%;
   max-width: 860px;
   min-width: 0;
+  padding-right: 36px;
   margin: 0 auto;
 }
 
@@ -5851,6 +5852,17 @@ body.right-resizing iframe {
 .chat-panel .message-stream .message-text {
   min-width: 0;
   max-width: 100%;
+}
+
+.chat-panel .message-stream .message-row {
+  width: 100%;
+}
+
+.chat-panel .message-stream .message-row.user .message-bubble {
+  width: auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: calc(100% - 42px);
 }
 
 .chat-empty {
