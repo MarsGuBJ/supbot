@@ -5829,9 +5829,10 @@ body.right-resizing iframe {
 .chat-panel .message-stream {
   flex: 1;
   min-height: 0;
-  padding: 10px 24px 0;
+  padding: 10px 44px 0 24px;
   overflow-x: hidden;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .chat-panel .message-stream .message-stack {
