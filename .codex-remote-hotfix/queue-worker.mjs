@@ -2881,7 +2881,7 @@ async function collectGeneratedFiles(beforeFiles, root) {
   return dedupeGeneratedFiles(generated);
 }
 
-function isDeliverableFile(relativePath) {
+export function isDeliverableFile(relativePath) {
   const normalized = normalizeRelativePath(relativePath).toLowerCase();
   const parts = normalized.split("/").filter(Boolean);
   if (!parts.length) return false;
@@ -2891,6 +2891,9 @@ function isDeliverableFile(relativePath) {
     case ".txt":
     case ".md":
     case ".csv":
+    case ".tsv":
+    case ".html":
+    case ".htm":
     case ".pdf":
     case ".doc":
     case ".docx":
@@ -2937,13 +2940,15 @@ function generatedFileID(relativePath) {
   return `file-${digest}${ext}`;
 }
 
-function contentTypeFromName(name) {
+export function contentTypeFromName(name) {
   switch (extname(String(name || "")).toLowerCase()) {
     case ".txt":
     case ".log":
     case ".md":
     case ".csv":
       return "text/plain; charset=utf-8";
+    case ".tsv":
+      return "text/tab-separated-values; charset=utf-8";
     case ".json":
       return "application/json";
     case ".pdf":
@@ -2966,6 +2971,7 @@ function contentTypeFromName(name) {
     case ".jpeg":
       return "image/jpeg";
     case ".html":
+    case ".htm":
       return "text/html; charset=utf-8";
     default:
       return "application/octet-stream";
