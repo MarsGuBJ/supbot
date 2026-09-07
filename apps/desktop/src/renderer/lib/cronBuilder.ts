@@ -70,9 +70,7 @@ export function selectionsFromCron(expr: string | undefined): CronSelections {
 /** Join dropdown selections into a 5-field cron expression. */
 export function cronFromSelections(selections: CronSelections): string {
   return CRON_FIELD_SPECS.map((spec, index) => {
-    const values = [...new Set(selections[index] || [])].filter(
-      (value) => value >= spec.min && value <= spec.max,
-    );
+    const values = [...new Set(selections[index] || [])].filter((value) => value >= spec.min && value <= spec.max);
     return values.length ? values.sort((a, b) => a - b).join(",") : "*";
   }).join(" ");
 }
