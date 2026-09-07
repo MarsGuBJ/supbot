@@ -6,6 +6,7 @@ import {
   CloseOutlined,
   DeleteOutlined,
   DownOutlined,
+  EditOutlined,
   PlusOutlined,
   RightOutlined,
   ThunderboltOutlined,
@@ -21,12 +22,14 @@ export function ScheduleMenuView({
   snapshot,
   refresh,
   onCreateSchedule,
+  onEditSchedule,
   onClose,
   t,
 }: {
   snapshot: RuntimeSnapshot;
   refresh: () => void;
   onCreateSchedule: () => void;
+  onEditSchedule: (job: ScheduledJob) => void;
   onClose: () => void;
   t: Translator;
 }) {
@@ -148,6 +151,12 @@ export function ScheduleMenuView({
                 </div>
               </div>
               <div className="schedule-job-actions">
+                <Button
+                  type="text"
+                  icon={<EditOutlined />}
+                  onClick={() => onEditSchedule(job)}
+                  aria-label={t("Edit scheduled task")}
+                />
                 <Switch
                   checked={job.enabled}
                   loading={busyId === `toggle:${job.id}`}

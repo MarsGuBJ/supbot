@@ -33,6 +33,7 @@
     "@supbot/runtime": "file:../../packages/runtime",
     "@supbot/shared": "file:../../packages/shared",
     "antd": "^5.26.0",
+    "dayjs": "^1.11.23",
     "electron-updater": "^6.8.9",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

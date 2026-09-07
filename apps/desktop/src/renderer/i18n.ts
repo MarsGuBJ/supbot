@@ -866,6 +866,7 @@ const zh: Record<string, string> = {
   HyBot: "HyBot",
   "SCHEDULED TASKS": "定时任务",
   "Create scheduled task": "创建定时任务",
+  "Edit scheduled task": "编辑定时任务",
   "Run records": "消息记录",
   "Untitled task": "未命名任务",
   "Last run: {time}": "上次运行：{time}",

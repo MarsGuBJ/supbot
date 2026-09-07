@@ -7130,6 +7130,36 @@ describe("SupbotRuntime", () => {
     expect(result.job.scheduledJobId).toBeUndefined();
     await waitForJob(runtime, result.job.id);
   });
+
+  test("updates scheduled jobs and recomputes nextRunAt from runAt", async () => {
+    const runtime = await createRuntime();
+    const created = await runtime.createScheduledJob({
+      title: "Ping",
+      prompt: "scheduled hello",
+      scheduleKind: "once",
+      runAt: new Date(Date.now() + 60_000).toISOString(),
+      enabled: true,
+    });
+
+    const runAt = new Date(Date.now() + 120_000).toISOString();
+    const updated = await runtime.updateScheduledJob(created.id, {
+      title: "Renamed Ping",
+      prompt: "updated prompt",
+      runAt,
+      enabled: false,
+    });
+    expect(updated.title).toBe("Renamed Ping");
+    expect(updated.prompt).toBe("updated prompt");
+    expect(updated.enabled).toBe(false);
+    expect(updated.nextRunAt).toBe(runAt);
+    expect(updated.createdAt).toBe(created.createdAt);
+
+    const persisted = runtime.snapshot().scheduledJobs.find((job) => job.id === created.id);
+    expect(persisted?.title).toBe("Renamed Ping");
+    await expect(runtime.updateScheduledJob("schedule-missing", { title: "x" })).rejects.toThrow(
+      "Scheduled job not found",
+    );
+  });
 });
 
 describe("CompactManager context limits", () => {

@@ -49,7 +49,7 @@ import {
   message,
 } from "antd";
 import type { TextAreaRef } from "antd/es/input/TextArea";
-import type { Dayjs } from "dayjs";
+import dayjs, { type Dayjs } from "dayjs";
 import zhCN from "antd/locale/zh_CN";
 import enUS from "antd/locale/en_US";
 import type {
@@ -61,6 +61,7 @@ import type {
   PermissionMode,
   Project,
   RuntimeSnapshot,
+  ScheduledJob,
   ScheduledJobInput,
   ServstationClientSnapshot,
   ServstationConversation,
@@ -229,6 +230,7 @@ function App() {
   const [subagentOpen, setSubagentOpen] = useState(false);
   const [editingSubagent, setEditingSubagent] = useState<SubagentConfig | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [editingSchedule, setEditingSchedule] = useState<ScheduledJob | null>(null);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [transcriptResult, setTranscriptResult] = useState<TranscriptLoadResult | null>(null);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
@@ -1022,7 +1024,14 @@ function App() {
               <ScheduleMenuView
                 snapshot={snapshot}
                 refresh={refresh}
-                onCreateSchedule={() => setScheduleOpen(true)}
+                onCreateSchedule={() => {
+                  setEditingSchedule(null);
+                  setScheduleOpen(true);
+                }}
+                onEditSchedule={(job) => {
+                  setEditingSchedule(job);
+                  setScheduleOpen(true);
+                }}
                 onClose={() => setView("chat")}
                 t={t}
               />
@@ -1061,11 +1070,20 @@ function App() {
         open={scheduleOpen}
         projects={snapshot.projects}
         defaultProjectId={activeProjectId || undefined}
-        onCancel={() => setScheduleOpen(false)}
+        editingJob={editingSchedule}
+        onCancel={() => {
+          setScheduleOpen(false);
+          setEditingSchedule(null);
+        }}
         t={t}
         onSave={async (input) => {
-          await window.supbot.createScheduledJob(input);
+          if (editingSchedule) {
+            await window.supbot.updateScheduledJob(editingSchedule.id, input);
+          } else {
+            await window.supbot.createScheduledJob(input);
+          }
           setScheduleOpen(false);
+          setEditingSchedule(null);
           await refresh();
         }}
       />
@@ -2758,6 +2776,7 @@ function ScheduleModal({
   open,
   projects,
   defaultProjectId,
+  editingJob,
   onCancel,
   onSave,
   t,
@@ -2765,6 +2784,7 @@ function ScheduleModal({
   open: boolean;
   projects: Project[];
   defaultProjectId?: string;
+  editingJob?: ScheduledJob | null;
   onCancel: () => void;
   onSave: (input: ScheduledJobInput) => Promise<void>;
   t: (key: string, vars?: Record<string, string | number>) => string;
@@ -2772,17 +2792,31 @@ function ScheduleModal({
   // runAt is a Dayjs inside the form (DatePicker), converted to ISO on save.
   const [form] = Form.useForm<Omit<ScheduledJobInput, "runAt"> & { runAt?: Dayjs }>();
   useEffect(() => {
-    if (open) {
+    if (!open) {
+      return;
+    }
+    if (editingJob) {
+      form.setFieldsValue({
+        title: editingJob.title,
+        prompt: editingJob.prompt,
+        projectId: editingJob.projectId,
+        scheduleKind: editingJob.scheduleKind,
+        cronExpr: editingJob.cronExpr,
+        runAt: editingJob.runAt ? dayjs(editingJob.runAt) : undefined,
+        enabled: editingJob.enabled,
+      });
+    } else {
+      form.resetFields();
       form.setFieldValue("projectId", defaultProjectId);
     }
-  }, [defaultProjectId, form, open]);
+  }, [defaultProjectId, editingJob, form, open]);
   return (
     <Modal
       open={open}
-      title={t("New scheduled prompt")}
+      title={editingJob ? t("Edit scheduled task") : t("New scheduled prompt")}
       onCancel={onCancel}
       onOk={() => form.submit()}
-      okText={t("Create")}
+      okText={editingJob ? t("Save") : t("Create")}
     >
       <Form
         form={form}
