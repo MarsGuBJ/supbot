@@ -1,17 +1,20 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   CheckCircleOutlined,
   ClockCircleOutlined,
   CloseCircleOutlined,
   CloseOutlined,
   DeleteOutlined,
+  DownOutlined,
   PlusOutlined,
+  RightOutlined,
   ThunderboltOutlined,
 } from "@ant-design/icons";
 import { Button, Empty, Popconfirm, Space, Switch, Tag, message } from "antd";
 import type { AgentJob, RuntimeSnapshot, ScheduledJob } from "@supbot/shared";
-import { formatDateTime, formatSchedule } from "@supbot/shared";
+import { formatDateTime, formatSchedule, statusColor, statusLabel } from "@supbot/shared";
 import { AutopilotPanel } from "../components/AutopilotPanel";
+import { groupScheduleRuns, scheduleRunTime } from "../lib/scheduleRecords";
 import type { Translator } from "../lib/types";
 
 export function ScheduleMenuView({
@@ -29,12 +32,33 @@ export function ScheduleMenuView({
 }) {
   const [tab, setTab] = useState<"tasks" | "logs">("tasks");
   const [busyId, setBusyId] = useState("");
+  const [selectedRunId, setSelectedRunId] = useState("");
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [messageApi, contextHolder] = message.useMessage();
   const jobs = snapshot.scheduledJobs || [];
-  const recentRuns = useMemo(
-    () => [...(snapshot.jobs || [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 20),
-    [snapshot.jobs],
+  const runGroups = useMemo(
+    () => groupScheduleRuns(snapshot.jobs || [], jobs, t("Deleted task")),
+    [snapshot.jobs, jobs, t],
   );
+
+  useEffect(() => {
+    const runs = runGroups.flatMap((group) => group.runs);
+    if (!runs.length) {
+      if (selectedRunId) {
+        setSelectedRunId("");
+      }
+      return;
+    }
+    if (!runs.some((job) => job.id === selectedRunId)) {
+      setSelectedRunId(runs[0].id);
+    }
+  }, [runGroups, selectedRunId]);
+
+  const toggleGroup = (scheduledJobId: string) => {
+    setCollapsedGroups((current) => ({ ...current, [scheduledJobId]: !current[scheduledJobId] }));
+  };
+
+  const selectedRun = runGroups.flatMap((group) => group.runs).find((job) => job.id === selectedRunId);
 
   const toggleJob = async (job: ScheduledJob) => {
     if (busyId) {
@@ -151,40 +175,119 @@ export function ScheduleMenuView({
           ) : null}
         </div>
       ) : (
-        <div className="schedule-log-list">
-          {recentRuns.map((job) => (
-            <ScheduleRunRecord key={job.id} job={job} t={t} />
-          ))}
-          {!recentRuns.length ? (
+        <div className="schedule-records">
+          {runGroups.length ? (
+            <>
+              <div className="schedule-record-tree">
+                {runGroups.map((group) => {
+                  const collapsed = !!collapsedGroups[group.scheduledJobId];
+                  return (
+                    <div className="schedule-record-group" key={group.scheduledJobId}>
+                      <button
+                        type="button"
+                        className="schedule-record-group-header"
+                        onClick={() => toggleGroup(group.scheduledJobId)}
+                        aria-expanded={!collapsed}
+                      >
+                        {collapsed ? <RightOutlined /> : <DownOutlined />}
+                        <span className="schedule-record-group-title">{group.title}</span>
+                        <span className="schedule-record-group-count">{group.runs.length}</span>
+                      </button>
+                      {!collapsed
+                        ? group.runs.map((run) => (
+                            <button
+                              type="button"
+                              key={run.id}
+                              className={`schedule-record-leaf ${run.id === selectedRunId ? "is-active" : ""}`}
+                              onClick={() => setSelectedRunId(run.id)}
+                            >
+                              <ScheduleRunStatusIcon status={run.status} />
+                              <span className="schedule-record-leaf-time">{formatDateTime(scheduleRunTime(run))}</span>
+                            </button>
+                          ))
+                        : null}
+                    </div>
+                  );
+                })}
+              </div>
+              {selectedRun ? (
+                <ScheduleRunDetail
+                  key={selectedRun.id}
+                  job={selectedRun}
+                  preview={
+                    snapshot.conversations.find((conversation) => conversation.id === selectedRun.conversationId)
+                      ?.lastMessagePreview
+                  }
+                  t={t}
+                />
+              ) : null}
+            </>
+          ) : (
             <Empty className="schedule-empty" image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("No run records")} />
-          ) : null}
+          )}
         </div>
       )}
     </section>
   );
 }
 
-function ScheduleRunRecord({ job, t }: { job: AgentJob; t: Translator }) {
-  const success = job.status === "completed";
+function ScheduleRunStatusIcon({ status }: { status: AgentJob["status"] }) {
+  const success = status === "completed";
   return (
-    <div className="schedule-log-card">
-      <div className="schedule-log-head">
-        <span className={`schedule-log-status ${success ? "is-success" : job.status === "failed" ? "is-error" : ""}`}>
-          {success ? (
-            <CheckCircleOutlined />
-          ) : job.status === "failed" ? (
-            <CloseCircleOutlined />
-          ) : (
-            <ClockCircleOutlined />
-          )}
+    <span className={`schedule-log-status ${success ? "is-success" : status === "failed" ? "is-error" : ""}`}>
+      {success ? <CheckCircleOutlined /> : status === "failed" ? <CloseCircleOutlined /> : <ClockCircleOutlined />}
+    </span>
+  );
+}
+
+function ScheduleRunDetail({ job, preview, t }: { job: AgentJob; preview?: string; t: Translator }) {
+  const [reply, setReply] = useState<{ loading: boolean; text: string }>({ loading: true, text: "" });
+
+  useEffect(() => {
+    let cancelled = false;
+    setReply({ loading: true, text: "" });
+    window.supbot
+      .loadConversationHistory(job.conversationId, undefined, 50)
+      .then((page) => {
+        if (cancelled) {
+          return;
+        }
+        const message = page.messages.find((item) => item.jobId === job.id && item.role === "assistant");
+        setReply({ loading: false, text: message?.text || preview || "" });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setReply({ loading: false, text: preview || "" });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [job.id, job.conversationId, job.status, preview]);
+
+  const finished = job.status === "completed" || job.status === "failed" || job.status === "canceled";
+  return (
+    <div className="schedule-record-detail">
+      <div className="schedule-record-detail-head">
+        <Tag color={statusColor(job.status)}>{statusLabel(job.status, t)}</Tag>
+        <span className="schedule-record-detail-time">
+          {finished
+            ? `${t("Finished at")}: ${formatDateTime(job.finishedAt)}`
+            : `${t("Started at")}: ${formatDateTime(job.startedAt || job.createdAt)}`}
         </span>
-        <strong>{t(job.status)}</strong>
-        <span className="schedule-log-time">{formatDateTime(job.createdAt)}</span>
       </div>
       <div className="schedule-log-prompt" title={job.prompt}>
         {job.prompt.slice(0, 160)}
       </div>
       {job.error ? <div className="schedule-log-error">{job.error.slice(0, 300)}</div> : null}
+      <div className="schedule-record-detail-label">{t("Final reply")}</div>
+      {reply.loading ? (
+        <div className="schedule-record-detail-muted">{t("Loading...")}</div>
+      ) : reply.text ? (
+        <div className="schedule-record-reply">{reply.text}</div>
+      ) : (
+        <div className="schedule-record-detail-muted">{t("No final reply")}</div>
+      )}
     </div>
   );
 }

@@ -1689,6 +1689,7 @@ export interface AgentJob {
   id: string;
   conversationId: string;
   projectId?: string;
+  scheduledJobId?: string;
   prompt: string;
   status: JobStatus;
   workspaceMode?: WorkspaceMode;
@@ -1970,6 +1971,7 @@ export type SupbotEvent =
 export interface SendPromptInput {
   conversationId?: string;
   projectId?: string;
+  scheduledJobId?: string;
   prompt: string;
   attachments?: Attachment[];
   workspaceMode?: WorkspaceMode;

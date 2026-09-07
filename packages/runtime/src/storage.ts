@@ -621,6 +621,7 @@ function normalizeAgentJob(job: AgentJob): AgentJob {
   return {
     ...job,
     projectId: typeof job.projectId === "string" && job.projectId ? job.projectId : undefined,
+    scheduledJobId: typeof job.scheduledJobId === "string" && job.scheduledJobId ? job.scheduledJobId : undefined,
   };
 }
 

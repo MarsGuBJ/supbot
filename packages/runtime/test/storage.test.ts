@@ -94,6 +94,31 @@ describe("JsonFileStorage", () => {
     const loaded = await storage.load();
     expect(loaded.conversations[0].messages).toEqual([]);
   });
+
+  test("normalizes scheduledJobId on jobs across save and load", async () => {
+    const dir = await createTempDir();
+    const storage = new JsonFileStorage(dir);
+    const state = createInitialState();
+    const baseJob = {
+      conversationId: "conv-1",
+      prompt: "scheduled hello",
+      status: "completed" as const,
+      createdAt: "2026-09-06T00:00:00.000Z",
+      updatedAt: "2026-09-06T00:01:00.000Z",
+      progress: [],
+    };
+    state.jobs = [
+      { ...baseJob, id: "job-linked", scheduledJobId: "sched-1" },
+      { ...baseJob, id: "job-blank", scheduledJobId: "" },
+      { ...baseJob, id: "job-manual" },
+    ];
+
+    await storage.save(state);
+    const loaded = await storage.load();
+    expect(loaded.jobs.find((job) => job.id === "job-linked")?.scheduledJobId).toBe("sched-1");
+    expect(loaded.jobs.find((job) => job.id === "job-blank")?.scheduledJobId).toBeUndefined();
+    expect(loaded.jobs.find((job) => job.id === "job-manual")?.scheduledJobId).toBeUndefined();
+  });
 });
 
 describe("TranscriptStore", () => {

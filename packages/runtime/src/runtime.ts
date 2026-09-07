@@ -663,6 +663,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       id: randomId("job"),
       conversationId: conversation.id,
       projectId: conversation.projectId,
+      scheduledJobId: input.scheduledJobId,
       prompt: input.prompt,
       status: "queued",
       workspaceMode: input.workspaceMode || "main",
@@ -1584,7 +1585,11 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       this.state.scheduledJobs = this.state.scheduledJobs.map((item) =>
         item.id === job.id ? { ...item, ...nextSchedule, lastRunAt: ranAt, updatedAt: ranAt } : item,
       );
-      await this.sendPrompt({ projectId: job.projectId, prompt: `[Scheduled] ${job.title}\n\n${job.prompt}` });
+      await this.sendPrompt({
+        projectId: job.projectId,
+        scheduledJobId: job.id,
+        prompt: `[Scheduled] ${job.title}\n\n${job.prompt}`,
+      });
     }
     if (due.length) {
       await this.persistAndBroadcast();

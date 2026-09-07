@@ -876,6 +876,9 @@ const zh: Record<string, string> = {
   "Scheduled task deleted.": "定时任务已删除。",
   "No scheduled tasks yet": "还没有定时任务",
   "No run records": "还没有运行记录",
+  "Deleted task": "已删除任务",
+  "Final reply": "最终回复",
+  "No final reply": "暂无最终回复",
   AUTOPILOT: "自动驾驶",
   "Autopilot runs": "自动驾驶运行",
   // Enterprise workspace login page

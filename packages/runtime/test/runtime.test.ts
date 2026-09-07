@@ -7098,6 +7098,7 @@ describe("SupbotRuntime", () => {
     const snapshot = runtime.snapshot();
     expect(snapshot.scheduledJobs[0].enabled).toBe(false);
     expect(snapshot.conversations[0].messages[0].text).toContain("[Scheduled] Ping");
+    expect(snapshot.jobs[0].scheduledJobId).toBe(snapshot.scheduledJobs[0].id);
   });
 
   test("runs scheduled prompts inside their project", async () => {
@@ -7119,7 +7120,15 @@ describe("SupbotRuntime", () => {
     expect(snapshot.scheduledJobs[0].projectId).toBe(project.id);
     expect(snapshot.conversations[0].projectId).toBe(project.id);
     expect(snapshot.jobs[0].projectId).toBe(project.id);
+    expect(snapshot.jobs[0].scheduledJobId).toBe(snapshot.scheduledJobs[0].id);
     await waitForJob(runtime, snapshot.jobs[0].id);
+  });
+
+  test("leaves scheduledJobId unset for manual prompts", async () => {
+    const runtime = await createRuntime();
+    const result = await runtime.sendPrompt({ prompt: "manual hello" });
+    expect(result.job.scheduledJobId).toBeUndefined();
+    await waitForJob(runtime, result.job.id);
   });
 });
 
