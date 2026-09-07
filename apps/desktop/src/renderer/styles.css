@@ -6612,13 +6612,12 @@ body.right-resizing iframe {
 
 .schedule-record-reply {
   margin-top: 6px;
-  font-size: 13px;
-  color: var(--text-primary);
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 420px;
+  max-height: 480px;
   overflow-y: auto;
+}
+
+.schedule-record-reply .message-row {
+  padding: 0;
 }
 
 /* ---- Cron builder (schedule modal) ---- */

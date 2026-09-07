@@ -878,7 +878,6 @@ const zh: Record<string, string> = {
   "No scheduled tasks yet": "还没有定时任务",
   "No run records": "还没有运行记录",
   "Deleted task": "已删除任务",
-  "Unlinked runs": "未关联任务",
   "Final reply": "最终回复",
   "No final reply": "暂无最终回复",
   AUTOPILOT: "自动驾驶",

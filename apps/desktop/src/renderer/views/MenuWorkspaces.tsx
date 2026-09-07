@@ -12,9 +12,10 @@ import {
   ThunderboltOutlined,
 } from "@ant-design/icons";
 import { Button, Empty, Popconfirm, Space, Switch, Tag, message } from "antd";
-import type { AgentJob, RuntimeSnapshot, ScheduledJob } from "@supbot/shared";
+import type { AgentJob, ChatMessage, RuntimeSnapshot, ScheduledJob } from "@supbot/shared";
 import { formatDateTime, formatSchedule, statusColor, statusLabel } from "@supbot/shared";
 import { AutopilotPanel } from "../components/AutopilotPanel";
+import { MessageBubble } from "../components/MessageBubble";
 import { groupScheduleRuns, scheduleRunTime } from "../lib/scheduleRecords";
 import type { Translator } from "../lib/types";
 
@@ -40,7 +41,7 @@ export function ScheduleMenuView({
   const [messageApi, contextHolder] = message.useMessage();
   const jobs = snapshot.scheduledJobs || [];
   const runGroups = useMemo(
-    () => groupScheduleRuns(snapshot.jobs || [], jobs, t("Deleted task"), t("Unlinked runs")),
+    () => groupScheduleRuns(snapshot.jobs || [], jobs, t("Deleted task")),
     [snapshot.jobs, jobs, t],
   );
 
@@ -250,29 +251,38 @@ function ScheduleRunStatusIcon({ status }: { status: AgentJob["status"] }) {
 }
 
 function ScheduleRunDetail({ job, preview, t }: { job: AgentJob; preview?: string; t: Translator }) {
-  const [reply, setReply] = useState<{ loading: boolean; text: string }>({ loading: true, text: "" });
+  const [reply, setReply] = useState<{ loading: boolean; message?: ChatMessage }>({ loading: true });
 
   useEffect(() => {
+    const previewMessage: ChatMessage | undefined = preview
+      ? {
+          id: `preview-${job.id}`,
+          conversationId: job.conversationId,
+          role: "assistant",
+          text: preview,
+          createdAt: job.finishedAt || job.createdAt,
+        }
+      : undefined;
     let cancelled = false;
-    setReply({ loading: true, text: "" });
+    setReply({ loading: true });
     window.supbot
       .loadConversationHistory(job.conversationId, undefined, 50)
       .then((page) => {
         if (cancelled) {
           return;
         }
-        const message = page.messages.find((item) => item.jobId === job.id && item.role === "assistant");
-        setReply({ loading: false, text: message?.text || preview || "" });
+        const message = [...page.messages].reverse().find((item) => item.jobId === job.id && item.role === "assistant");
+        setReply({ loading: false, message: message || previewMessage });
       })
       .catch(() => {
         if (!cancelled) {
-          setReply({ loading: false, text: preview || "" });
+          setReply({ loading: false, message: previewMessage });
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [job.id, job.conversationId, job.status, preview]);
+  }, [job.id, job.conversationId, job.status, job.createdAt, job.finishedAt, preview]);
 
   const finished = job.status === "completed" || job.status === "failed" || job.status === "canceled";
   return (
@@ -292,8 +302,10 @@ function ScheduleRunDetail({ job, preview, t }: { job: AgentJob; preview?: strin
       <div className="schedule-record-detail-label">{t("Final reply")}</div>
       {reply.loading ? (
         <div className="schedule-record-detail-muted">{t("Loading...")}</div>
-      ) : reply.text ? (
-        <div className="schedule-record-reply">{reply.text}</div>
+      ) : reply.message ? (
+        <div className="schedule-record-reply">
+          <MessageBubble message={reply.message} t={t} />
+        </div>
       ) : (
         <div className="schedule-record-detail-muted">{t("No final reply")}</div>
       )}

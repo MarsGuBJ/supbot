@@ -57,16 +57,50 @@ describe("groupScheduleRuns", () => {
     expect(groups).toEqual([]);
   });
 
-  test("groups unlinked jobs under the unlinked title when provided", () => {
+  test("attributes legacy runs to their task via the [Scheduled] prompt prefix", () => {
     const groups = groupScheduleRuns(
-      [run("legacy", { finishedAt: "2026-09-06T09:00:00.000Z" }), run("manual2", { scheduledJobId: "" })],
-      [],
+      [
+        run("legacy", {
+          prompt: "[Scheduled] Task A\n\nold hello",
+          finishedAt: "2026-09-05T09:00:00.000Z",
+        }),
+        run("linked", {
+          scheduledJobId: "sched-a",
+          prompt: "[Scheduled] Task A\n\nnew hello",
+          finishedAt: "2026-09-06T09:00:00.000Z",
+        }),
+      ],
+      [task("sched-a", "Task A")],
       "Deleted task",
-      "Unlinked runs",
     );
     expect(groups).toHaveLength(1);
-    expect(groups[0].title).toBe("Unlinked runs");
-    expect(groups[0].runs.map((job) => job.id)).toEqual(["legacy", "manual2"]);
+    expect(groups[0].title).toBe("Task A");
+    expect(groups[0].runs.map((job) => job.id)).toEqual(["linked", "legacy"]);
+  });
+
+  test("keeps the parsed task name for scheduled runs whose task was deleted", () => {
+    const groups = groupScheduleRuns(
+      [run("a1", { prompt: "[Scheduled] Old Task\n\nhello", finishedAt: "2026-09-06T09:00:00.000Z" })],
+      [],
+      "Deleted task",
+    );
+    expect(groups[0].title).toBe("Old Task");
+  });
+
+  test("excludes non-scheduled executions from task groups", () => {
+    const groups = groupScheduleRuns(
+      [
+        run("scheduled", {
+          prompt: "[Scheduled] Task A\n\nhello",
+          finishedAt: "2026-09-06T09:00:00.000Z",
+        }),
+        run("manual", { prompt: "just a chat", finishedAt: "2026-09-06T10:00:00.000Z" }),
+      ],
+      [task("sched-a", "Task A")],
+      "Deleted task",
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0].runs.map((job) => job.id)).toEqual(["scheduled"]);
   });
 
   test("uses the fallback title when the scheduled task was deleted", () => {
