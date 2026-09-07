@@ -40,7 +40,7 @@ export function ScheduleMenuView({
   const [messageApi, contextHolder] = message.useMessage();
   const jobs = snapshot.scheduledJobs || [];
   const runGroups = useMemo(
-    () => groupScheduleRuns(snapshot.jobs || [], jobs, t("Deleted task")),
+    () => groupScheduleRuns(snapshot.jobs || [], jobs, t("Deleted task"), t("Unlinked runs")),
     [snapshot.jobs, jobs, t],
   );
 

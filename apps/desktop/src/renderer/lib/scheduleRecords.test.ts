@@ -57,6 +57,18 @@ describe("groupScheduleRuns", () => {
     expect(groups).toEqual([]);
   });
 
+  test("groups unlinked jobs under the unlinked title when provided", () => {
+    const groups = groupScheduleRuns(
+      [run("legacy", { finishedAt: "2026-09-06T09:00:00.000Z" }), run("manual2", { scheduledJobId: "" })],
+      [],
+      "Deleted task",
+      "Unlinked runs",
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0].title).toBe("Unlinked runs");
+    expect(groups[0].runs.map((job) => job.id)).toEqual(["legacy", "manual2"]);
+  });
+
   test("uses the fallback title when the scheduled task was deleted", () => {
     const groups = groupScheduleRuns(
       [run("a1", { scheduledJobId: "sched-gone", finishedAt: "2026-09-06T09:00:00.000Z" })],
