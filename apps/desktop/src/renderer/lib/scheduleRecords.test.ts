@@ -103,6 +103,29 @@ describe("groupScheduleRuns", () => {
     expect(groups[0].runs.map((job) => job.id)).toEqual(["scheduled"]);
   });
 
+  test("attributes follow-up jobs in a scheduler-created conversation to the task", () => {
+    const groups = groupScheduleRuns(
+      [
+        run("scheduled", {
+          conversationId: "conv-shared",
+          prompt: "[Scheduled] Task A\n\nhello",
+          finishedAt: "2026-09-06T09:00:00.000Z",
+        }),
+        run("followup", {
+          conversationId: "conv-shared",
+          prompt: "查出今日黄历",
+          finishedAt: "2026-09-06T10:00:00.000Z",
+        }),
+        run("unrelated", { prompt: "other chat", finishedAt: "2026-09-06T11:00:00.000Z" }),
+      ],
+      [task("sched-a", "Task A")],
+      "Deleted task",
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0].title).toBe("Task A");
+    expect(groups[0].runs.map((job) => job.id)).toEqual(["followup", "scheduled"]);
+  });
+
   test("uses the fallback title when the scheduled task was deleted", () => {
     const groups = groupScheduleRuns(
       [run("a1", { scheduledJobId: "sched-gone", finishedAt: "2026-09-06T09:00:00.000Z" })],

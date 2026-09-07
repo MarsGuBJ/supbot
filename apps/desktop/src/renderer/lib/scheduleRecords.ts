@@ -24,8 +24,9 @@ export function scheduledTitleFromPrompt(prompt: string): string | undefined {
  * task title -> runs sorted by completion time (newest first). Jobs carry
  * scheduledJobId since the link was introduced; older runs are attributed by
  * matching the `[Scheduled] {title}` prompt prefix against known tasks, then
- * by the parsed title alone (task may be deleted). Manual prompts that never
- * went through the scheduler are excluded.
+ * by the parsed title alone (task may be deleted). Follow-up jobs that share
+ * a conversation with an attributed run (the conversation was created by the
+ * scheduler) belong to the same task. Unrelated manual prompts are excluded.
  */
 export function groupScheduleRuns(
   jobs: AgentJob[],
@@ -35,6 +36,7 @@ export function groupScheduleRuns(
   const byId = new Map(scheduledJobs.map((job) => [job.id, job]));
   const byTitle = new Map(scheduledJobs.map((job) => [job.title, job]));
   const grouped = new Map<string, { title: string; runs: AgentJob[] }>();
+  const conversationGroup = new Map<string, string>();
   for (const job of jobs) {
     let key: string | undefined;
     let title: string | undefined;
@@ -54,6 +56,16 @@ export function groupScheduleRuns(
     const group = grouped.get(key) ?? { title: title ?? fallbackTitle, runs: [] };
     group.runs.push(job);
     grouped.set(key, group);
+    conversationGroup.set(job.conversationId, key);
+  }
+  for (const job of jobs) {
+    if (job.scheduledJobId || scheduledTitleFromPrompt(job.prompt)) {
+      continue;
+    }
+    const key = conversationGroup.get(job.conversationId);
+    if (key) {
+      grouped.get(key)?.runs.push(job);
+    }
   }
   return [...grouped.entries()]
     .map(([scheduledJobId, group]) => {

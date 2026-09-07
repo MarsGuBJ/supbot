@@ -225,8 +225,10 @@ export function ScheduleMenuView({
                   key={selectedRun.id}
                   job={selectedRun}
                   preview={
-                    snapshot.conversations.find((conversation) => conversation.id === selectedRun.conversationId)
-                      ?.lastMessagePreview
+                    selectedRun.status === "completed"
+                      ? snapshot.conversations.find((conversation) => conversation.id === selectedRun.conversationId)
+                          ?.lastMessagePreview
+                      : undefined
                   }
                   t={t}
                 />
