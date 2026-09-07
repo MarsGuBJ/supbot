@@ -205,7 +205,7 @@ function upsertRecord(records: ToolCallRecord[], record: ToolCallRecord): ToolCa
   return [...records.filter((item) => item.id !== record.id), record];
 }
 
-function artifactCompletionFromTrace(trace: AgentLoopTrace): string | undefined {
+export function artifactCompletionFromTrace(trace: AgentLoopTrace): string | undefined {
   const completedOutputs = [...trace.toolCalls]
     .reverse()
     .filter((record) => record.status === "completed" && record.output?.trim())
@@ -219,11 +219,30 @@ function artifactCompletionFromTrace(trace: AgentLoopTrace): string | undefined 
   return undefined;
 }
 
+// Shell tool outputs echo the (possibly multi-line) command and captured
+// stdout above the trailer — scraped page content or a cleanup command
+// mentioning scratch .html/.md files must not be mistaken for a produced
+// artifact. The only trustworthy artifact signal in a shell output is the
+// "Generated files:" trailer, which lists files actually created in the
+// working directory. Non-shell outputs (e.g. WriteFile's "Wrote ..." line)
+// are scanned whole, minus error lines.
+const errorLinePattern = /error|exception|traceback|failed/i;
+
 function artifactSummaryLine(output: string): string | undefined {
-  const lines = output
-    .split(/\r?\n/)
+  const rawLines = output.split(/\r?\n/);
+  const generatedIndex = rawLines.findIndex((line) => /^generated files:/i.test(line.trim()));
+  let candidates: string[];
+  if (generatedIndex !== -1) {
+    candidates = rawLines.slice(generatedIndex + 1);
+  } else if (rawLines.some((line) => /^exit code:/i.test(line.trim()))) {
+    return undefined;
+  } else {
+    candidates = rawLines;
+  }
+  const lines = candidates
     .map((line) => line.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((line) => !errorLinePattern.test(line));
   return (
     lines.find(
       (line) =>
