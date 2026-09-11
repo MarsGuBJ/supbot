@@ -455,6 +455,13 @@ export interface GeneratedFile {
   path: string;
   size: number;
   createdAt: string;
+  /**
+   * "target" = final deliverable written under the output root's `target/`
+   * folder (listed for download in chat); "process" = intermediate file.
+   * Undefined for legacy records and files captured outside the output root;
+   * treat undefined as visible for backward compatibility.
+   */
+  role?: "target" | "process";
 }
 
 export type WorkspaceMode = "main" | "isolated" | "readOnly";
@@ -2107,11 +2114,10 @@ export function resolveSlashCommand(input: string): SlashCommand | undefined {
 }
 
 export function conversationTitle(conversation: Conversation, fallback = "New conversation"): string {
-  return (
-    conversation.title ||
-    conversation.messages.find((message) => message.role === "user")?.text.slice(0, 60) ||
-    fallback
-  );
+  // Conversations created before a first message carry the untranslated default
+  // title "New conversation"; treat it as untitled so the localized fallback shows.
+  const title = conversation.title && conversation.title !== "New conversation" ? conversation.title : "";
+  return title || conversation.messages.find((message) => message.role === "user")?.text.slice(0, 60) || fallback;
 }
 
 export function latestAssistantMessage(messages: ChatMessage[]): ChatMessage | undefined {

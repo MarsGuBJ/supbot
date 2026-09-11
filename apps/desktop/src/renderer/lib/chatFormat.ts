@@ -29,7 +29,16 @@ export function generatedFileExtension(file: { name: string; path: string }): st
   return dotIndex >= 0 ? filename.slice(dotIndex).toLowerCase() : "";
 }
 
-export function shouldShowGeneratedFileInChat(file: { name: string; path: string }): boolean {
+export function shouldShowGeneratedFileInChat(file: {
+  name: string;
+  path: string;
+  role?: "target" | "process";
+}): boolean {
+  // Intermediate process files are never listed; files without a role (legacy
+  // records, files captured outside the output root) stay visible.
+  if (file.role === "process") {
+    return false;
+  }
   return !hiddenChatGeneratedFileExtensions.has(generatedFileExtension(file));
 }
 

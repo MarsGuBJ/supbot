@@ -282,8 +282,10 @@ declare global {
       updateScheduledJob(id: string, input: Partial<ScheduledJobInput>): Promise<ScheduledJob>;
       deleteScheduledJob(id: string): Promise<void>;
       pickAttachments(): Promise<Attachment[]>;
+      importAttachmentPaths(paths: string[]): Promise<Attachment[]>;
       importDroppedAttachments(files: File[]): Promise<Attachment[]>;
       importClipboardAttachments(files: File[]): Promise<Attachment[]>;
+      searchProjectFiles(projectId: string, query: string): Promise<import("./lib/mentions").ProjectFileMatch[]>;
       openFile(filePath: string): Promise<void>;
       showFileInFolder(filePath: string): Promise<void>;
       previewFile(filePath: string): Promise<FilePreviewResult>;

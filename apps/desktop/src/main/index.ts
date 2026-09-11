@@ -78,6 +78,11 @@ import { buildFilePreviewResult, MAX_FILE_PREVIEW_BYTES } from "./filePreview";
 let mainWindow: BrowserWindow | null = null;
 let runtime: SupbotRuntime | null = null;
 let updateManager: HBClientUpdateManager | null = null;
+
+const FILE_SEARCH_MAX_DEPTH = 6;
+const FILE_SEARCH_SCAN_BUDGET = 20_000;
+const FILE_SEARCH_MAX_RESULTS = 20;
+const FILE_SEARCH_SKIP_DIRS = new Set([".git", ".hg", ".svn", "node_modules", "dist", "out", ".next"]);
 let trayManager: TrayManager | null = null;
 let isQuitting = false;
 const servstationMessageEventSubscriptions = new Map<string, AbortController>();
@@ -124,16 +129,16 @@ async function seedBundledDefaultData(dataDir: string): Promise<void> {
   if (!bundledDataDir) {
     return;
   }
-  const markerPath = join(dataDir, "default-data-seed.json");
-  if (await pathExists(markerPath)) {
-    return;
-  }
+  // Top up missing bundled data on every launch so upgrades and accidental
+  // cleanup self-heal; copyMissingTree never overwrites existing files. The
+  // marker is kept only as a record of the most recent seed, not as a gate.
   for (const folder of ["skills", "tool-market"]) {
     const source = join(bundledDataDir, folder);
     if (await pathExists(source)) {
       await copyMissingTree(source, join(dataDir, folder));
     }
   }
+  const markerPath = join(dataDir, "default-data-seed.json");
   const manifestRaw = await readFile(join(bundledDataDir, "manifest.json"), "utf8").catch(() => undefined);
   const marker = {
     seededAt: new Date().toISOString(),
@@ -757,7 +762,7 @@ async function createWindow(): Promise<void> {
     minWidth: 1060,
     minHeight: 720,
     backgroundColor: "#0a0f16",
-    title: appDisplayName,
+    title: `${appDisplayName} v${app.getVersion()}`,
     icon: appIconPath,
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
@@ -769,18 +774,31 @@ async function createWindow(): Promise<void> {
     },
   });
   hardenWebContents(mainWindow.webContents);
+  // Keep the versioned window title; the renderer page <title> must not override it.
+  mainWindow.on("page-title-updated", (event) => {
+    event.preventDefault();
+  });
   if (isDev) {
+    // On Windows, console.* to a piped stdout writes synchronously and throws
+    // EPIPE once the dev terminal goes away — never let logging crash the app.
+    const safeLog = (method: "log" | "error", ...args: unknown[]) => {
+      try {
+        console[method](...args);
+      } catch {
+        // ignore broken-pipe logging failures
+      }
+    };
     mainWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
-      console.log(`[renderer:${level}] ${message} (${sourceId}:${line})`);
+      safeLog("log", `[renderer:${level}] ${message} (${sourceId}:${line})`);
     });
     mainWindow.webContents.on("render-process-gone", (_event, details) => {
-      console.error("[renderer] process gone:", JSON.stringify(details));
+      safeLog("error", "[renderer] process gone:", JSON.stringify(details));
     });
     mainWindow.webContents.on("preload-error", (_event, preloadPath, error) => {
-      console.error("[preload] error:", preloadPath, error.message);
+      safeLog("error", "[preload] error:", preloadPath, error.message);
     });
     mainWindow.webContents.on("did-fail-load", (_event, code, description, url) => {
-      console.error("[renderer] did-fail-load:", code, description, url);
+      safeLog("error", "[renderer] did-fail-load:", code, description, url);
     });
   }
   updateManager?.stop();
@@ -1406,6 +1424,62 @@ function registerIpc(): void {
   ipcMain.handle("attachment:importPaths", (_event, paths: unknown) => {
     const filePaths = optionalStringArray(paths, "attachment paths") || [];
     return Promise.all(filePaths.map((filePath) => getRuntime().importAttachment(filePath)));
+  });
+  // Case-insensitive substring search over the files of a known project. The
+  // renderer owns the "active project" concept, so it passes the project id;
+  // the root path is resolved here from runtime state (never from the
+  // renderer) to keep the scan confined to a tracked project folder.
+  ipcMain.handle("file:search", async (_event, input: unknown) => {
+    const value = object(input, "file search input");
+    const query = (optionalString(value.query, "file search query") || "").trim().toLowerCase();
+    const projectId = optionalString(value.projectId, "project id");
+    if (!projectId) {
+      return [];
+    }
+    const project = getRuntime()
+      .listProjects()
+      .find((item) => item.id === projectId);
+    if (!project) {
+      return [];
+    }
+    const rootPath = resolve(project.rootPath);
+    const matches: Array<{ name: string; path: string; relativePath: string }> = [];
+    let scanned = 0;
+    const walk = async (dir: string, depth: number): Promise<void> => {
+      if (
+        depth > FILE_SEARCH_MAX_DEPTH ||
+        scanned >= FILE_SEARCH_SCAN_BUDGET ||
+        matches.length >= FILE_SEARCH_MAX_RESULTS
+      ) {
+        return;
+      }
+      let entries;
+      try {
+        entries = await readdir(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (scanned >= FILE_SEARCH_SCAN_BUDGET || matches.length >= FILE_SEARCH_MAX_RESULTS) {
+          return;
+        }
+        if (FILE_SEARCH_SKIP_DIRS.has(entry.name)) {
+          continue;
+        }
+        scanned += 1;
+        const fullPath = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await walk(fullPath, depth + 1);
+        } else if (entry.isFile()) {
+          const relativePath = relative(rootPath, fullPath);
+          if (!query || entry.name.toLowerCase().includes(query) || relativePath.toLowerCase().includes(query)) {
+            matches.push({ name: entry.name, path: fullPath, relativePath });
+          }
+        }
+      }
+    };
+    await walk(rootPath, 0);
+    return matches;
   });
   // Clipboard-pasted images/files have no filesystem path, so the renderer
   // ships their bytes here; we persist them under userData and register an

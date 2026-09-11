@@ -53,7 +53,6 @@ import dayjs, { type Dayjs } from "dayjs";
 import zhCN from "antd/locale/zh_CN";
 import enUS from "antd/locale/en_US";
 import type {
-  AgentJob,
   Attachment,
   ChatMessage,
   HBClientUpdateState,
@@ -123,7 +122,7 @@ import {
   applyUserQuestion,
   clearPendingPermission,
 } from "./lib/snapshotApply";
-import type { DetailPanel, PromptContextMenu, SelectionContextMenu, Translator, WorkspaceView } from "./lib/types";
+import type { PromptContextMenu, SelectionContextMenu, Translator, WorkspaceView } from "./lib/types";
 import { connectServstationAgent, hasUsableServstationOidcSession } from "./servstationConnection";
 import { EnterpriseLoginOverlay } from "./components/EnterpriseLoginOverlay";
 import { ConfigWorkspace } from "./views/ConfigWorkspace";
@@ -216,7 +215,6 @@ function App() {
   const [language, setLanguageState] = useState<Language>(() => loadLanguage());
   const [snapshot, setSnapshot] = useState<RuntimeSnapshot | null>(null);
   const [view, setView] = useState<WorkspaceView>("chat");
-  const [detailPanel, setDetailPanel] = useState<DetailPanel>("tasks");
   const [activeConversationId, setActiveConversationId] = useState("");
   const [activeProjectId, setActiveProjectId] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -288,13 +286,11 @@ function App() {
       return;
     }
     setActiveFile(file);
-    setDetailPanel("file");
     setRightCollapsed(false);
   }, []);
 
   const closeConversationFile = useCallback(() => {
     setActiveFile(null);
-    setDetailPanel("tasks");
   }, []);
 
   const runFileAction = useCallback(
@@ -319,7 +315,6 @@ function App() {
 
   useEffect(() => {
     setActiveFile(null);
-    setDetailPanel("tasks");
   }, [activeConversationId]);
 
   const updateMessageStickiness = useCallback(() => {
@@ -551,25 +546,6 @@ function App() {
     () => snapshot?.conversations.find((item) => item.id === activeConversationId) || snapshot?.conversations[0],
     [snapshot?.conversations, activeConversationId],
   );
-  const locateJobMessage = useCallback(
-    (job: AgentJob) => {
-      const messages = activeConversation?.messages || [];
-      let target = messages.find((item) => item.jobId === job.id);
-      if (!target) {
-        const jobTime = Date.parse(job.createdAt);
-        target = [...messages]
-          .reverse()
-          .find((item) => item.role === "user" && Date.parse(item.createdAt) <= jobTime + 1000);
-      }
-      if (!target) {
-        messageApi.info(t("Task message not loaded yet."));
-        return;
-      }
-      shouldStickToBottomRef.current = false;
-      locateMessageRef.current?.(target.id);
-    },
-    [activeConversation, messageApi, t],
-  );
   const hasOlderMessages = Boolean(
     activeConversation && activeConversation.messages.length < (activeConversation.messageCount || 0),
   );
@@ -642,6 +618,11 @@ function App() {
 
   const handleInsertSkill = (name: string) => {
     setPromptInjection({ text: formatSkillPromptDirective({ name }), nonce: Date.now() });
+    setView("chat");
+  };
+
+  const handleInsertSubagent = (name: string) => {
+    setPromptInjection({ text: `@${name.trim()} `, nonce: Date.now() });
     setView("chat");
   };
 
@@ -942,6 +923,7 @@ function App() {
                   t={t}
                   slashCommands={slashCommandList}
                   skills={snapshot.capabilities}
+                  subagents={snapshot.subagents}
                   projects={snapshot.projects}
                   activeProjectId={activeProjectId}
                   onSelectProject={(projectId) => void selectProject(projectId)}
@@ -967,14 +949,9 @@ function App() {
                   onPointerCancel={onRightResizeEnd}
                 />
                 <RightPanel
-                  snapshot={snapshot}
-                  activeConversationId={activeConversation?.id || ""}
-                  panel={detailPanel}
-                  setPanel={setDetailPanel}
                   collapsed={rightCollapsed}
                   width={rightWidth}
                   t={t}
-                  onLocateJob={locateJobMessage}
                   activeFile={activeFile}
                   onOpenDefaultApp={(file) => runFileAction(file, "default")}
                   onShowInFolder={(file) => runFileAction(file, "folder")}
@@ -1009,14 +986,8 @@ function App() {
                 refresh={refresh}
                 snapshot={snapshot}
                 onInsertSkill={handleInsertSkill}
-                openMarketConfig={() => {
-                  setFocusConfigTab("market");
-                  setView("config");
-                }}
-                openMcpConfig={() => {
-                  setFocusConfigTab("mcp");
-                  setView("config");
-                }}
+                onInsertSubagent={handleInsertSubagent}
+                openMcpConfig={() => openConfig("mcp")}
                 onClose={() => setView("chat")}
                 t={t}
               />

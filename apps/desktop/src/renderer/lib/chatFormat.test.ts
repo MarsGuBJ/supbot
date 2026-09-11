@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "@supbot/shared";
-import { hasPendingUserQuestion, shouldAnimateRunningStatus } from "./chatFormat";
+import { hasPendingUserQuestion, shouldAnimateRunningStatus, shouldShowGeneratedFileInChat } from "./chatFormat";
 
 function message(patch: Partial<ChatMessage>): ChatMessage {
   return {
@@ -80,5 +80,29 @@ describe("hasPendingUserQuestion", () => {
   it("returns false for completed or missing messages", () => {
     expect(hasPendingUserQuestion(message({ status: "running" }))).toBe(false);
     expect(hasPendingUserQuestion(undefined)).toBe(false);
+  });
+});
+
+describe("shouldShowGeneratedFileInChat", () => {
+  it("shows target deliverables", () => {
+    expect(
+      shouldShowGeneratedFileInChat({ name: "report.docx", path: "/out/target/report.docx", role: "target" }),
+    ).toBe(true);
+  });
+
+  it("hides intermediate process files", () => {
+    expect(shouldShowGeneratedFileInChat({ name: "draft.md", path: "/out/process/draft.md", role: "process" })).toBe(
+      false,
+    );
+  });
+
+  it("keeps files without a role visible for backward compatibility", () => {
+    expect(shouldShowGeneratedFileInChat({ name: "notes.txt", path: "/out/notes.txt" })).toBe(true);
+  });
+
+  it("still hides script-type files even when marked as target", () => {
+    expect(shouldShowGeneratedFileInChat({ name: "build.py", path: "/out/target/build.py", role: "target" })).toBe(
+      false,
+    );
   });
 });

@@ -479,8 +479,8 @@ async function main() {
       };
     })()`,
   );
-  if (!rightPanelTasks?.hasTaskTab) {
-    throw new Error(`Right panel does not render the tasks tab: ${JSON.stringify(rightPanelTasks)}`);
+  if (rightPanelTasks?.hasTaskTab) {
+    throw new Error(`Right panel should not render the tasks tab: ${JSON.stringify(rightPanelTasks)}`);
   }
   const autopilotClick = await evaluate(
     page.webSocketDebuggerUrl,

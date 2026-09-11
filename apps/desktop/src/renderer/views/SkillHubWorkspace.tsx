@@ -46,7 +46,7 @@ export function SkillHubWorkspace({
   refresh,
   snapshot,
   onInsertSkill,
-  openMarketConfig,
+  onInsertSubagent,
   openMcpConfig,
   onClose,
   t,
@@ -54,7 +54,7 @@ export function SkillHubWorkspace({
   refresh: () => Promise<void>;
   snapshot: RuntimeSnapshot;
   onInsertSkill: (name: string) => void;
-  openMarketConfig: () => void;
+  onInsertSubagent: (name: string) => void;
   openMcpConfig: () => void;
   onClose: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
@@ -106,7 +106,7 @@ export function SkillHubWorkspace({
             label: t("Experts"),
             children: (
               <>
-                <div className="muted skill-hub-hint">{t("Subagents are triggered with @name in chat.")}</div>
+                <div className="muted skill-hub-hint">{t("Click an expert to insert @name into the prompt.")}</div>
                 {subagents.length ? (
                   <div className="skill-hub-grid">
                     {subagents.map((subagent) => (
@@ -115,6 +115,7 @@ export function SkillHubWorkspace({
                         title={`@${subagent.name}`}
                         description={subagent.description}
                         enabled={subagent.enabled}
+                        onClick={() => onInsertSubagent(subagent.name)}
                         t={t}
                       />
                     ))}
@@ -128,15 +129,7 @@ export function SkillHubWorkspace({
           {
             key: "market",
             label: t("Tool Market"),
-            children: (
-              <MarketWorkspace
-                refresh={refresh}
-                snapshot={snapshot}
-                openMarketConfig={openMarketConfig}
-                openMcpConfig={openMcpConfig}
-                t={t}
-              />
-            ),
+            children: <MarketWorkspace refresh={refresh} snapshot={snapshot} openMcpConfig={openMcpConfig} t={t} />,
           },
         ]}
       />

@@ -73,6 +73,7 @@ function toolUseGuidance(): string {
     "- Tool arguments must be exactly one complete JSON object matching the tool schema. Do not send raw text, markdown fences, comments, placeholders, or partial JSON.",
     "- In a project conversation, the project folder is the workspace: use relative paths to read and write files anywhere inside that folder.",
     "- Without a project folder, WriteFile paths must stay inside the current workspace. Never use placeholder paths such as /path/to/file or save directly outside the workspace.",
+    "- Final deliverable documents the user should download must be written into the `target/` subfolder (e.g. target/report.docx). Intermediate files (scripts, drafts, temp data) go to `process/` or anywhere outside `target/`. Only files under `target/` are listed for download in the chat.",
     "- For large artifacts, prefer a short script plus Shell execution over embedding a large generated file in WriteFile content.",
     "- On Windows, Shell runs PowerShell.",
   ].join("\n");

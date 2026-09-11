@@ -19,4 +19,20 @@ describe("main file preview metadata", () => {
     expect(result.previewable).toBe(false);
     expect(result.contentBase64).toBeUndefined();
   });
+
+  it("includes content for previewable office formats only", () => {
+    const data = new TextEncoder().encode("payload");
+    for (const name of ["report.docx", "table.xlsx", "deck.pptx"]) {
+      const result = buildFilePreviewResult(name, data.length, data);
+      expect(result.kind).toBe("office");
+      expect(result.previewable).toBe(true);
+      expect(result.contentBase64).toBe(Buffer.from(data).toString("base64"));
+    }
+    for (const name of ["legacy.doc", "legacy.xls", "legacy.ppt", "note.odt"]) {
+      const result = buildFilePreviewResult(name, data.length, data);
+      expect(result.kind).toBe("office");
+      expect(result.previewable).toBe(false);
+      expect(result.contentBase64).toBeUndefined();
+    }
+  });
 });

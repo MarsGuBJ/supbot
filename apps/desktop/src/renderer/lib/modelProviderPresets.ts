@@ -52,6 +52,12 @@ export const modelProviderPresets: ModelProviderPreset[] = [
     baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
   },
   {
+    key: "minimax",
+    label: "MiniMax",
+    providerName: "MiniMax",
+    baseUrl: "https://api.minimaxi.com/v1",
+  },
+  {
     key: "openrouter",
     label: "OpenRouter",
     providerName: "OpenRouter",

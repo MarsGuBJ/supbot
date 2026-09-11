@@ -9,6 +9,7 @@ import type {
   UserQuestionItem,
 } from "@supbot/shared";
 import type { OpenAiToolDefinition } from "./modelAdapter";
+import type { LocalSkillInstallResult } from "./localPackageManager";
 import { readLocalFile, shellLocalCommand, writeLocalFile, type LocalToolHost } from "./localTools";
 
 export type ToolRisk = "read" | "dangerous";
@@ -35,6 +36,7 @@ export interface ToolExecutionContext {
   allowedAttachmentPaths?: string[];
   inspectPackageArchive?(input: { path: string }): Promise<LocalPackageInspection>;
   installPackageArchive?(input: { path: string; expectedSha256: string }): Promise<LocalPackageInstallResult>;
+  installLocalSkill?(input: { path: string }): Promise<LocalSkillInstallResult | LocalPackageInstallResult>;
   subagents: SubagentConfig[];
   runSubagent(input: { subagentType?: string; prompt: string; signal: AbortSignal }): Promise<ToolExecutionResult>;
   askUserQuestion?(input: { questions: UserQuestionItem[] }): Promise<UserQuestionAnswer[]>;
@@ -166,6 +168,40 @@ export function defaultToolDefinitions(): ToolDefinition[] {
       },
     },
     {
+      name: "InstallLocalSkill",
+      description:
+        "Install a skill from a local path on this machine into the app skills directory, replacing an existing skill with the same name atomically. Use this when the user wants to install a skill and gives a local source: a SKILL.md file, a directory containing SKILL.md, or a skill ZIP package. For ZIP files uploaded as conversation attachments, use InspectPackageArchive/InstallPackageArchive instead.",
+      risk: "dangerous",
+      concurrency: "exclusive",
+      interruptBehavior: "block",
+      usesWorkspace: false,
+      parameters: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description: "Absolute path to a SKILL.md file, a directory containing SKILL.md, or a skill ZIP package.",
+          },
+        },
+        required: ["path"],
+        additionalProperties: false,
+      },
+      summarize(input) {
+        const parsed = objectInput(input);
+        return `Install skill from ${String(parsed.path || "")}`;
+      },
+      async execute(input, context) {
+        const parsed = objectInput(input);
+        if (!context.installLocalSkill) {
+          throw new Error("Local skill installation is not available in this runtime.");
+        }
+        const result = await context.installLocalSkill({ path: requiredString(parsed.path, "path") });
+        return {
+          text: formatSkillInstallResult(result),
+        };
+      },
+    },
+    {
       name: "ReadFile",
       description: "Read a local UTF-8 text file.",
       risk: "read",
@@ -194,7 +230,7 @@ export function defaultToolDefinitions(): ToolDefinition[] {
     {
       name: "WriteFile",
       description:
-        "Write UTF-8 text to a local file. Relative paths are written under the app generated-files directory.",
+        "Write UTF-8 text to a local file. Relative paths are written under the app generated-files directory. Write final deliverables under `target/` (e.g. target/result.docx); only files there are listed for download in the chat. Use `process/` for intermediate files.",
       risk: "dangerous",
       concurrency: "exclusive",
       interruptBehavior: "block",
@@ -444,6 +480,22 @@ function formatPackageInstallResult(result: LocalPackageInstallResult): string {
       ? `Installed skills:\n${result.skills.map((skill) => `- ${skill.name} (${skill.capabilityId})\n  ${skill.path}`).join("\n")}`
       : "",
     result.skillContext ? `\nInstalled skill instructions available now:\n${result.skillContext}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function formatSkillInstallResult(result: LocalSkillInstallResult | LocalPackageInstallResult): string {
+  if ("capabilityIds" in result) {
+    return [formatPackageInstallResult(result), "", "The skill is now visible on the Skills page."].join("\n");
+  }
+  return [
+    `Installed skill: ${result.name}`,
+    `Id: ${result.id}`,
+    result.description ? `Description: ${result.description}` : "",
+    `Install path: ${result.installPath}`,
+    `Replaced existing skill: ${result.replaced ? "yes" : "no"}`,
+    "The skill is now visible on the Skills page.",
   ]
     .filter(Boolean)
     .join("\n");

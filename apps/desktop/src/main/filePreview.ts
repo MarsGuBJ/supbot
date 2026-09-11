@@ -56,6 +56,8 @@ const OFFICE_EXTENSIONS = new Set([
   "odt",
 ]);
 
+const PREVIEWABLE_OFFICE_EXTENSIONS = new Set(["docx", "xlsx", "pptx"]);
+
 const TEXT_EXTENSIONS = new Set([
   "txt",
   "md",
@@ -132,7 +134,12 @@ export function buildFilePreviewResult(
   mimeType = mimeTypeForPath(filePath),
 ): FilePreviewResult {
   const kind = classifyFilePath(filePath, mimeType);
-  const previewable = Boolean(data) && kind !== "office" && kind !== "binary" && size <= MAX_FILE_PREVIEW_BYTES;
+  const extension = extname(filePath).slice(1).toLowerCase();
+  const previewable =
+    Boolean(data) &&
+    kind !== "binary" &&
+    (kind !== "office" || PREVIEWABLE_OFFICE_EXTENSIONS.has(extension)) &&
+    size <= MAX_FILE_PREVIEW_BYTES;
   return {
     path: filePath,
     name: basename(filePath),

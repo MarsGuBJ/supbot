@@ -1442,6 +1442,68 @@ button {
   object-fit: contain;
 }
 
+.file-office-viewport {
+  min-height: 100%;
+  padding: 12px;
+  background: #ffffff;
+  border: 1px solid var(--border-light);
+  border-radius: 5px;
+  overflow: auto;
+}
+
+.file-docx-document {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 8px 12px;
+  line-height: 1.65;
+  color: #273142;
+  overflow-wrap: anywhere;
+}
+
+.file-docx-document img {
+  max-width: 100%;
+}
+
+.file-xlsx-sheet-name {
+  margin-bottom: 8px;
+  font-weight: 600;
+  color: #273142;
+}
+
+.file-xlsx-table {
+  border-collapse: collapse;
+}
+
+.file-xlsx-table th,
+.file-xlsx-table td {
+  max-width: 320px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-light);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-xlsx-table th {
+  background: #f5f7fa;
+}
+
+.file-pptx-container {
+  margin: 0 auto;
+}
+
+.file-pptx-slide {
+  margin-bottom: 12px;
+}
+
+.file-pptx-slide svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+}
+
 .file-pdf-frame,
 .file-html-frame {
   display: block;
@@ -5877,6 +5939,22 @@ body.right-resizing iframe {
   position: relative;
 }
 
+/* Empty conversation: hero + input sit as a vertically centered group */
+.chat-panel--empty::after {
+  content: "";
+  flex: 1;
+  pointer-events: none;
+}
+
+.chat-panel--empty .main-hero {
+  justify-content: flex-end;
+  padding-bottom: 24px;
+}
+
+.chat-panel--empty .input-bar {
+  padding-bottom: 10px;
+}
+
 .input-bar .message-stack,
 .input-bar > .message-stack {
   display: none;
@@ -6161,12 +6239,14 @@ body.right-resizing iframe {
   left: 12px;
   right: 12px;
   bottom: calc(100% + 6px);
+  max-height: min(320px, 50vh);
   background: #ffffff;
   border: 1px solid var(--border-light);
   border-radius: 12px;
   box-shadow: var(--shadow-md);
   z-index: 210;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
   padding: 6px;
@@ -6181,28 +6261,117 @@ body.right-resizing iframe {
   background: transparent;
   cursor: pointer;
   text-align: left;
-  align-items: flex-start;
+  align-items: center;
   border-radius: 8px;
   font-family: inherit;
+  flex-shrink: 0;
 }
 
 .slash-menu button:hover {
   background: var(--bg-hover);
 }
 
+.slash-menu button > span:first-child {
+  flex-shrink: 0;
+}
+
 .slash-menu button > span:last-child {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .slash-menu strong {
   font-size: 13px;
   color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .slash-menu small {
   font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.slash-menu button.active,
+.mention-menu button.active {
+  background: var(--accent-bg);
+}
+
+/* Mention menu ("@" file references) — same geometry as the slash menu */
+
+.mention-menu {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: calc(100% + 6px);
+  max-height: min(320px, 50vh);
+  background: #ffffff;
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+  z-index: 210;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  gap: 2px;
+}
+
+.mention-menu button {
+  display: flex;
+  gap: 12px;
+  padding: 9px 12px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  align-items: center;
+  border-radius: 8px;
+  font-family: inherit;
+  flex-shrink: 0;
+}
+
+.mention-menu button:hover {
+  background: var(--bg-hover);
+}
+
+.mention-menu button > span:last-child {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mention-menu .file-type-icon {
+  flex-shrink: 0;
+}
+
+.mention-menu strong {
+  font-size: 13px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mention-menu small {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mention-menu-status {
+  padding: 9px 12px;
+  font-size: 12.5px;
   color: var(--text-muted);
 }
 

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
@@ -212,8 +212,8 @@ async function withMockModel(
       body += chunk;
     });
     request.on("end", () => {
-      calls += 1;
       response.setHeader("Content-Type", "application/json");
+      calls += 1;
       response.end(JSON.stringify(handler(body, calls)));
     });
   });
@@ -1368,6 +1368,128 @@ describe("SupbotRuntime", () => {
     expect(restarted.snapshot().capabilities.some((item) => item.id === "local.skill.bare-dir")).toBe(true);
   });
 
+  test("installs a local skill from a directory and replaces it on reinstall", async () => {
+    const { runtime, dataDir } = await createRuntimeWithPaths();
+    const sourceRoot = await mkdtemp(join(tmpdir(), "supbot-skill-src-"));
+    tempDirs.push(sourceRoot);
+    const sourceDir = join(sourceRoot, "folder-skill");
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(
+      join(sourceDir, "SKILL.md"),
+      "---\nname: Folder Skill\ndescription: Installed from a local folder.\n---\n\n# Folder Skill\n",
+      "utf8",
+    );
+    await writeFile(join(sourceDir, "helper.txt"), "helper\n", "utf8");
+    const install = runtime as unknown as {
+      installLocalSkill(path: string, signal: AbortSignal): Promise<{ id: string; replaced: boolean }>;
+    };
+
+    const result = await install.installLocalSkill(sourceDir, new AbortController().signal);
+    expect(result).toMatchObject({ id: "folder-skill", replaced: false });
+    expect(runtime.snapshot().capabilities.find((item) => item.id === "local.skill.folder-skill")).toMatchObject({
+      kind: "skill",
+      name: "Folder Skill",
+      description: "Installed from a local folder.",
+      enabled: true,
+    });
+    expect(await readFile(join(dataDir, "skills", "folder-skill", "SKILL.md"), "utf8")).toContain("Folder Skill");
+    expect(await readFile(join(dataDir, "skills", "folder-skill", "helper.txt"), "utf8")).toBe("helper\n");
+
+    // Reinstalling the same skill replaces the directory without duplicating the capability.
+    await writeFile(
+      join(sourceDir, "SKILL.md"),
+      "---\nname: Folder Skill\ndescription: Updated description.\n---\n\n# Folder Skill v2\n",
+      "utf8",
+    );
+    const replaced = await install.installLocalSkill(sourceDir, new AbortController().signal);
+    expect(replaced.replaced).toBe(true);
+    expect(runtime.snapshot().capabilities.filter((item) => item.id === "local.skill.folder-skill")).toHaveLength(1);
+    expect(runtime.snapshot().capabilities.find((item) => item.id === "local.skill.folder-skill")).toMatchObject({
+      description: "Updated description.",
+    });
+    expect(await readFile(join(dataDir, "skills", "folder-skill", "SKILL.md"), "utf8")).toContain("Folder Skill v2");
+  });
+
+  test("installs a local skill from a single SKILL.md file and survives deletion and restart", async () => {
+    const { runtime, dataDir, rootDir } = await createRuntimeWithPaths();
+    const sourceRoot = await mkdtemp(join(tmpdir(), "supbot-skill-src-"));
+    tempDirs.push(sourceRoot);
+    const skillFile = join(sourceRoot, "SKILL.md");
+    await writeFile(
+      skillFile,
+      "---\nname: File Skill\ndescription: Installed from a single file.\n---\n\n# File Skill\n",
+      "utf8",
+    );
+    const install = runtime as unknown as {
+      installLocalSkill(path: string, signal: AbortSignal): Promise<{ id: string; replaced: boolean }>;
+    };
+
+    await install.installLocalSkill(skillFile, new AbortController().signal);
+    expect(runtime.snapshot().capabilities.some((item) => item.id === "local.skill.file-skill")).toBe(true);
+    expect(await readFile(join(dataDir, "skills", "file-skill", "SKILL.md"), "utf8")).toContain("File Skill");
+
+    // Deleting then reinstalling clears the deleted marker.
+    await runtime.deleteCapability("local.skill.file-skill");
+    expect(runtime.snapshot().capabilities.some((item) => item.id === "local.skill.file-skill")).toBe(false);
+    await install.installLocalSkill(skillFile, new AbortController().signal);
+    expect(runtime.snapshot().capabilities.some((item) => item.id === "local.skill.file-skill")).toBe(true);
+
+    // After restart the orphan-skill reconciliation rediscovers the directory from disk.
+    const restarted = new SupbotRuntime(new JsonFileStorage(dataDir), { rootDir });
+    await restarted.init();
+    expect(restarted.snapshot().capabilities.find((item) => item.id === "local.skill.file-skill")).toMatchObject({
+      kind: "skill",
+      name: "File Skill",
+      enabled: true,
+    });
+  });
+
+  test("rejects invalid local skill sources without changing state", async () => {
+    const { runtime, dataDir } = await createRuntimeWithPaths();
+    const sourceRoot = await mkdtemp(join(tmpdir(), "supbot-skill-src-"));
+    tempDirs.push(sourceRoot);
+    const emptyDir = join(sourceRoot, "no-skill");
+    await mkdir(emptyDir);
+    const badFile = join(sourceRoot, "SKILL.md");
+    await writeFile(badFile, "# no front matter\n", "utf8");
+    const install = runtime as unknown as {
+      installLocalSkill(path: string, signal: AbortSignal): Promise<unknown>;
+    };
+
+    const before = runtime.snapshot().capabilities.length;
+    await expect(install.installLocalSkill(emptyDir, new AbortController().signal)).rejects.toThrow("SKILL.md");
+    await expect(install.installLocalSkill(badFile, new AbortController().signal)).rejects.toThrow("front matter");
+    await expect(install.installLocalSkill("relative/path", new AbortController().signal)).rejects.toThrow(
+      "absolute path",
+    );
+    await expect(install.installLocalSkill(join(sourceRoot, "missing"), new AbortController().signal)).rejects.toThrow(
+      "does not exist",
+    );
+    expect(runtime.snapshot().capabilities).toHaveLength(before);
+    expect(await readdir(join(dataDir, "skills")).catch(() => [])).toEqual([]);
+  });
+
+  test("installs a local skill ZIP package from an arbitrary path", async () => {
+    const { runtime, dataDir } = await createRuntimeWithPaths();
+    const sourceRoot = await mkdtemp(join(tmpdir(), "supbot-skill-src-"));
+    tempDirs.push(sourceRoot);
+    const zipPath = join(sourceRoot, "local-zip-skill.zip");
+    await writeTestZip(zipPath, [
+      {
+        path: "SKILL.md",
+        content:
+          "---\nname: Local Zip Skill\ndescription: Installed from a local zip path.\n---\n\n# Local Zip Skill\n",
+      },
+    ]);
+    const install = runtime as unknown as {
+      installLocalSkill(path: string, signal: AbortSignal): Promise<{ id: string }>;
+    };
+
+    await install.installLocalSkill(zipPath, new AbortController().signal);
+    expect(runtime.snapshot().capabilities.some((item) => item.id === "local.skill.local-zip-skill")).toBe(true);
+    expect(await readFile(join(dataDir, "skills", "local-zip-skill", "SKILL.md"), "utf8")).toContain("Local Zip Skill");
+  });
+
   test("edits and deletes capabilities", async () => {
     const runtime = await createRuntime();
     const updated = await runtime.updateCapability("tool.scheduler", {
@@ -1887,6 +2009,7 @@ describe("SupbotRuntime", () => {
     const conversation = runtime.snapshot().conversations.find((item) => item.id === result.conversation.id);
     const assistant = conversation?.messages.find((item) => item.role === "assistant");
     expect(assistant?.generatedFiles?.[0]?.name).toBe("note.txt");
+    expect(assistant?.generatedFiles?.[0]?.role).toBe("process");
     expect(await readFile(assistant!.generatedFiles![0].path, "utf8")).toBe("hello from supbot");
     const job = runtime.snapshot().jobs.find((item) => item.id === result.job.id);
     expect(job?.workspaceMode).toBe("isolated");
@@ -2595,10 +2718,10 @@ describe("SupbotRuntime", () => {
         body += chunk;
       });
       request.on("end", () => {
-        calls += 1;
         response.setHeader("Content-Type", "application/json");
+        const parsed = JSON.parse(body);
+        calls += 1;
         if (calls === 1) {
-          const parsed = JSON.parse(body);
           expect(parsed.tools.some((tool: { function: { name: string } }) => tool.function.name === "ReadFile")).toBe(
             true,
           );
@@ -2622,7 +2745,6 @@ describe("SupbotRuntime", () => {
           );
           return;
         }
-        const parsed = JSON.parse(body);
         expect(
           parsed.messages.some(
             (message: { role: string; content: string }) =>
@@ -2744,8 +2866,9 @@ describe("SupbotRuntime", () => {
         body += chunk;
       });
       request.on("end", () => {
-        calls += 1;
         response.setHeader("Content-Type", "application/json");
+        const parsed = JSON.parse(body);
+        calls += 1;
         if (calls === 1) {
           response.end(
             JSON.stringify({
@@ -2772,7 +2895,6 @@ describe("SupbotRuntime", () => {
           );
           return;
         }
-        const parsed = JSON.parse(body);
         const toolMessages = parsed.messages.filter((message: { role: string }) => message.role === "tool");
         expect(toolMessages.map((message: { tool_call_id: string }) => message.tool_call_id)).toEqual([
           "call_read_first",
@@ -2959,8 +3081,9 @@ describe("SupbotRuntime", () => {
         body += chunk;
       });
       request.on("end", () => {
-        calls += 1;
         response.setHeader("Content-Type", "application/json");
+        const parsed = JSON.parse(body);
+        calls += 1;
         if (calls === 1) {
           response.end(
             JSON.stringify({
@@ -2985,7 +3108,6 @@ describe("SupbotRuntime", () => {
           );
           return;
         }
-        const parsed = JSON.parse(body);
         expect(
           parsed.messages.some(
             (message: { role: string; content: string }) =>
@@ -3115,8 +3237,8 @@ describe("SupbotRuntime", () => {
     await runtime.addPermissionRule({ toolName: "Shell", behavior: "allow" });
     const command =
       process.platform === "win32"
-        ? "Set-Content -Path report.json -Value '{}'; Set-Content -Path page.html -Value '<p>hi</p>'; Set-Content -Path helper.py -Value 'print(1)'"
-        : "printf '{}' > report.json && printf '<p>hi</p>' > page.html && printf 'print(1)' > helper.py";
+        ? "Set-Content -Path report.json -Value '{}'; Set-Content -Path page.html -Value '<p>hi</p>'; Set-Content -Path helper.py -Value 'print(1)'; New-Item -ItemType Directory -Force -Path target | Out-Null; Set-Content -Path target/final.md -Value 'final'"
+        : "printf '{}' > report.json && printf '<p>hi</p>' > page.html && printf 'print(1)' > helper.py && mkdir -p target && printf 'final' > target/final.md";
     const mock = await withMockModel(runtime, (body, call) => {
       if (call === 1) {
         return {
@@ -3152,8 +3274,13 @@ describe("SupbotRuntime", () => {
       expect(names).toContain("report.json");
       expect(names).toContain("page.html");
       expect(names).not.toContain("helper.py");
+      expect(names).toContain("final.md");
       const report = assistant?.generatedFiles?.find((file) => file.name === "report.json");
       expect((await readFile(report!.path, "utf8")).trim()).toBe("{}");
+      const byName = new Map((assistant?.generatedFiles || []).map((file) => [file.name, file.role]));
+      expect(byName.get("final.md")).toBe("target");
+      expect(byName.get("report.json")).toBe("process");
+      expect(byName.get("page.html")).toBe("process");
     } finally {
       await mock.close();
     }
@@ -3386,9 +3513,9 @@ describe("SupbotRuntime", () => {
         body += chunk;
       });
       request.on("end", () => {
-        calls += 1;
         response.setHeader("Content-Type", "application/json");
         const parsed = JSON.parse(body);
+        calls += 1;
         const isSubagent = parsed.messages.some(
           (message: { role: string; content: string }) =>
             message.role === "system" && message.content.includes("subagent @research"),

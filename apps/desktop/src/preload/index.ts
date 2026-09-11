@@ -246,6 +246,8 @@ const api = {
     ipcRenderer.invoke("schedule:update", id, input),
   deleteScheduledJob: (id: string) => ipcRenderer.invoke("schedule:delete", id),
   pickAttachments: () => ipcRenderer.invoke("attachment:pick"),
+  importAttachmentPaths: (paths: string[]) => ipcRenderer.invoke("attachment:importPaths", paths),
+  searchProjectFiles: (projectId: string, query: string) => ipcRenderer.invoke("file:search", { projectId, query }),
   importDroppedAttachments: (files: File[]) => {
     const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean);
     return paths.length ? ipcRenderer.invoke("attachment:importPaths", paths) : Promise.resolve([]);

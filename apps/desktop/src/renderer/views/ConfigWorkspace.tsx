@@ -146,6 +146,11 @@ export function ConfigWorkspace({
           },
           { key: "mcp", label: "MCP", children: <McpServersCard snapshot={snapshot} refresh={refresh} t={t} /> },
           {
+            key: "market",
+            label: t("Tool Market"),
+            children: <ToolMarketConfigCard snapshot={snapshot} refresh={refresh} t={t} />,
+          },
+          {
             key: "personality",
             label: t("Personality"),
             children: <PersonalityCard snapshot={snapshot} refresh={refresh} t={t} />,
@@ -477,6 +482,11 @@ export function ModelConfigCard({
   const [fetchingModels, setFetchingModels] = useState(false);
   const autoFetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const applyPreset = (key: string) => {
+    if (key === "custom") {
+      form.setFieldsValue({ providerName: "", baseUrl: "", apiKey: "", model: "" });
+      setFetchedModels([]);
+      return;
+    }
     const preset = modelProviderPresets.find((item) => item.key === key);
     if (!preset) {
       return;

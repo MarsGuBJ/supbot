@@ -16,6 +16,7 @@ import {
   SearchOutlined,
   SendOutlined,
   StarOutlined,
+  StopOutlined,
   ImportOutlined,
   ToolOutlined,
 } from "@ant-design/icons";
@@ -30,17 +31,28 @@ import type {
   PendingToolPermission,
   PermissionMode,
   Project,
+  SubagentConfig,
   LocalFileReference,
 } from "@supbot/shared";
 import { buildSlashCommands, conversationTitle, statusLabel } from "@supbot/shared";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { ComposerPermissionPrompt } from "./ComposerPermissionPrompt";
+import { FileTypeIcon } from "./FileTypeIcon";
 import { MessageBubble } from "./MessageBubble";
 import { readClipboardText, selectedTextWithin } from "../lib/clipboard";
 import { filesFromPasteEvent, renamePastedFiles } from "../lib/pastedAttachments";
 import type { PromptContextMenu, SelectionContextMenu } from "../lib/types";
 import { enabledSkillCapabilities, formatSkillPromptDirective } from "../lib/skills";
-import { hasPendingUserQuestion } from "../lib/chatFormat";
+import {
+  getAtToken,
+  getSlashToken,
+  mergeMentionSuggestions,
+  mergeSlashSuggestions,
+  type MentionItem,
+  type ProjectFileMatch,
+  type SlashSuggestion,
+} from "../lib/mentions";
+import { hasPendingUserQuestion, shouldShowGeneratedFileInChat } from "../lib/chatFormat";
 import {
   enqueuePrompt,
   removeQueuedPrompt,
@@ -106,6 +118,7 @@ export function ChatPanel({
   t,
   slashCommands,
   skills,
+  subagents,
   projects,
   activeProjectId,
   onSelectProject,
@@ -116,7 +129,6 @@ export function ChatPanel({
   currentModelLabel,
   onModelProviderChange,
   onOpenModelConfig,
-  onOpenSkillView,
   onOpenFile,
   promptInjection,
 }: {
@@ -148,6 +160,7 @@ export function ChatPanel({
   t: (key: string, vars?: Record<string, string | number>) => string;
   slashCommands: ReturnType<typeof buildSlashCommands>;
   skills: CapabilityDefinition[];
+  subagents: SubagentConfig[];
   projects: Project[];
   activeProjectId: string;
   onSelectProject: (projectId: string) => void;
@@ -263,6 +276,23 @@ export function ChatPanel({
       void handleSend();
     }
   }, [handleSend, queuePrompt, runningJob]);
+
+  const [stopping, setStopping] = useState(false);
+  const stopRunning = useCallback(async () => {
+    if (!runningJob || stopping) {
+      return;
+    }
+    setStopping(true);
+    try {
+      await interruptRunning();
+    } finally {
+      setStopping(false);
+    }
+  }, [interruptRunning, runningJob, stopping]);
+
+  // While a job is executing the composer shows a Stop button; typing a prompt
+  // (or the job finishing/failing, which clears runningJob) switches it back to Send.
+  const showStopButton = Boolean(runningJob) && !prompt.trim();
 
   const editQueuedPrompt = useCallback(
     (item: QueuedPrompt) => {
@@ -382,13 +412,200 @@ export function ChatPanel({
     [prompt, resizeTextarea],
   );
 
-  const filteredCommands = useMemo(() => {
-    if (!prompt.startsWith("/")) {
-      return [];
+  // "/" popup: merged built-in commands + skills, triggered by a /token at the caret.
+  const slashToken = getSlashToken(prompt, promptInputRef.current?.selectionStart ?? prompt.length);
+  const slashSuggestions = slashToken ? mergeSlashSuggestions(slashToken.query, slashCommands, availableSkills) : [];
+
+  const messages = conversation?.messages || [];
+
+  const conversationFiles = useMemo(() => {
+    const files: Array<{ key: string; name: string; path: string }> = [];
+    // Pending composer attachments are mentionable too, even though they have
+    // not been sent into the conversation yet.
+    for (const attachment of attachments) {
+      if (attachment.path) {
+        files.push({ key: `pending-${attachment.id}`, name: attachment.name, path: attachment.path });
+      }
     }
-    const query = prompt.trim().toLowerCase();
-    return slashCommands.filter((item) => item.command.startsWith(query));
-  }, [prompt, slashCommands]);
+    for (const item of messages) {
+      for (const file of item.generatedFiles || []) {
+        if (!shouldShowGeneratedFileInChat(file)) {
+          continue;
+        }
+        files.push({ key: `gen-${item.id}-${file.name}`, name: file.name, path: file.path });
+      }
+      for (const attachment of item.attachments || []) {
+        if (attachment.path) {
+          files.push({ key: `att-${item.id}-${attachment.name}`, name: attachment.name, path: attachment.path });
+        }
+      }
+    }
+    return files;
+  }, [attachments, messages]);
+
+  // "@" popup: merged subagents + conversation files + debounced project file
+  // search, triggered by an @token at the caret.
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [projectFileMatches, setProjectFileMatches] = useState<ProjectFileMatch[]>([]);
+  const [mentionLoading, setMentionLoading] = useState(false);
+  const mentionMenuRef = useRef<HTMLDivElement | null>(null);
+  const mentionSearchTimerRef = useRef<number | null>(null);
+  const mentionRequestRef = useRef(0);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [slashDismissed, setSlashDismissed] = useState(false);
+
+  const mentionQuery = mentionOpen
+    ? (getAtToken(prompt, promptInputRef.current?.selectionStart ?? prompt.length)?.query ?? null)
+    : null;
+  const mentionItems = useMemo(
+    () =>
+      mentionQuery === null
+        ? []
+        : mergeMentionSuggestions(mentionQuery, subagents, conversationFiles, projectFileMatches),
+    [mentionQuery, subagents, conversationFiles, projectFileMatches],
+  );
+
+  const closeMention = useCallback(() => {
+    if (mentionSearchTimerRef.current !== null) {
+      window.clearTimeout(mentionSearchTimerRef.current);
+      mentionSearchTimerRef.current = null;
+    }
+    mentionRequestRef.current += 1;
+    setMentionOpen(false);
+    setProjectFileMatches([]);
+    setMentionLoading(false);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (mentionSearchTimerRef.current !== null) {
+        window.clearTimeout(mentionSearchTimerRef.current);
+      }
+    },
+    [],
+  );
+
+  const refreshMention = useCallback(
+    (value: string, caret: number) => {
+      if (mentionSearchTimerRef.current !== null) {
+        window.clearTimeout(mentionSearchTimerRef.current);
+        mentionSearchTimerRef.current = null;
+      }
+      const token = getAtToken(value, caret);
+      if (!token) {
+        closeMention();
+        return;
+      }
+      setMentionOpen(true);
+      setActiveIndex(0);
+      // Subagents and conversation files are listed without a project; the
+      // debounced project file search only runs when a project is active.
+      if (!activeProjectId) {
+        mentionRequestRef.current += 1;
+        setProjectFileMatches([]);
+        setMentionLoading(false);
+        return;
+      }
+      const query = token.query;
+      const requestId = ++mentionRequestRef.current;
+      setMentionLoading(true);
+      mentionSearchTimerRef.current = window.setTimeout(() => {
+        mentionSearchTimerRef.current = null;
+        window.supbot
+          .searchProjectFiles(activeProjectId, query)
+          .then((items) => {
+            if (mentionRequestRef.current === requestId) {
+              setProjectFileMatches(items);
+              setMentionLoading(false);
+            }
+          })
+          .catch(() => {
+            if (mentionRequestRef.current === requestId) {
+              setProjectFileMatches([]);
+              setMentionLoading(false);
+            }
+          });
+      }, 200);
+    },
+    [activeProjectId, closeMention],
+  );
+
+  const applyMentionItem = useCallback(
+    async (item: MentionItem) => {
+      const textArea = promptInputRef.current;
+      const currentValue = textArea?.value ?? prompt;
+      const caret = Math.max(0, Math.min(textArea?.selectionStart ?? currentValue.length, currentValue.length));
+      const token = getAtToken(currentValue, caret);
+      closeMention();
+      if (item.kind !== "subagent") {
+        // Skip the import when the file is already attached to the composer —
+        // re-importing would add a duplicate attachment chip.
+        const alreadyAttached = attachments.some((attachment) => attachment.path && attachment.path === item.path);
+        if (!alreadyAttached) {
+          try {
+            const imported = await window.supbot.importAttachmentPaths([item.path]);
+            if (imported.length) {
+              setAttachments((items) => [...items, ...imported]);
+            }
+          } catch (error) {
+            message.error(error instanceof Error ? error.message : t("Failed to attach file."));
+          }
+        }
+      }
+      const insertion = `@${item.name} `;
+      const start = token ? token.start : caret;
+      const nextPrompt = `${currentValue.slice(0, start)}${insertion}${currentValue.slice(caret)}`;
+      const nextCaret = start + insertion.length;
+      setPrompt(nextPrompt);
+      window.requestAnimationFrame(() => {
+        const nextTextArea = promptInputRef.current;
+        nextTextArea?.focus();
+        nextTextArea?.setSelectionRange(nextCaret, nextCaret);
+        resizeTextarea();
+      });
+    },
+    [attachments, closeMention, prompt, resizeTextarea, setAttachments, t],
+  );
+
+  const applySlashSuggestion = useCallback(
+    (suggestion: SlashSuggestion) => {
+      if (suggestion.kind === "command") {
+        setPrompt(suggestion.label);
+        return;
+      }
+      const textArea = promptInputRef.current;
+      const currentValue = textArea?.value ?? prompt;
+      const caret = Math.max(0, Math.min(textArea?.selectionStart ?? currentValue.length, currentValue.length));
+      const token = getSlashToken(currentValue, caret);
+      const insertion = `${suggestion.label} `;
+      const start = token ? token.start : caret;
+      const nextPrompt = `${currentValue.slice(0, start)}${insertion}${currentValue.slice(caret)}`;
+      const nextCaret = start + insertion.length;
+      setPrompt(nextPrompt);
+      window.requestAnimationFrame(() => {
+        const nextTextArea = promptInputRef.current;
+        nextTextArea?.focus();
+        nextTextArea?.setSelectionRange(nextCaret, nextCaret);
+        resizeTextarea();
+      });
+    },
+    [prompt, resizeTextarea],
+  );
+
+  const slashMenuOpen = !slashDismissed && slashSuggestions.length > 0;
+  const mentionMenuOpen = mentionOpen;
+  const popupCount = mentionMenuOpen ? mentionItems.length : slashSuggestions.length;
+  const popupActiveIndex = popupCount ? Math.min(activeIndex, popupCount - 1) : 0;
+
+  useEffect(() => {
+    if (!slashMenuOpen && !mentionMenuOpen) {
+      return;
+    }
+    const activeItem = document.querySelector(
+      ".input-wrapper .slash-menu button.active, .input-wrapper .mention-menu button.active",
+    );
+    activeItem?.scrollIntoView({ block: "nearest" });
+  }, [popupActiveIndex, slashMenuOpen, mentionMenuOpen]);
 
   const composerPermissions = useMemo(() => {
     const conversationId = conversation?.id || "";
@@ -560,7 +777,7 @@ export function ChatPanel({
 
   const escGuardRef = useRef({ menuOpen: false, interrupt: undefined as (() => Promise<boolean>) | undefined });
   escGuardRef.current = {
-    menuOpen: Boolean(selectionMenu || promptMenu || cornerPopup || permissionOpen),
+    menuOpen: Boolean(selectionMenu || promptMenu || cornerPopup || permissionOpen || mentionOpen || slashMenuOpen),
     interrupt: runningJob ? interruptRunning : undefined,
   };
 
@@ -572,12 +789,17 @@ export function ChatPanel({
       if (permissionRef.current && !permissionRef.current.contains(event.target as Node)) {
         setPermissionOpen(false);
       }
+      const target = event.target as Node;
+      if (!mentionMenuRef.current?.contains(target) && !promptInputRef.current?.contains(target)) {
+        closeMention();
+      }
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         const { menuOpen, interrupt } = escGuardRef.current;
         setCornerPopup(null);
         setPermissionOpen(false);
+        closeMention();
         // Never interrupt while an antd modal (e.g. config) is open — Esc belongs to the modal.
         const modalOpen = Array.from(document.querySelectorAll(".ant-modal-wrap")).some(
           (element) => (element as HTMLElement).offsetParent !== null,
@@ -593,7 +815,7 @@ export function ChatPanel({
       window.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, []);
+  }, [closeMention]);
 
   useEffect(() => {
     const stream = scrollRef.current;
@@ -611,7 +833,6 @@ export function ChatPanel({
     };
   }, [conversation?.id, scrollRef]);
 
-  const messages = conversation?.messages || [];
   const firstItemIndex = Math.max(0, (conversation?.messageCount || messages.length) - messages.length);
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const [highlightMessageId, setHighlightMessageId] = useState("");
@@ -704,21 +925,6 @@ export function ChatPanel({
     [messages],
   );
 
-  const conversationFiles = useMemo(() => {
-    const files: Array<{ key: string; name: string; path: string }> = [];
-    for (const item of messages) {
-      for (const file of item.generatedFiles || []) {
-        files.push({ key: `gen-${item.id}-${file.name}`, name: file.name, path: file.path });
-      }
-      for (const attachment of item.attachments || []) {
-        if (attachment.path) {
-          files.push({ key: `att-${item.id}-${attachment.name}`, name: attachment.name, path: attachment.path });
-        }
-      }
-    }
-    return files;
-  }, [messages]);
-
   const highlightMatch = (text: string, query: string) => {
     const index = text.toLowerCase().indexOf(query.toLowerCase());
     if (index < 0) {
@@ -742,7 +948,7 @@ export function ChatPanel({
   );
 
   return (
-    <section className="chat-panel">
+    <section className={`chat-panel${!conversation || messages.length === 0 ? " chat-panel--empty" : ""}`}>
       {conversation && messages.length ? (
         <div className="main-corner-toolbar" ref={cornerRef}>
           <Tooltip title={t("Search in conversation")}>
@@ -986,25 +1192,6 @@ export function ChatPanel({
                   "I can help you solve problems, manage your computer, create and run skills, and keep growing with long-term memory.",
                 )}
               </p>
-              {availableSkills.length ? (
-                <div className="skill-tags" role="list">
-                  {availableSkills.slice(0, 12).map((skill) => (
-                    <button
-                      type="button"
-                      className="skill-tag"
-                      key={skill.id}
-                      role="listitem"
-                      onClick={() => insertSkill(skill)}
-                    >
-                      <ToolOutlined />
-                      <span>{skill.name}</span>
-                    </button>
-                  ))}
-                  <button type="button" className="skill-tag skill-tag-more" onClick={onOpenSkillView}>
-                    {t("More")} →
-                  </button>
-                </div>
-              ) : null}
             </div>
           </div>
         </div>
@@ -1215,33 +1402,100 @@ export function ChatPanel({
             ref={promptInputRef}
             value={prompt}
             rows={1}
-            placeholder={t("What can I help you with today? @ to reference files, / for skills and commands")}
-            onChange={(event) => setPrompt(event.target.value)}
+            placeholder={t(
+              "What can I help you with today? @ to reference files and experts, / for skills and commands",
+            )}
+            onChange={(event) => {
+              setPrompt(event.target.value);
+              setSlashDismissed(false);
+              refreshMention(event.target.value, event.target.selectionStart ?? event.target.value.length);
+            }}
+            onClick={(event) =>
+              refreshMention(event.currentTarget.value, event.currentTarget.selectionStart ?? prompt.length)
+            }
             onPaste={(event) => void handleFilePaste(event)}
             onContextMenu={openPromptMenu}
             onKeyDown={(event) => {
+              if (slashMenuOpen || mentionMenuOpen) {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setActiveIndex((index) => (popupCount ? (index + 1) % popupCount : 0));
+                  return;
+                }
+                if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setActiveIndex((index) => (popupCount ? (index - 1 + popupCount) % popupCount : 0));
+                  return;
+                }
+                if ((event.key === "Enter" && !event.shiftKey) || event.key === "Tab") {
+                  if (popupCount) {
+                    event.preventDefault();
+                    if (mentionMenuOpen) {
+                      void applyMentionItem(mentionItems[popupActiveIndex]);
+                    } else {
+                      applySlashSuggestion(slashSuggestions[popupActiveIndex]);
+                    }
+                  }
+                  return;
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  closeMention();
+                  setSlashDismissed(true);
+                  return;
+                }
+              }
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 submitPrompt();
               }
             }}
           />
-          {filteredCommands.length ? (
+          {slashMenuOpen ? (
             <div className="slash-menu">
-              {filteredCommands.map((command) => (
+              {slashSuggestions.map((suggestion, index) => (
                 <button
-                  key={command.command}
+                  key={suggestion.key}
                   type="button"
+                  className={index === popupActiveIndex && !mentionMenuOpen ? "active" : ""}
                   onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => setPrompt(command.command)}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  onClick={() => applySlashSuggestion(suggestion)}
                 >
-                  <span className="mono">{command.command}</span>
+                  <span className="mono">{suggestion.label}</span>
                   <span>
-                    <strong>{command.title}</strong>
-                    <small>{command.description}</small>
+                    <strong>{suggestion.title}</strong>
+                    <small>{suggestion.description}</small>
                   </span>
                 </button>
               ))}
+            </div>
+          ) : null}
+          {mentionMenuOpen ? (
+            <div className="mention-menu" ref={mentionMenuRef}>
+              {mentionItems.length ? (
+                mentionItems.map((item, index) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    className={index === popupActiveIndex ? "active" : ""}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onMouseEnter={() => setActiveIndex(index)}
+                    onClick={() => void applyMentionItem(item)}
+                  >
+                    {item.kind === "subagent" ? <RobotOutlined /> : <FileTypeIcon name={item.name} />}
+                    <span>
+                      <strong>{item.kind === "subagent" ? `@${item.name}` : item.name}</strong>
+                      <small>{item.kind === "subagent" ? item.description : item.relativePath}</small>
+                    </span>
+                  </button>
+                ))
+              ) : mentionLoading ? (
+                <div className="mention-menu-status">{t("Searching files…")}</div>
+              ) : (
+                <div className="mention-menu-status">{t("No matches")}</div>
+              )}
             </div>
           ) : null}
           <div className="input-footer">
@@ -1327,17 +1581,31 @@ export function ChatPanel({
                   <option value="__custom__">{t("Configure custom model…")}</option>
                 </select>
               </div>
-              <Tooltip title={runningJob ? t("Submit prompt") : t("Send")}>
-                <button
-                  type="button"
-                  className="send-btn"
-                  disabled={!prompt.trim() || sending}
-                  aria-label={runningJob ? t("Submit prompt") : t("Send")}
-                  onClick={submitPrompt}
-                >
-                  <SendOutlined />
-                </button>
-              </Tooltip>
+              {showStopButton ? (
+                <Tooltip title={t("Stop")}>
+                  <button
+                    type="button"
+                    className="send-btn is-stop"
+                    disabled={stopping}
+                    aria-label={t("Stop")}
+                    onClick={() => void stopRunning()}
+                  >
+                    <StopOutlined />
+                  </button>
+                </Tooltip>
+              ) : (
+                <Tooltip title={runningJob ? t("Submit prompt") : t("Send")}>
+                  <button
+                    type="button"
+                    className="send-btn"
+                    disabled={!prompt.trim() || sending}
+                    aria-label={runningJob ? t("Submit prompt") : t("Send")}
+                    onClick={submitPrompt}
+                  >
+                    <SendOutlined />
+                  </button>
+                </Tooltip>
+              )}
             </div>
           </div>
         </div>

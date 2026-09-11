@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 import type {
@@ -40,6 +40,14 @@ interface ParsedLocalPackage extends LocalPackageInspection {
   rootPath: string;
   mcpServerConfigs: McpServerConfig[];
   capabilityIds: string[];
+}
+
+export interface LocalSkillInstallResult {
+  id: string;
+  name: string;
+  description: string;
+  installPath: string;
+  replaced: boolean;
 }
 
 interface ScanResult {
@@ -172,6 +180,77 @@ export class LocalPackageManager {
       await rename(backupPath, result.installPath);
     }
     this.pendingBackups.delete(result.installPath);
+  }
+
+  /**
+   * Install a skill from a local directory containing SKILL.md, or from a
+   * single SKILL.md file, into dataDir/skills/<slug>. The swap is atomic:
+   * content is staged next to the target, an existing install is moved aside
+   * as a backup and restored on failure. No receipt is written; the runtime's
+   * orphan-skill reconciliation re-discovers the directory after restart.
+   */
+  async installSkillFromPath(sourcePath: string): Promise<LocalSkillInstallResult> {
+    const resolvedSource = resolve(sourcePath);
+    const skillsRoot = this.installRoot("skill");
+    if (pathIsInside(skillsRoot, resolvedSource)) {
+      throw new Error("This skill is already inside the app skills directory.");
+    }
+    const info = await stat(resolvedSource).catch(() => undefined);
+    if (!info) {
+      throw new Error(`Skill source path does not exist: ${resolvedSource}`);
+    }
+    let skillFilePath: string;
+    let copyDirectory: string | undefined;
+    if (info.isDirectory()) {
+      skillFilePath = join(resolvedSource, "SKILL.md");
+      if (!(await pathExists(skillFilePath))) {
+        throw new Error(`Skill directory must contain a SKILL.md file: ${resolvedSource}`);
+      }
+      copyDirectory = resolvedSource;
+    } else if (info.isFile() && basename(resolvedSource).toLowerCase() === "skill.md") {
+      skillFilePath = resolvedSource;
+    } else {
+      throw new Error("Skill source must be a SKILL.md file or a directory containing SKILL.md.");
+    }
+    const metadata = parseSkillMetadataStrict(await readFile(skillFilePath, "utf8"), "SKILL.md");
+    const id = slug(metadata.name);
+    const finalPath = join(skillsRoot, id);
+    if (!pathIsInside(this.host.dataDir, finalPath)) {
+      throw new Error(`Skill install path resolved outside app data directory: ${finalPath}`);
+    }
+    await mkdir(skillsRoot, { recursive: true });
+    const stagingPath = join(skillsRoot, `.installing-${id}-${this.host.randomId("pkg").replace(/[^a-z0-9_-]/gi, "")}`);
+    let backupPath: string | undefined;
+    let movedIntoPlace = false;
+    try {
+      await rm(stagingPath, { recursive: true, force: true });
+      if (copyDirectory) {
+        await cp(copyDirectory, stagingPath, { recursive: true });
+      } else {
+        await mkdir(stagingPath, { recursive: true });
+        await cp(skillFilePath, join(stagingPath, "SKILL.md"));
+      }
+      const replaced = await pathExists(finalPath);
+      if (replaced) {
+        backupPath = join(skillsRoot, `.backup-${id}-${Date.now().toString(36)}`);
+        await rename(finalPath, backupPath);
+      }
+      await rename(stagingPath, finalPath);
+      movedIntoPlace = true;
+      if (backupPath) {
+        await rm(backupPath, { recursive: true, force: true });
+      }
+      return { id, name: metadata.name, description: metadata.description, installPath: finalPath, replaced };
+    } catch (error) {
+      if (movedIntoPlace) {
+        await rm(finalPath, { recursive: true, force: true });
+      }
+      if (backupPath && (await pathExists(backupPath))) {
+        await rename(backupPath, finalPath);
+      }
+      await rm(stagingPath, { recursive: true, force: true });
+      throw error;
+    }
   }
 
   async scanInstalledPackages(): Promise<ScanResult> {
@@ -1144,7 +1223,7 @@ function slug(value: string): string {
   return (
     value
       .toLowerCase()
-      .replace(/[^a-z0-9_-]+/g, "-")
+      .replace(/[^a-z0-9_一-鿿-]+/g, "-")
       .replace(/^-+|-+$/g, "")
       .slice(0, 96) || "package"
   );

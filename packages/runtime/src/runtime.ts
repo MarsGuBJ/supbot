@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   addModelUsage,
   clampNumber,
@@ -104,13 +104,13 @@ import {
 import { AutopilotOrchestrator } from "./autopilotOrchestrator";
 import { describeError } from "./errorFormat";
 import { stripQuotes, type LocalToolHost, type LocalToolResult } from "./localTools";
-import { LocalPackageManager } from "./localPackageManager";
+import { LocalPackageManager, type LocalSkillInstallResult } from "./localPackageManager";
 import { MemoryManager } from "./memoryManager";
 import { McpManager } from "./mcpManager";
 import { generateReply, listProviderModels, normalizeModelApiKey } from "./modelAdapter";
 import { PermissionPolicy } from "./permissionPolicy";
 import { ProjectManager } from "./projectManager";
-import { QueryEngine } from "./queryEngine";
+import { QueryEngine, type QueryEngineResult } from "./queryEngine";
 import { RemoteBridgeManager } from "./remoteBridgeManager";
 import { ServstationAgentClient } from "./servstationAgentClient";
 import { ServstationA2AProvider } from "./servstationA2AProvider";
@@ -2075,101 +2075,107 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         return;
       }
       const modelProvider = this.ensureActiveModelProvider();
-      const engine = new QueryEngine({
-        id: randomId("query"),
-        jobId,
-        conversationId: conversation.id,
-        dataDir: this.storage.getDataDir(),
-        cwd,
-        modelConfig: this.modelConfigFromProvider(modelProvider),
-        apiKey: modelProvider.apiKeySecret,
-        personality: this.state.personality,
-        subagent,
-        capabilities: this.state.capabilities,
-        messages:
-          this.findConversation(conversation.id)?.messages.filter((message) => message.id !== assistantSeed.id) || [],
-        compactBoundaries: this.state.compactBoundaries,
-        memory: this.state.memory,
-        memoryEnabled: this.state.memoryEnabled,
-        registry: this.toolRegistry,
-        toolContext: this.createToolExecutionContext(controller.signal, jobId, 0, toolContextOptions),
-        permissionMode: this.state.permissionMode,
-        getPermissionRules: () => this.state.permissionRules,
-        signal: controller.signal,
-        requestPermission: (permission) => this.requestToolPermission(permission),
-        onSession: (session) => {
-          if (!jobStillExists()) {
-            return;
-          }
-          this.upsertQuerySession(session);
-          this.schedulePersistAndBroadcast();
-        },
-        onRuntimeEvent: (event) => {
-          if (!jobStillExists()) {
-            return;
-          }
-          this.addRuntimeEvent(event);
-          this.schedulePersistAndBroadcast();
-          this.emitTyped({ type: "query_event", event });
-        },
-        onMessageDelta: (delta) => {
-          if (!jobStillExists()) {
-            return;
-          }
-          this.appendAssistantDelta(conversation.id, assistantSeed.id, delta);
-          this.emitTyped({
-            type: "message_delta",
-            conversationId: conversation.id,
-            messageId: assistantSeed.id,
-            delta,
-          });
-        },
-        onTrace: (trace) => {
-          if (!jobStillExists()) {
-            return;
-          }
-          this.upsertTrace(trace);
-          this.schedulePersistAndBroadcast();
-        },
-        onToolProgress: (toolCall) => {
-          if (!jobStillExists()) {
-            return;
-          }
-          this.upsertToolCall(jobId, toolCall);
-          this.updateJob(jobId, this.findJob(jobId)?.status || "running", `${toolCall.toolName}: ${toolCall.status}`);
-          this.schedulePersistAndBroadcast();
-          this.emitTyped({ type: "tool_progress", toolCall });
-        },
-        onCompact: (boundary) => {
-          if (!jobStillExists()) {
-            return;
-          }
-          this.upsertCompactBoundary(boundary);
-          this.schedulePersistAndBroadcast();
-          this.emitTyped({ type: "compact", boundary });
-        },
-        onMemoryChanged: (memory) => {
-          this.state.memory = memory;
-          this.schedulePersistAndBroadcast();
-          this.emitTyped({ type: "memory_changed", memory });
-        },
-        onMemoryCandidate: async (candidate) => {
-          this.emitTyped({ type: "memory_candidate", candidate });
-        },
-        onPermissionTimeout: async (permission) => {
-          this.resolvePermission(permission.id, "denied");
-          await this.persistAndBroadcast();
-          this.emitTyped({ type: "permission_timeout", permission });
-        },
-      });
-      const response = await engine.submitTurn();
+      const runEngineTurn = async (): Promise<QueryEngineResult> => {
+        const engine = new QueryEngine({
+          id: randomId("query"),
+          jobId,
+          conversationId: conversation.id,
+          dataDir: this.storage.getDataDir(),
+          cwd,
+          modelConfig: this.modelConfigFromProvider(modelProvider),
+          apiKey: modelProvider.apiKeySecret,
+          personality: this.state.personality,
+          subagent,
+          capabilities: this.state.capabilities,
+          messages:
+            this.findConversation(conversation.id)?.messages.filter((message) => message.id !== assistantSeed.id) || [],
+          compactBoundaries: this.state.compactBoundaries,
+          memory: this.state.memory,
+          memoryEnabled: this.state.memoryEnabled,
+          registry: this.toolRegistry,
+          toolContext: this.createToolExecutionContext(controller.signal, jobId, 0, toolContextOptions),
+          permissionMode: this.state.permissionMode,
+          getPermissionRules: () => this.state.permissionRules,
+          signal: controller.signal,
+          requestPermission: (permission) => this.requestToolPermission(permission),
+          onSession: (session) => {
+            if (!jobStillExists()) {
+              return;
+            }
+            this.upsertQuerySession(session);
+            this.schedulePersistAndBroadcast();
+          },
+          onRuntimeEvent: (event) => {
+            if (!jobStillExists()) {
+              return;
+            }
+            this.addRuntimeEvent(event);
+            this.schedulePersistAndBroadcast();
+            this.emitTyped({ type: "query_event", event });
+          },
+          onMessageDelta: (delta) => {
+            if (!jobStillExists()) {
+              return;
+            }
+            this.appendAssistantDelta(conversation.id, assistantSeed.id, delta);
+            this.emitTyped({
+              type: "message_delta",
+              conversationId: conversation.id,
+              messageId: assistantSeed.id,
+              delta,
+            });
+          },
+          onTrace: (trace) => {
+            if (!jobStillExists()) {
+              return;
+            }
+            this.upsertTrace(trace);
+            this.schedulePersistAndBroadcast();
+          },
+          onToolProgress: (toolCall) => {
+            if (!jobStillExists()) {
+              return;
+            }
+            this.upsertToolCall(jobId, toolCall);
+            this.updateJob(jobId, this.findJob(jobId)?.status || "running", `${toolCall.toolName}: ${toolCall.status}`);
+            this.schedulePersistAndBroadcast();
+            this.emitTyped({ type: "tool_progress", toolCall });
+          },
+          onCompact: (boundary) => {
+            if (!jobStillExists()) {
+              return;
+            }
+            this.upsertCompactBoundary(boundary);
+            this.schedulePersistAndBroadcast();
+            this.emitTyped({ type: "compact", boundary });
+          },
+          onMemoryChanged: (memory) => {
+            this.state.memory = memory;
+            this.schedulePersistAndBroadcast();
+            this.emitTyped({ type: "memory_changed", memory });
+          },
+          onMemoryCandidate: async (candidate) => {
+            this.emitTyped({ type: "memory_candidate", candidate });
+          },
+          onPermissionTimeout: async (permission) => {
+            this.resolvePermission(permission.id, "denied");
+            await this.persistAndBroadcast();
+            this.emitTyped({ type: "permission_timeout", permission });
+          },
+        });
+        return engine.submitTurn();
+      };
+      const recordTurnUsage = (result: QueryEngineResult) => {
+        if (result.usage) {
+          this.recordContextUsage(conversation.id, result.usage);
+        }
+        this.recordTokenUsage(conversation.id, modelProvider.id, result.totalUsage ?? result.usage);
+      };
+      const response = await runEngineTurn();
       if (!jobStillExists()) {
         return;
       }
-      if (response.usage) {
-        this.recordContextUsage(conversation.id, response.usage);
-      }
-      this.recordTokenUsage(conversation.id, modelProvider.id, response.totalUsage ?? response.usage);
+      recordTurnUsage(response);
       const questionBlocks = (
         this.findConversation(conversation.id)?.messages.find((message) => message.id === assistantSeed.id)?.blocks ||
         []
@@ -3296,6 +3302,9 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         expectedSha256: string;
       }): Promise<LocalPackageInstallResult> =>
         this.installPackageArchive(input.path, input.expectedSha256, allowedAttachmentPaths, signal),
+      installLocalSkill: async (input: {
+        path: string;
+      }): Promise<LocalSkillInstallResult | LocalPackageInstallResult> => this.installLocalSkill(input.path, signal),
       subagents: this.state.subagents,
       askUserQuestion: (input: { questions: UserQuestionItem[] }) =>
         this.requestUserQuestion(jobId, job?.conversationId || "", input.questions),
@@ -3476,6 +3485,52 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     });
     await this.persistAndBroadcast();
     return finalResult;
+  }
+
+  /**
+   * Install a skill from a local path the user referenced in chat: a SKILL.md
+   * file, a directory containing SKILL.md, or a skill ZIP package. Unlike
+   * installPackageArchive the source does not have to be an uploaded
+   * attachment. Registers/updates the local.skill.* capability and broadcasts
+   * so the skills page reflects the install immediately.
+   */
+  private async installLocalSkill(
+    sourcePath: string,
+    signal: AbortSignal,
+  ): Promise<LocalSkillInstallResult | LocalPackageInstallResult> {
+    if (!isAbsolute(sourcePath)) {
+      throw new Error("Skill source path must be an absolute path.");
+    }
+    const resolvedPath = resolve(sourcePath);
+    if (extname(resolvedPath).toLowerCase() === ".zip") {
+      const inspection = await this.localPackageManager.inspectArchive(resolvedPath);
+      if (inspection.kind !== "skill" || !inspection.skills.length) {
+        throw new Error(`The ZIP package is a ${inspection.kind} package, not a skill package.`);
+      }
+      const result = await this.localPackageManager.installArchive(resolvedPath, inspection.sha256, signal);
+      await this.reconcileLocalPackages();
+      await this.recordMcpEvent("Local skill installed from ZIP", undefined, {
+        packageId: result.id,
+        kind: result.kind,
+        installPath: result.installPath,
+      });
+      await this.persistAndBroadcast();
+      return result;
+    }
+    const result = await this.localPackageManager.installSkillFromPath(resolvedPath);
+    const capabilityId = `local.skill.${result.id}`;
+    const existing = this.state.capabilities.find((capability) => capability.id === capabilityId);
+    const capability: CapabilityDefinition = {
+      id: capabilityId,
+      name: result.name,
+      kind: "skill",
+      description: result.description,
+      enabled: existing?.enabled ?? true,
+    };
+    this.state.capabilities = [...this.state.capabilities.filter((item) => item.id !== capability.id), capability];
+    this.state.deletedCapabilityIds = this.state.deletedCapabilityIds.filter((id) => id !== capability.id);
+    await this.persistAndBroadcast();
+    return result;
   }
 
   private async reconcileLocalPackages(): Promise<void> {
@@ -4880,12 +4935,18 @@ export function redactToolMarketConfig(
 }
 
 export function resolveMentionedSubagent(prompt: string, subagents: SubagentConfig[]): SubagentConfig | undefined {
-  const match = prompt.match(/@([\w-]+)/);
-  if (!match) {
-    return undefined;
+  // Scan every @token, not just the first: file mentions like `@report.pdf`
+  // may precede the subagent mention and must not shadow it.
+  for (const match of prompt.matchAll(/@([\w-]+)/g)) {
+    const key = match[1].toLowerCase();
+    const found = subagents.find(
+      (item) => item.enabled && (item.id.toLowerCase() === key || item.name.toLowerCase() === key),
+    );
+    if (found) {
+      return found;
+    }
   }
-  const key = match[1].toLowerCase();
-  return subagents.find((item) => item.enabled && (item.id.toLowerCase() === key || item.name.toLowerCase() === key));
+  return undefined;
 }
 
 function titleFromPrompt(prompt: string): string {
@@ -5053,11 +5114,10 @@ function slug(value: string): string {
   return (
     value
       .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/[^a-z0-9一-鿿]+/g, "-") // keep CJK names readable; 一-鿿 is U+4E00-U+9FFF
       .replace(/^-|-$/g, "") || randomId("subagent")
   );
 }
-
 /** Lenient SKILL.md front-matter reader for the orphan-skill fallback; never throws. */
 function parseSkillMetadataLoose(content: string): { name?: string; description?: string } {
   const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);

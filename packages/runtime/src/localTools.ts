@@ -28,6 +28,28 @@ export interface LocalToolHost {
 // scripts (.py/.js/.sh/...) are intentionally excluded.
 export const generatedResultFilePattern = /\.(pptx|docx|xlsx|pdf|csv|tsv|txt|md|html?|json|png|jpe?g|webp)\b/i;
 
+// Folder convention under the output root: final deliverables go to `target/`
+// (listed for download in chat), intermediate files to `process/` (or anywhere
+// else outside `target/`).
+export const targetOutputDirName = "target";
+export const processOutputDirName = "process";
+
+export function localToolOutputRoot(host: LocalToolHost): string {
+  return host.projectRoot || host.workspacePath || join(host.dataDir, "generated-files");
+}
+
+// Classify a captured file by its location relative to the output root.
+// Returns undefined for files outside the output root (kept visible for
+// backward compatibility).
+export function generatedFileRoleForPath(outputRoot: string, filePath: string): "target" | "process" | undefined {
+  const relativePath = relative(resolve(outputRoot), resolve(filePath));
+  if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    return undefined;
+  }
+  const firstSegment = relativePath.split(/[\\/]/)[0];
+  return firstSegment.toLowerCase() === targetOutputDirName ? "target" : "process";
+}
+
 const shellCaptureIgnoreDirs = new Set([
   "node_modules",
   ".git",
@@ -55,7 +77,7 @@ export async function readLocalFile(filePath: string): Promise<LocalToolResult> 
 }
 
 export async function writeLocalFile(target: string, content: string, host: LocalToolHost): Promise<LocalToolResult> {
-  const outputRoot = host.projectRoot || host.workspacePath || join(host.dataDir, "generated-files");
+  const outputRoot = localToolOutputRoot(host);
   const outputPath =
     host.projectRoot && host.allowedWriteRoots?.length
       ? resolveProjectWriteTarget(host.projectRoot, target, host.allowedWriteRoots)
@@ -69,6 +91,7 @@ export async function writeLocalFile(target: string, content: string, host: Loca
     path: outputPath,
     size: info.size,
     createdAt: host.nowIso(),
+    role: generatedFileRoleForPath(outputRoot, outputPath),
   };
   return {
     text: `Wrote ${generatedFile.name} (${generatedFile.size} bytes)\n${outputPath}`,
@@ -136,9 +159,12 @@ export async function shellLocalCommand(
   cwd?: string,
   host?: LocalToolHost,
 ): Promise<LocalToolResult> {
-  const before = host && cwd ? await snapshotShellResultFiles(cwd) : new Map<string, number>();
+  const outputRoot = host ? localToolOutputRoot(host) : undefined;
+  const deliverableTargetDir = outputRoot ? resolve(join(outputRoot, targetOutputDirName)) : undefined;
+  const before = host && cwd ? await snapshotShellResultFiles(cwd, deliverableTargetDir) : new Map<string, number>();
   const result = await runShellCommand(command, signal, timeoutMs, cwd);
-  const generatedFiles = host && cwd ? await diffShellResultFiles(cwd, before, host) : [];
+  const generatedFiles =
+    host && cwd ? await diffShellResultFiles(cwd, before, host, outputRoot, deliverableTargetDir) : [];
   const stdout = truncateWithMarker(result.stdout, 16_000);
   const stderr = truncateWithMarker(result.stderr, 8_000);
   return {
@@ -157,9 +183,15 @@ export async function shellLocalCommand(
   };
 }
 
-async function snapshotShellResultFiles(root: string): Promise<Map<string, number>> {
+async function snapshotShellResultFiles(root: string, deliverableTargetDir?: string): Promise<Map<string, number>> {
   const files = new Map<string, number>();
-  await collectShellResultFiles(root, shellCaptureMaxDepth, { remaining: shellCaptureMaxEntries }, files);
+  await collectShellResultFiles(
+    root,
+    shellCaptureMaxDepth,
+    { remaining: shellCaptureMaxEntries },
+    files,
+    deliverableTargetDir,
+  );
   return files;
 }
 
@@ -168,6 +200,7 @@ async function collectShellResultFiles(
   depth: number,
   budget: { remaining: number },
   out: Map<string, number>,
+  deliverableTargetDir?: string,
 ): Promise<void> {
   if (depth < 0 || budget.remaining <= 0) {
     return;
@@ -185,10 +218,16 @@ async function collectShellResultFiles(
     const fullPath = join(root, entry.name);
     if (entry.isDirectory()) {
       const name = entry.name.toLowerCase();
-      if (shellCaptureIgnoreDirs.has(name) || (entry.name.startsWith(".") && name !== ".supbot")) {
+      // The designated deliverable folder (<outputRoot>/target) is scanned even
+      // though "target" is otherwise ignored as a build-output directory name.
+      const isDeliverableTarget = deliverableTargetDir !== undefined && resolve(fullPath) === deliverableTargetDir;
+      if (
+        !isDeliverableTarget &&
+        (shellCaptureIgnoreDirs.has(name) || (entry.name.startsWith(".") && name !== ".supbot"))
+      ) {
         continue;
       }
-      await collectShellResultFiles(fullPath, depth - 1, budget, out);
+      await collectShellResultFiles(fullPath, depth - 1, budget, out, deliverableTargetDir);
     } else if (entry.isFile() && generatedResultFilePattern.test(entry.name)) {
       budget.remaining -= 1;
       try {
@@ -205,8 +244,10 @@ async function diffShellResultFiles(
   root: string,
   before: Map<string, number>,
   host: LocalToolHost,
+  outputRoot?: string,
+  deliverableTargetDir?: string,
 ): Promise<GeneratedFile[]> {
-  const after = await snapshotShellResultFiles(root);
+  const after = await snapshotShellResultFiles(root, deliverableTargetDir);
   const files: GeneratedFile[] = [];
   for (const [filePath, mtimeMs] of after) {
     const previous = before.get(filePath);
@@ -221,6 +262,7 @@ async function diffShellResultFiles(
         path: filePath,
         size: info.size,
         createdAt: host.nowIso(),
+        role: outputRoot ? generatedFileRoleForPath(outputRoot, filePath) : undefined,
       });
     } catch {
       // Ignore files that disappear mid-scan.

@@ -590,7 +590,7 @@ const zh: Record<string, string> = {
   "No skills installed": "还没有安装技能",
   "No subagents": "还没有子智能体",
   "Click a skill to insert it into the prompt.": "点击技能填入输入框。",
-  "Subagents are triggered with @name in chat.": "在聊天中用 @名称 触发子智能体。",
+  "Click an expert to insert @name into the prompt.": "点击专家将 @名称 填入输入框。",
   "Search skills and MCPs": "搜索技能名称、MCP、ID 或描述",
   "No matching capabilities": "没有匹配的技能或 MCP",
   "Capabilities failed to load": "技能与 MCP 加载失败",
@@ -848,6 +848,9 @@ const zh: Record<string, string> = {
   More: "更多",
   "What can I help you with today? @ to reference files, / for skills and commands":
     "今天帮你做些什么？@ 引用对话文件，/ 调用技能与指令",
+  "What can I help you with today? @ to reference files and experts, / for skills and commands":
+    "今天帮你做些什么？@ 引用文件和专家，/ 调用技能与指令",
+  "No matches": "没有匹配项",
   "Remove attachment": "移除附件",
   "Ask every time": "每次询问",
   "Auto-approve routine actions": "自动批准常规操作",
@@ -901,6 +904,9 @@ const zh: Record<string, string> = {
   "Password reset is not available yet.": "密码重置功能开发中",
   "HyBot © 2026 · Intelligent work platform": "中诚信和逸科技 © 2026 HyBot · 智能工作平台",
   "Resize right panel": "拖拽调整右侧面板宽度",
+  "Searching files…": "正在搜索文件…",
+  "No matching files": "没有匹配的文件",
+  "Failed to attach file.": "附加文件失败。",
 };
 
 export function translate(language: Language, key: string, vars?: Record<string, string | number>): string {

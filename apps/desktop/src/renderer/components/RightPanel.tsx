@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ApiOutlined,
   CloseOutlined,
@@ -57,7 +57,7 @@ import {
 } from "../lib/chatFormat";
 import { compareCreatedAt, shouldShowJobRuntimeEvent } from "../lib/snapshotApply";
 import { decodeBase64Utf8, formatJsonPreview } from "../lib/filePreview";
-import type { DetailPanel } from "../lib/types";
+import { convertDocxToHtml, parseXlsxFirstSheet, renderPptxInto, type XlsxSheetPreview } from "../lib/officePreview";
 import { connectServstationAgent } from "../servstationConnection";
 
 export function recentJobProgress(progress: string[]): string[] {
@@ -72,71 +72,51 @@ export function recentJobProgress(progress: string[]): string[] {
 }
 
 export function RightPanel({
-  snapshot,
-  activeConversationId,
-  panel,
-  setPanel,
   collapsed,
   width,
   t,
-  onLocateJob,
   activeFile,
   onOpenDefaultApp,
   onShowInFolder,
   onSaveAs,
   onCloseFile,
 }: {
-  snapshot: RuntimeSnapshot;
-  activeConversationId: string;
-  panel: DetailPanel;
-  setPanel: (panel: DetailPanel) => void;
   collapsed: boolean;
   width: number;
   t: (key: string, vars?: Record<string, string | number>) => string;
-  onLocateJob: (job: AgentJob) => void;
   activeFile: LocalFileReference | null;
   onOpenDefaultApp: (file: LocalFileReference) => Promise<void>;
   onShowInFolder: (file: LocalFileReference) => Promise<void>;
   onSaveAs: (file: LocalFileReference) => Promise<void>;
   onCloseFile: () => void;
 }) {
-  const conversationJobs = snapshot.jobs.filter((job) => job.conversationId === activeConversationId);
-  const activeKey = panel === "file" && activeFile ? "file" : "tasks";
   return (
     <aside className={`activity-panel ${collapsed ? "is-collapsed" : ""}`} style={{ width }}>
-      <Tabs
-        activeKey={activeKey}
-        onChange={(key) => setPanel(key as DetailPanel)}
-        items={[
-          {
-            key: "tasks",
-            label: t("Tasks"),
-            children: <ConversationTasksPanel jobs={conversationJobs} onLocateJob={onLocateJob} t={t} />,
-          },
-          ...(activeFile
-            ? [
-                {
-                  key: "file",
-                  label: (
-                    <span className="file-tab-label" title={activeFile.name}>
-                      <FileTextOutlined /> {activeFile.name}
-                    </span>
-                  ),
-                  children: (
-                    <FilePreviewPanel
-                      file={activeFile}
-                      t={t}
-                      onOpenDefaultApp={onOpenDefaultApp}
-                      onShowInFolder={onShowInFolder}
-                      onSaveAs={onSaveAs}
-                      onClose={onCloseFile}
-                    />
-                  ),
-                },
-              ]
-            : []),
-        ]}
-      />
+      {activeFile ? (
+        <Tabs
+          activeKey="file"
+          items={[
+            {
+              key: "file",
+              label: (
+                <span className="file-tab-label" title={activeFile.name}>
+                  <FileTextOutlined /> {activeFile.name}
+                </span>
+              ),
+              children: (
+                <FilePreviewPanel
+                  file={activeFile}
+                  t={t}
+                  onOpenDefaultApp={onOpenDefaultApp}
+                  onShowInFolder={onShowInFolder}
+                  onSaveAs={onSaveAs}
+                  onClose={onCloseFile}
+                />
+              ),
+            },
+          ]}
+        />
+      ) : null}
     </aside>
   );
 }
@@ -276,7 +256,7 @@ function FilePreviewPanel({
           </span>
         </div>
         <div className="file-preview-actions">
-          {preview && preview.kind !== "office" && preview.kind !== "binary" ? (
+          {preview && preview.kind !== "binary" && preview.kind !== "pdf" && preview.kind !== "html" ? (
             <Space.Compact size="small">
               <Button
                 icon={<ZoomOutOutlined />}
@@ -326,24 +306,163 @@ function FilePreviewPanel({
           <Empty description={t("No file selected")} />
         ) : preview.tooLarge ? (
           <FileFallbackCard preview={preview} file={file} t={t} onOpenDefaultApp={onOpenDefaultApp} />
+        ) : preview.kind === "office" && preview.contentBase64 ? (
+          <OfficePreview file={file} preview={preview} zoom={zoom} t={t} onOpenDefaultApp={onOpenDefaultApp} />
         ) : preview.kind === "office" || preview.kind === "binary" ? (
           <FileFallbackCard preview={preview} file={file} t={t} onOpenDefaultApp={onOpenDefaultApp} />
         ) : preview.kind === "image" && dataUrl ? (
           <div className="file-image-viewport">
-            <img src={dataUrl} alt={file.name} style={{ maxWidth: `${zoom}%`, maxHeight: `${zoom}%` }} />
+            <img src={dataUrl} alt={file.name} style={{ width: `${zoom}%` }} />
           </div>
         ) : preview.kind === "pdf" && dataUrl ? (
           <iframe className="file-pdf-frame" src={dataUrl} title={file.name} />
         ) : preview.kind === "html" ? (
           <iframe className="file-html-frame" srcDoc={displayText} sandbox="" title={file.name} />
         ) : (
-          <div className="file-text-viewport" style={{ fontSize: `${zoom}%` }}>
-            <pre>{jsonPreview?.text || displayText}</pre>
+          <div className="file-text-viewport">
+            <pre style={{ fontSize: `${(12 * zoom) / 100}px` }}>{jsonPreview?.text || displayText}</pre>
             {jsonPreview && !jsonPreview.valid ? (
               <Tag color="warning">{t("Invalid JSON; showing raw text")}</Tag>
             ) : null}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function OfficePreview({
+  file,
+  preview,
+  zoom,
+  t,
+  onOpenDefaultApp,
+}: {
+  file: LocalFileReference;
+  preview: FilePreviewResult;
+  zoom: number;
+  t: (key: string, vars?: Record<string, string | number>) => string;
+  onOpenDefaultApp: (file: LocalFileReference) => Promise<void>;
+}) {
+  const extension = file.name.split(".").pop()?.toLowerCase() || "";
+  const [docxHtml, setDocxHtml] = useState<string | null>(null);
+  const [sheet, setSheet] = useState<XlsxSheetPreview | null>(null);
+  const [pptxReady, setPptxReady] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const pptxContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let canceled = false;
+    let cleanup: (() => void) | undefined;
+    setDocxHtml(null);
+    setSheet(null);
+    setPptxReady(false);
+    setFailed(false);
+    const base64 = preview.contentBase64;
+    const fail = () => {
+      if (!canceled) {
+        setFailed(true);
+      }
+    };
+    if (!base64) {
+      fail();
+    } else if (extension === "docx") {
+      void convertDocxToHtml(base64)
+        .then((html) => {
+          if (!canceled) {
+            setDocxHtml(html);
+          }
+        })
+        .catch(fail);
+    } else if (extension === "xlsx") {
+      void parseXlsxFirstSheet(base64)
+        .then((result) => {
+          if (!canceled) {
+            if (result) {
+              setSheet(result);
+            } else {
+              setFailed(true);
+            }
+          }
+        })
+        .catch(fail);
+    } else if (extension === "pptx") {
+      const container = pptxContainerRef.current;
+      if (!container) {
+        fail();
+      } else {
+        void renderPptxInto(base64, container, container.clientWidth || 640)
+          .then((dispose) => {
+            if (canceled) {
+              dispose();
+              return;
+            }
+            cleanup = dispose;
+            setPptxReady(true);
+          })
+          .catch(fail);
+      }
+    } else {
+      fail();
+    }
+    return () => {
+      canceled = true;
+      cleanup?.();
+    };
+  }, [preview.contentBase64, extension]);
+
+  if (failed) {
+    return <FileFallbackCard preview={preview} file={file} t={t} onOpenDefaultApp={onOpenDefaultApp} />;
+  }
+  if (extension === "pptx") {
+    return (
+      <div className="file-office-viewport">
+        {!pptxReady ? (
+          <div className="file-preview-state">
+            <Spin />
+            <span>{t("Loading file...")}</span>
+          </div>
+        ) : null}
+        <div ref={pptxContainerRef} className="file-pptx-container" style={{ width: `${zoom}%` }} />
+      </div>
+    );
+  }
+  if (extension === "docx") {
+    return docxHtml === null ? (
+      <div className="file-preview-state">
+        <Spin />
+        <span>{t("Loading file...")}</span>
+      </div>
+    ) : (
+      <div className="file-office-viewport">
+        <div
+          className="file-docx-document"
+          style={{ fontSize: `${zoom}%` }}
+          dangerouslySetInnerHTML={{ __html: docxHtml }}
+        />
+      </div>
+    );
+  }
+  return !sheet ? (
+    <div className="file-preview-state">
+      <Spin />
+      <span>{t("Loading file...")}</span>
+    </div>
+  ) : (
+    <div className="file-office-viewport">
+      <div className="file-xlsx-sheet" style={{ fontSize: `${zoom}%` }}>
+        <div className="file-xlsx-sheet-name">{sheet.name}</div>
+        <table className="file-xlsx-table">
+          <tbody>
+            {sheet.rows.map((row, rowIndex) => (
+              <tr key={rowIndex}>
+                {row.map((cell, columnIndex) =>
+                  rowIndex === 0 ? <th key={columnIndex}>{cell}</th> : <td key={columnIndex}>{cell}</td>,
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -382,51 +501,6 @@ function formatBytes(size: number): string {
     return `${(size / 1024).toFixed(1)} KB`;
   }
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function ConversationTasksPanel({
-  jobs,
-  onLocateJob,
-  t,
-}: {
-  jobs: AgentJob[];
-  onLocateJob: (job: AgentJob) => void;
-  t: (key: string, vars?: Record<string, string | number>) => string;
-}) {
-  if (!jobs.length) {
-    return (
-      <div className="activity-list">
-        <Empty description={t("No jobs yet")} />
-      </div>
-    );
-  }
-  return (
-    <div className="activity-list">
-      {jobs.map((job) => {
-        const isActiveJob = job.status === "queued" || job.status === "running";
-        return (
-          <div className={`activity-item stacked job-item ${isActiveJob ? "is-running" : ""}`} key={job.id}>
-            <button type="button" onClick={() => onLocateJob(job)} aria-label={t("Locate task message")}>
-              <div className="activity-head">
-                <strong>{job.prompt.slice(0, 70)}</strong>
-                <div className="job-status-group">
-                  {isActiveJob ? (
-                    <span className="job-running-indicator" aria-label={statusLabel(job.status, t)}>
-                      <span />
-                      <span />
-                      <span />
-                    </span>
-                  ) : null}
-                  <Tag color={statusColor(job.status)}>{statusLabel(job.status, t)}</Tag>
-                </div>
-              </div>
-              <div className="muted">{formatDateTime(job.createdAt)}</div>
-            </button>
-          </div>
-        );
-      })}
-    </div>
-  );
 }
 
 export function TasksPanel({

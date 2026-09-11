@@ -1,11 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import {
-  AppstoreAddOutlined,
-  CheckCircleOutlined,
-  ReloadOutlined,
-  SettingOutlined,
-  ToolOutlined,
-} from "@ant-design/icons";
+import { AppstoreAddOutlined, CheckCircleOutlined, ReloadOutlined, ToolOutlined } from "@ant-design/icons";
 import { Alert, Button, Empty, Input, Select, Space, Tag, Typography, message } from "antd";
 import type { RuntimeSnapshot, ToolMarketCatalogItem, ToolMarketProductType } from "@supbot/shared";
 import { formatDateTime } from "@supbot/shared";
@@ -13,13 +7,11 @@ import { formatDateTime } from "@supbot/shared";
 export function MarketWorkspace({
   refresh,
   snapshot,
-  openMarketConfig,
   openMcpConfig,
   t,
 }: {
   refresh: () => Promise<void>;
   snapshot: RuntimeSnapshot;
-  openMarketConfig: () => void;
   openMcpConfig: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
@@ -113,9 +105,6 @@ export function MarketWorkspace({
           />
           <Button icon={<ReloadOutlined />} onClick={() => void load()} loading={loading}>
             {t("Refresh")}
-          </Button>
-          <Button icon={<SettingOutlined />} onClick={openMarketConfig}>
-            {t("Market settings")}
           </Button>
         </Space>
       </div>
