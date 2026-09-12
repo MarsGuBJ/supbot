@@ -33,7 +33,7 @@ export interface SubagentRunnerHost {
   memory: MemorySnapshot;
   memoryEnabled?: boolean;
   registry: ToolRegistry;
-  permissionMode: PermissionMode;
+  getPermissionMode(): PermissionMode;
   getPermissionRules(): PermissionRule[];
   randomId(prefix: string): string;
   createToolContext(signal: AbortSignal, jobId: string, depth: number): ToolExecutionContext;
@@ -105,7 +105,7 @@ export class SubagentRunner {
         memoryEnabled: this.host.memoryEnabled,
         registry: this.host.registry,
         toolContext: this.host.createToolContext(input.signal, input.parentJobId, input.depth + 1),
-        permissionMode: this.host.permissionMode,
+        getPermissionMode: this.host.getPermissionMode,
         getPermissionRules: this.host.getPermissionRules,
         signal: input.signal,
         maxTurns: 6,

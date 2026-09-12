@@ -31,7 +31,7 @@ export interface QueryLoopInput {
   modelRequest: Omit<Parameters<ModelAdapter["complete"]>[0], "messages">;
   registry: ToolRegistry;
   toolContext: ToolExecutionContext;
-  permissionMode: PermissionMode;
+  getPermissionMode(): PermissionMode;
   getPermissionRules(): PermissionRule[];
   maxTurns?: number;
   permissionTimeoutMs?: number;
@@ -188,7 +188,7 @@ async function executeOne(
     toolCall,
     registry: input.registry,
     context: input.toolContext,
-    permissionMode: input.permissionMode,
+    permissionMode: input.getPermissionMode(),
     permissionRules: input.getPermissionRules(),
     permissionTimeoutMs: input.permissionTimeoutMs,
     requestPermission: input.requestPermission,

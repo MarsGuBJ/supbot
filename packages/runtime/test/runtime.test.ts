@@ -22,7 +22,7 @@ import { queryLoop } from "../src/queryLoop";
 import { CompactManager } from "../src/compactManager";
 import { normalizeMarketApiUrl } from "../src/toolMarket";
 import { defaultModelConfig } from "@supbot/shared";
-import type { AgentJob, ChatMessage, CompactBoundary } from "@supbot/shared";
+import type { AgentJob, ChatMessage, CompactBoundary, PermissionMode } from "@supbot/shared";
 
 const tempDirs: string[] = [];
 
@@ -602,7 +602,7 @@ describe("model client helpers", () => {
         subagents: [],
         runSubagent: async () => ({ text: "unused" }),
       },
-      permissionMode: "bypassPermissions",
+      getPermissionMode: () => "bypassPermissions",
       getPermissionRules: () => [],
       maxTurns: 1,
       requestPermission: async () => "approved",
@@ -677,13 +677,92 @@ describe("model client helpers", () => {
         subagents: [],
         runSubagent: async () => ({ text: "unused" }),
       },
-      permissionMode: "bypassPermissions",
+      getPermissionMode: () => "bypassPermissions",
       getPermissionRules: () => [],
       requestPermission: async () => "approved",
       onEvent: () => undefined,
     });
     expect(result.usage).toEqual({ promptTokens: 20, completionTokens: 6, totalTokens: 26 });
     expect(result.totalUsage).toEqual({ promptTokens: 30, completionTokens: 10, totalTokens: 40 });
+  });
+
+  test("applies permission mode changes made mid-run to subsequent tool calls", async () => {
+    const controller = new AbortController();
+    let mode: PermissionMode = "default";
+    let permissionPrompts = 0;
+    const executed: string[] = [];
+    const makeToolCall = (id: string, command: string) => ({
+      id,
+      type: "function" as const,
+      function: { name: "Shell", arguments: JSON.stringify({ command }) },
+    });
+    const turns = [
+      { text: "", toolCalls: [makeToolCall("call_first", "first")] },
+      { text: "", toolCalls: [makeToolCall("call_second", "second")] },
+      { text: "done", toolCalls: [] as ReturnType<typeof makeToolCall>[] },
+    ];
+    let turn = 0;
+    const result = await queryLoop({
+      jobId: "job_mode_switch",
+      conversationId: "conv_mode_switch",
+      messages: [{ role: "user", content: "run two commands" }],
+      model: {
+        complete: async () => turns[Math.min(turn++, turns.length - 1)],
+        stream: async function* () {
+          const modelResult = turns[Math.min(turn++, turns.length - 1)];
+          yield { type: "done" as const, result: modelResult };
+          return modelResult;
+        },
+      },
+      modelRequest: {
+        modelConfig: defaultModelConfig,
+        tools: [],
+        signal: controller.signal,
+      },
+      registry: new ToolRegistry([
+        {
+          name: "Shell",
+          description: "fake shell",
+          risk: "dangerous",
+          concurrency: "exclusive",
+          interruptBehavior: "cancel",
+          parameters: {
+            type: "object",
+            properties: { command: { type: "string" } },
+            required: ["command"],
+            additionalProperties: false,
+          },
+          summarize: () => "fake shell",
+          execute: async (toolInput: { command: string }) => {
+            executed.push(toolInput.command);
+            return { text: `ran ${toolInput.command}` };
+          },
+        },
+      ]),
+      toolContext: {
+        signal: controller.signal,
+        host: {
+          dataDir: tempDirs[tempDirs.length - 1] || tmpdir(),
+          workspacePath: tempDirs[tempDirs.length - 1] || tmpdir(),
+          randomId: (prefix: string) => `${prefix}_test`,
+          nowIso: () => new Date().toISOString(),
+        },
+        subagents: [],
+        runSubagent: async () => ({ text: "unused" }),
+      },
+      getPermissionMode: () => mode,
+      getPermissionRules: () => [],
+      requestPermission: async () => {
+        permissionPrompts += 1;
+        // User switches from "ask every time" to "bypass all" mid-run.
+        mode = "bypassPermissions";
+        return "approved";
+      },
+      onEvent: () => undefined,
+    });
+    expect(result.text).toBe("done");
+    expect(executed).toEqual(["first", "second"]);
+    expect(permissionPrompts).toBe(1);
   });
 });
 
