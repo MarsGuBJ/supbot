@@ -2193,3 +2193,81 @@ export function formatSchedule(
   }
   return job.cronExpr ? t("Cron {expr}", { expr: job.cronExpr }) : t("Cron");
 }
+
+export interface SkillFrontmatter {
+  name?: string;
+  description?: string;
+  version?: string;
+}
+
+/**
+ * Minimal YAML front-matter reader for SKILL.md files. Besides plain scalars
+ * it understands folded (`>`) and literal (`|`) block scalars, which are
+ * commonly used for multi-line `description` values; a naive line parser
+ * would otherwise read the block indicator itself (">") as the value.
+ */
+export function parseSkillFrontmatter(content: string): SkillFrontmatter {
+  const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!frontmatter) {
+    return {};
+  }
+  const metadata: SkillFrontmatter = {};
+  const lines = frontmatter[1].split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = lines[index]!.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+    if (!match) {
+      continue;
+    }
+    const key = match[1]!.toLowerCase();
+    const raw = (match[2] || "").trim();
+    let value: string;
+    if (/^[>|][+-]?$/.test(raw)) {
+      const blockLines: string[] = [];
+      while (index + 1 < lines.length && (/^\s+\S/.test(lines[index + 1]!) || !lines[index + 1]!.trim())) {
+        index += 1;
+        blockLines.push(lines[index]!);
+      }
+      value = raw.startsWith(">") ? foldYamlBlock(blockLines) : literalYamlBlock(blockLines);
+    } else {
+      value = raw.replace(/^['"]|['"]$/g, "");
+    }
+    if (key === "name" && value) {
+      metadata.name = value;
+    }
+    if (key === "description" && value) {
+      metadata.description = value;
+    }
+    if (key === "version" && value) {
+      metadata.version = value;
+    }
+  }
+  return metadata;
+}
+
+/** Folded block scalar: line breaks become spaces, blank lines stay newlines. */
+function foldYamlBlock(lines: string[]): string {
+  const paragraphs: string[] = [];
+  let current: string[] = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed) {
+      current.push(trimmed);
+    } else if (current.length) {
+      paragraphs.push(current.join(" "));
+      current = [];
+    }
+  }
+  if (current.length) {
+    paragraphs.push(current.join(" "));
+  }
+  return paragraphs.join("\n");
+}
+
+/** Literal block scalar: keep line breaks, drop trailing blank lines. */
+function literalYamlBlock(lines: string[]): string {
+  const kept = lines.map((line) => line.trim());
+  while (kept.length && !kept[kept.length - 1]) {
+    kept.pop();
+  }
+  return kept.join("\n");
+}

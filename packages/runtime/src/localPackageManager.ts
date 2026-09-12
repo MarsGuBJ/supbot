@@ -15,6 +15,7 @@ import type {
   LocalPackageSkillComponent,
   McpServerConfig,
 } from "@supbot/shared";
+import { parseSkillFrontmatter } from "@supbot/shared";
 import unzipper from "unzipper";
 import { truncate } from "./localTools";
 import { pathIsInside } from "./projectManager";
@@ -1132,27 +1133,10 @@ function parseSkillMetadataStrict(
   content: string,
   label: string,
 ): { name: string; description: string; version?: string } {
-  const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!frontmatter) {
+  if (!/^---\r?\n[\s\S]*?\r?\n---/.test(content)) {
     throw new Error(`${label} must contain YAML front matter.`);
   }
-  const metadata: { name?: string; description?: string; version?: string } = {};
-  for (const line of frontmatter[1]!.split(/\r?\n/)) {
-    const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
-    if (!match) {
-      continue;
-    }
-    const value = stripYamlString(match[2] || "");
-    if (match[1]!.toLowerCase() === "name") {
-      metadata.name = value;
-    }
-    if (match[1]!.toLowerCase() === "description") {
-      metadata.description = value;
-    }
-    if (match[1]!.toLowerCase() === "version") {
-      metadata.version = value;
-    }
-  }
+  const metadata = parseSkillFrontmatter(content);
   if (!metadata.name || !metadata.description) {
     throw new Error(`${label} must declare non-empty name and description metadata.`);
   }
@@ -1213,10 +1197,6 @@ function normalizeMcpTimeout(value: unknown): number | undefined {
     return undefined;
   }
   return Math.min(120_000, Math.max(1_000, Math.round(value)));
-}
-
-function stripYamlString(value: string): string {
-  return value.trim().replace(/^['"]|['"]$/g, "");
 }
 
 function slug(value: string): string {

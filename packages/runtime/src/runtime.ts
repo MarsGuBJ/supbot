@@ -101,6 +101,7 @@ import {
   type UserQuestionAnswer,
   type UserQuestionItem,
 } from "@supbot/shared";
+import { parseSkillFrontmatter } from "@supbot/shared";
 import { AutopilotOrchestrator } from "./autopilotOrchestrator";
 import { describeError } from "./errorFormat";
 import { stripQuotes, type LocalToolHost, type LocalToolResult } from "./localTools";
@@ -5120,26 +5121,8 @@ function slug(value: string): string {
 }
 /** Lenient SKILL.md front-matter reader for the orphan-skill fallback; never throws. */
 function parseSkillMetadataLoose(content: string): { name?: string; description?: string } {
-  const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!frontmatter) {
-    return {};
-  }
-  const metadata: { name?: string; description?: string } = {};
-  for (const line of frontmatter[1]!.split(/\r?\n/)) {
-    const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
-    if (!match) {
-      continue;
-    }
-    const key = match[1]!.toLowerCase();
-    const value = (match[2] || "").trim().replace(/^['"]|['"]$/g, "");
-    if (key === "name" && value) {
-      metadata.name = value;
-    }
-    if (key === "description") {
-      metadata.description = value;
-    }
-  }
-  return metadata;
+  const { name, description } = parseSkillFrontmatter(content);
+  return { name, description };
 }
 
 function normalizeToolMarketSource(value: ToolMarketConfigUpdate["source"]): ToolMarketConfig["source"] {

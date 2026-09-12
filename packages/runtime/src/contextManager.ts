@@ -8,6 +8,7 @@ import type {
   PersonalityConfig,
   SubagentConfig,
 } from "@supbot/shared";
+import { parseSkillFrontmatter } from "@supbot/shared";
 import type { AdapterMessage } from "./modelAdapter";
 import { truncate } from "./localTools";
 
@@ -317,30 +318,8 @@ async function readPackageReceipt(
 }
 
 function parseSkillMetadata(content: string): { name?: string; description?: string } {
-  const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!frontmatter) {
-    return {};
-  }
-  const metadata: { name?: string; description?: string } = {};
-  for (const line of frontmatter[1].split(/\r?\n/)) {
-    const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
-    if (!match) {
-      continue;
-    }
-    const key = match[1].toLowerCase();
-    const value = stripYamlString(match[2]);
-    if (key === "name") {
-      metadata.name = value;
-    }
-    if (key === "description") {
-      metadata.description = value;
-    }
-  }
-  return metadata;
-}
-
-function stripYamlString(value: string): string {
-  return value.trim().replace(/^['"]|['"]$/g, "");
+  const { name, description } = parseSkillFrontmatter(content);
+  return { name, description };
 }
 
 function formatSkillContext(skill: InstalledSkill, maxContentChars: number): string {
