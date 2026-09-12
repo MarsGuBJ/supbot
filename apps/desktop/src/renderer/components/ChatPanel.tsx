@@ -131,6 +131,7 @@ export function ChatPanel({
   onOpenModelConfig,
   onOpenFile,
   promptInjection,
+  onPromptInjectionConsumed,
 }: {
   conversation?: Conversation;
   attachments: Attachment[];
@@ -174,6 +175,7 @@ export function ChatPanel({
   onOpenSkillView: () => void;
   onOpenFile: (file: LocalFileReference) => void;
   promptInjection?: { text: string; nonce: number };
+  onPromptInjectionConsumed?: (nonce: number) => void;
 }) {
   const selectionMenuRef = useRef<HTMLDivElement | null>(null);
   const promptMenuRef = useRef<HTMLDivElement | null>(null);
@@ -231,13 +233,14 @@ export function ChatPanel({
     const separator = currentValue && !/\s$/.test(currentValue) ? " " : "";
     const nextPrompt = `${currentValue}${separator}${promptInjection.text}`;
     setPrompt(nextPrompt);
+    onPromptInjectionConsumed?.(promptInjection.nonce);
     window.requestAnimationFrame(() => {
       const textArea = promptInputRef.current;
       textArea?.focus();
       textArea?.setSelectionRange(nextPrompt.length, nextPrompt.length);
       resizeTextarea();
     });
-  }, [promptInjection, promptInjection?.nonce, resizeTextarea]);
+  }, [promptInjection, promptInjection?.nonce, onPromptInjectionConsumed, resizeTextarea]);
 
   const handleSend = useCallback(async () => {
     const text = prompt.trim();

@@ -19,7 +19,7 @@ import {
 import { Alert, Button, message, Tag, Tooltip } from "antd";
 import type { ChatMessage, ChatMessageBlock, GeneratedFile, LocalFileReference } from "@supbot/shared";
 import { statusColor, statusLabel } from "@supbot/shared";
-import { formatToolPayload, shouldAnimateRunningStatus, shouldShowGeneratedFileInChat } from "../lib/chatFormat";
+import { formatToolPayload, listVisibleGeneratedFiles, shouldAnimateRunningStatus } from "../lib/chatFormat";
 import { writeClipboardText } from "../lib/clipboard";
 import { resolveLocalFileHref } from "../lib/filePreview";
 import { QuestionBlock } from "./QuestionBlock";
@@ -38,7 +38,7 @@ export const MessageBubble = memo(function MessageBubble({
   onOpenFile?: (file: LocalFileReference) => void;
   knownFiles?: LocalFileReference[];
 }) {
-  const visibleGeneratedFiles = item.generatedFiles?.filter(shouldShowGeneratedFileInChat) || [];
+  const visibleGeneratedFiles = listVisibleGeneratedFiles(item.generatedFiles);
   const messageFiles: LocalFileReference[] = [
     ...(item.generatedFiles || []).map((file) => ({ path: file.path, name: file.name, size: file.size })),
     ...(item.attachments || [])

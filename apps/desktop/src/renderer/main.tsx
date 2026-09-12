@@ -616,6 +616,10 @@ function App() {
     setView("config");
   };
 
+  const consumePromptInjection = useCallback((nonce: number) => {
+    setPromptInjection((current) => (current && current.nonce === nonce ? undefined : current));
+  }, []);
+
   const handleInsertSkill = (name: string) => {
     setPromptInjection({ text: formatSkillPromptDirective({ name }), nonce: Date.now() });
     setView("chat");
@@ -937,6 +941,7 @@ function App() {
                   onOpenSkillView={() => setView("skill")}
                   onOpenFile={openConversationFile}
                   promptInjection={promptInjection}
+                  onPromptInjectionConsumed={consumePromptInjection}
                 />
                 <div
                   className="right-panel-resizer"

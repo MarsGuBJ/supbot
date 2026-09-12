@@ -1,4 +1,4 @@
-import type { AgentJob, ChatMessage, RuntimeEventRecord, RuntimeSnapshot, ToolCallRecord } from "@supbot/shared";
+import type { AgentJob, ChatMessage, GeneratedFile, RuntimeEventRecord, RuntimeSnapshot, ToolCallRecord } from "@supbot/shared";
 
 export const hiddenChatGeneratedFileExtensions = new Set([
   ".bat",
@@ -40,6 +40,15 @@ export function shouldShowGeneratedFileInChat(file: {
     return false;
   }
   return !hiddenChatGeneratedFileExtensions.has(generatedFileExtension(file));
+}
+
+// The same output file can be recorded several times during a run (e.g. a tool
+// rewrites it); the chat should link each file only once.
+export function listVisibleGeneratedFiles(files: GeneratedFile[] | undefined): GeneratedFile[] {
+  return (files || []).filter(
+    (file, index, list) =>
+      shouldShowGeneratedFileInChat(file) && list.findIndex((candidate) => candidate.path === file.path) === index,
+  );
 }
 
 export function shouldAnimateRunningStatus(message: ChatMessage): boolean {

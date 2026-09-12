@@ -2781,6 +2781,11 @@ button {
 
 .skill-hub-panel .market-panel {
   padding: 0;
+  /* Inside the skill hub tabs the panel grows with its content and the outer
+     .skill-hub-panel is the scroller; an inner scroll container with
+     overscroll-behavior: contain would swallow wheel events here. */
+  overflow: visible;
+  overscroll-behavior: auto;
 }
 
 .settings-card {

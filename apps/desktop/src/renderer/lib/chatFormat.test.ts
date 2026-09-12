@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { ChatMessage } from "@supbot/shared";
-import { hasPendingUserQuestion, shouldAnimateRunningStatus, shouldShowGeneratedFileInChat } from "./chatFormat";
+import type { ChatMessage, GeneratedFile } from "@supbot/shared";
+import {
+  hasPendingUserQuestion,
+  listVisibleGeneratedFiles,
+  shouldAnimateRunningStatus,
+  shouldShowGeneratedFileInChat,
+} from "./chatFormat";
 
 function message(patch: Partial<ChatMessage>): ChatMessage {
   return {
@@ -104,5 +109,43 @@ describe("shouldShowGeneratedFileInChat", () => {
     expect(shouldShowGeneratedFileInChat({ name: "build.py", path: "/out/target/build.py", role: "target" })).toBe(
       false,
     );
+  });
+});
+
+describe("listVisibleGeneratedFiles", () => {
+  function generatedFile(patch: Partial<GeneratedFile>): GeneratedFile {
+    return {
+      id: "file-1",
+      name: "deck.pptx",
+      path: "/out/target/deck.pptx",
+      size: 1024,
+      createdAt: "2026-09-05T00:00:00.000Z",
+      ...patch,
+    };
+  }
+
+  it("deduplicates entries that point to the same file path", () => {
+    const files = [
+      generatedFile({ id: "file-1" }),
+      generatedFile({ id: "file-2" }),
+      generatedFile({ id: "file-3" }),
+    ];
+    const visible = listVisibleGeneratedFiles(files);
+    expect(visible).toHaveLength(1);
+    expect(visible[0]?.id).toBe("file-1");
+  });
+
+  it("keeps distinct files and still filters hidden ones", () => {
+    const files = [
+      generatedFile({ id: "file-1" }),
+      generatedFile({ id: "file-2", name: "notes.md", path: "/out/target/notes.md" }),
+      generatedFile({ id: "file-3", name: "draft.md", path: "/out/process/draft.md", role: "process" }),
+    ];
+    expect(listVisibleGeneratedFiles(files).map((file) => file.id)).toEqual(["file-1", "file-2"]);
+  });
+
+  it("handles an empty or missing list", () => {
+    expect(listVisibleGeneratedFiles(undefined)).toEqual([]);
+    expect(listVisibleGeneratedFiles([])).toEqual([]);
   });
 });
