@@ -81,6 +81,7 @@ const zh: Record<string, string> = {
   Unfiled: "未归档",
   "Project name": "项目名称",
   "Project resources": "项目资源",
+  "No project": "不选任何项目",
   "No project resources": "暂无项目资源",
   "Resource count": "资源",
   "Project actions": "项目操作",

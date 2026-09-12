@@ -1514,7 +1514,7 @@ export function ChatPanel({
                   aria-label={t("Choose project")}
                   onChange={(event) => onSelectProject(event.target.value)}
                 >
-                  <option value="">{t("Choose project")}</option>
+                  <option value="">{t("No project")}</option>
                   {projects.map((project) => (
                     <option key={project.id} value={project.id} disabled={project.status === "archived"}>
                       {project.name}

@@ -632,6 +632,14 @@ function App() {
 
   const selectProject = async (projectId: string) => {
     if (!projectId) {
+      // "No project": the conversation stays unfiled and belongs to no project.
+      const unfiledConversation = snapshot?.conversations.find((item) => !item.projectId);
+      if (unfiledConversation) {
+        setActiveConversationId(unfiledConversation.id);
+        setActiveProjectId("");
+      } else {
+        await startNewConversation(null);
+      }
       return;
     }
     const conversationInProject = snapshot?.conversations.find((item) => item.projectId === projectId);
