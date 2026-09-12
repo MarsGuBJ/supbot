@@ -4055,6 +4055,12 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
   }
 
   private upsertMcpCapability(): void {
+    // A user-deleted capability stays deleted: mirror the tool-market and
+    // orphan-skill reconciles, which skip ids in deletedCapabilityIds.
+    if (this.state.deletedCapabilityIds.includes("tool.mcp")) {
+      this.state.capabilities = this.state.capabilities.filter((item) => item.id !== "tool.mcp");
+      return;
+    }
     const enabled = this.state.mcpServers.some((server) => server.enabled);
     const capability: CapabilityDefinition = {
       id: "tool.mcp",

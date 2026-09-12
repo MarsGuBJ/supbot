@@ -1530,6 +1530,21 @@ describe("SupbotRuntime", () => {
     expect(restarted.snapshot().capabilities.some((item) => item.id === "tool.scheduler")).toBe(false);
   });
 
+  test("deleted Local MCP capability stays deleted after restart", async () => {
+    const rootDir = await createGitRoot();
+    const dir = await mkdtemp(join(tmpdir(), "supbot-test-"));
+    tempDirs.push(dir);
+    const runtime = new SupbotRuntime(new JsonFileStorage(dir), { rootDir });
+    await runtime.init();
+    expect(runtime.snapshot().capabilities.some((item) => item.id === "tool.mcp")).toBe(true);
+    await runtime.deleteCapability("tool.mcp");
+    expect(runtime.snapshot().capabilities.some((item) => item.id === "tool.mcp")).toBe(false);
+
+    const restarted = new SupbotRuntime(new JsonFileStorage(dir), { rootDir });
+    await restarted.init();
+    expect(restarted.snapshot().capabilities.some((item) => item.id === "tool.mcp")).toBe(false);
+  });
+
   test("migrates the bare Botstation host to the public agent client port", async () => {
     const rootDir = await createGitRoot();
     const dir = await mkdtemp(join(tmpdir(), "supbot-test-"));
