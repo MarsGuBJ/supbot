@@ -132,7 +132,7 @@ async function seedBundledDefaultData(dataDir: string): Promise<void> {
   // Top up missing bundled data on every launch so upgrades and accidental
   // cleanup self-heal; copyMissingTree never overwrites existing files. The
   // marker is kept only as a record of the most recent seed, not as a gate.
-  for (const folder of ["skills", "tool-market"]) {
+  for (const folder of ["skills", "plugins", "tool-market"]) {
     const source = join(bundledDataDir, folder);
     if (await pathExists(source)) {
       await copyMissingTree(source, join(dataDir, folder));
@@ -151,7 +151,7 @@ async function seedBundledDefaultData(dataDir: string): Promise<void> {
 async function resolveBundledDefaultDataDir(): Promise<string | undefined> {
   const candidates = [join(process.resourcesPath, "default-data"), join(app.getAppPath(), "build", "default-data")];
   for (const candidate of candidates) {
-    if (await pathExists(join(candidate, "skills"))) {
+    if (await pathExists(join(candidate, "manifest.json"))) {
       return candidate;
     }
   }

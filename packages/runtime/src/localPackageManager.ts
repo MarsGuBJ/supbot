@@ -552,6 +552,7 @@ function capabilitiesForPackage(parsed: ParsedLocalPackage): CapabilityDefinitio
     kind: "skill",
     description: skill.description,
     enabled: true,
+    ...(parsed.kind === "plugin" ? { pluginId: `local.plugin.${parsed.id}` } : {}),
   }));
   if (parsed.kind === "plugin") {
     capabilities.push({

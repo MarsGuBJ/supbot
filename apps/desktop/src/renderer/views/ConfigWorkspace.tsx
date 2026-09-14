@@ -1165,5 +1165,8 @@ export function SubagentsCard({
 export function filterVisibleCapabilities(
   capabilities: RuntimeSnapshot["capabilities"] | undefined,
 ): RuntimeSnapshot["capabilities"] {
-  return (capabilities || []).filter((capability) => !hiddenSlashCommandCapabilityIds.has(capability.id));
+  // Member skills are represented by their parent plugin card on this page.
+  return (capabilities || []).filter(
+    (capability) => !capability.pluginId && !hiddenSlashCommandCapabilityIds.has(capability.id),
+  );
 }

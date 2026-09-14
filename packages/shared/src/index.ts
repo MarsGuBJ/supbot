@@ -143,6 +143,8 @@ export interface CapabilityDefinition {
   kind: "skill" | "tool" | "plugin" | "mcp" | "subagent" | "scheduler" | "storage";
   description: string;
   enabled: boolean;
+  /** Member skills point at the capability id of their parent plugin. */
+  pluginId?: string;
 }
 
 export interface CapabilityUpdateInput {

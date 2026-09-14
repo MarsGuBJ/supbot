@@ -213,6 +213,14 @@ export interface ToolMarketAuth {
   password?: string;
 }
 
+/**
+ * Origin HyBot presents to the tool market integration adapter. The market
+ * frontend rejects requests without a trusted Origin header (CORS-style
+ * guard); self-hosted markets must add this origin to their
+ * MARKET_INTEGRATION_ORIGINS list.
+ */
+export const toolMarketClientOrigin = "https://hybot.local";
+
 async function authenticateToolMarket(config: ToolMarketConfig, auth: ToolMarketAuth): Promise<string | undefined> {
   if (!auth.email?.trim() || !auth.password?.trim()) {
     return undefined;
@@ -248,6 +256,7 @@ async function authenticateToolMarket(config: ToolMarketConfig, auth: ToolMarket
 
 function authHeaders(accessToken?: string, cookie?: string): Record<string, string> {
   return {
+    Origin: toolMarketClientOrigin,
     ...(accessToken?.trim() ? { Authorization: `Bearer ${accessToken.trim()}` } : {}),
     ...(cookie ? { Cookie: cookie } : {}),
   };

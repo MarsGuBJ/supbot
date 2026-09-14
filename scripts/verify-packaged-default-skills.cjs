@@ -73,21 +73,26 @@ async function main() {
     `(async () => {
     const snapshot = await window.supbot.snapshot();
     const market = await window.supbot.listToolMarket({ query: "anthropic" });
-    const anthropicCapabilities = snapshot.capabilities
-      .filter((item) => item.kind === "skill" && item.id.includes("anthropic"))
+    const pluginCapabilities = snapshot.capabilities.filter((item) => item.kind === "plugin");
+    const memberSkills = snapshot.capabilities
+      .filter((item) => item.kind === "skill" && item.pluginId === "market.plugin.anthropic-agent-skills")
       .map((item) => item.id)
       .sort();
     return {
       url: location.href,
-      capabilityCount: anthropicCapabilities.length,
-      hasDocx: anthropicCapabilities.includes("market.skill.anthropic.docx"),
-      hasPdf: anthropicCapabilities.includes("market.skill.anthropic.pdf"),
+      pluginCount: pluginCapabilities.length,
+      hasPlugin: pluginCapabilities.some((item) => item.id === "market.plugin.anthropic-agent-skills"),
+      memberCount: memberSkills.length,
+      allMembersPrefixed: memberSkills.every((id) => id.startsWith("market.skill.anthropic-agent-skills.")),
+      hasDocx: memberSkills.includes("market.skill.anthropic-agent-skills.docx"),
+      hasPdf: memberSkills.includes("market.skill.anthropic-agent-skills.pdf"),
+      pluginInstalled: market.some((item) => item.id === "anthropic-agent-skills" && item.installed),
       installedMarketCount: market.filter((item) => item.installed).length,
-      capabilitySample: anthropicCapabilities.slice(0, 5)
+      capabilitySample: memberSkills.slice(0, 5)
     };
   })()`,
   );
-  const seededSkillsDir = path.join(userDataDir, "data", "skills");
+  const seededSkillsDir = path.join(userDataDir, "data", "plugins", "anthropic-agent-skills", "skills");
   const seededSkillCount = fs.existsSync(seededSkillsDir)
     ? fs.readdirSync(seededSkillsDir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).length
     : 0;
@@ -101,10 +106,14 @@ async function main() {
   const verification = { ...result, seededSkillCount, markerExists, hasUpdateConfig, userDataDir };
   console.log(JSON.stringify(verification, null, 2));
   if (
-    result.capabilityCount < 17 ||
+    result.pluginCount !== 1 ||
+    !result.hasPlugin ||
+    result.memberCount < 17 ||
+    !result.allMembersPrefixed ||
     !result.hasDocx ||
     !result.hasPdf ||
-    result.installedMarketCount < 17 ||
+    !result.pluginInstalled ||
+    result.installedMarketCount < 1 ||
     seededSkillCount < 17 ||
     !markerExists ||
     !hasUpdateConfig

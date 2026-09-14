@@ -31,18 +31,21 @@ fs.rmSync(targetRoot, { recursive: true, force: true });
 fs.mkdirSync(targetRoot, { recursive: true });
 fs.cpSync(sourceSkillsDir, path.join(targetRoot, "skills"), { recursive: true, force: true });
 
-const receiptCount = copyMarketReceipts(skillNames);
+const pluginNames = copyMarketPlugins();
+const receiptCount = copyMarketReceipts(skillNames, pluginNames);
 const manifest = {
-  version: 1,
+  version: 2,
   createdAt: new Date().toISOString(),
-  sourceDataDir,
   skillCount: skillNames.length,
   receiptCount,
   skills: skillNames,
+  plugins: pluginNames.map((pluginName) => describeBundledPlugin(pluginName)),
 };
 fs.writeFileSync(path.join(targetRoot, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 
-console.log(`Bundled ${skillNames.length} skills and ${receiptCount} tool-market receipts into ${targetRoot}`);
+console.log(
+  `Bundled ${skillNames.length} skills, ${pluginNames.length} plugins and ${receiptCount} tool-market receipts into ${targetRoot}`,
+);
 
 function resolveSourceDataDir() {
   const candidates = [
@@ -60,13 +63,68 @@ function resolveSourceDataDir() {
   fail(`Unable to find an installed HyBot data directory. Checked: ${candidates.join(", ")}`);
 }
 
-function copyMarketReceipts(skillNames) {
+function copyMarketPlugins() {
+  const sourcePluginsDir = path.join(sourceDataDir, "plugins");
+  if (!isDirectory(sourcePluginsDir)) {
+    return [];
+  }
+  const pluginNames = fs
+    .readdirSync(sourcePluginsDir, { withFileTypes: true })
+    .filter(
+      (entry) =>
+        entry.isDirectory() && fs.existsSync(path.join(sourcePluginsDir, entry.name, "supbot-local-tool.json")),
+    )
+    .map((entry) => entry.name)
+    .sort((a, b) => a.localeCompare(b));
+  for (const pluginName of pluginNames) {
+    const target = path.join(targetRoot, "plugins", pluginName);
+    fs.cpSync(path.join(sourcePluginsDir, pluginName), target, { recursive: true, force: true });
+    // supbot-local-package.json holds machine-specific absolute skill paths;
+    // the runtime rewrites it on first launch when missing.
+    fs.rmSync(path.join(target, "supbot-local-package.json"), { force: true });
+    stripLocalPath(path.join(target, "supbot-local-tool.json"));
+  }
+  return pluginNames;
+}
+
+function describeBundledPlugin(pluginName) {
+  const pluginDir = path.join(targetRoot, "plugins", pluginName);
+  const skillsDir = path.join(pluginDir, "skills");
+  const skills = isDirectory(skillsDir)
+    ? fs
+        .readdirSync(skillsDir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && fs.existsSync(path.join(skillsDir, entry.name, "SKILL.md")))
+        .map((entry) => entry.name)
+        .sort((a, b) => a.localeCompare(b))
+    : [];
+  return {
+    id: pluginName,
+    capabilityId: readJson(path.join(pluginDir, "supbot-local-tool.json"))?.deployment?.capability?.id,
+    skills,
+  };
+}
+
+// A shipped plugin receipt must not carry the bundling machine's absolute
+// localPath: reconcile uses it to locate member skills, and a stale path
+// would silently break member expansion on user machines. Without localPath
+// the runtime falls back to <dataDir>/plugins/<install-slug>.
+function stripLocalPath(filePath) {
+  const manifest = readJson(filePath);
+  if (!manifest) {
+    return;
+  }
+  delete manifest.localPath;
+  fs.writeFileSync(filePath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+}
+
+function copyMarketReceipts(skillNames, pluginNames = []) {
   const sourceMarketRoot = path.join(sourceDataDir, "tool-market");
   if (!isDirectory(sourceMarketRoot)) {
     return 0;
   }
   const targetMarketRoot = path.join(targetRoot, "tool-market");
   const skillNameSet = new Set(skillNames);
+  const pluginNameSet = new Set(pluginNames);
   let count = 0;
   const copiedSkillNames = new Set();
   for (const originEntry of fs.readdirSync(sourceMarketRoot, { withFileTypes: true })) {
@@ -84,11 +142,21 @@ function copyMarketReceipts(skillNames) {
       const productId = manifest?.product?.id;
       const localPath = typeof manifest?.localPath === "string" ? manifest.localPath : undefined;
       const localDirName = localPath ? path.basename(localPath) : undefined;
-      if (skillNameSet.has(productEntry.name) || skillNameSet.has(productId) || skillNameSet.has(localDirName)) {
-        fs.cpSync(productPath, path.join(targetMarketRoot, originEntry.name, productEntry.name), {
+      const isBundledPlugin = manifest?.localKind === "plugin" && pluginNameSet.has(productEntry.name);
+      if (
+        skillNameSet.has(productEntry.name) ||
+        skillNameSet.has(productId) ||
+        skillNameSet.has(localDirName) ||
+        isBundledPlugin
+      ) {
+        const target = path.join(targetMarketRoot, originEntry.name, productEntry.name);
+        fs.cpSync(productPath, target, {
           recursive: true,
           force: true,
         });
+        if (isBundledPlugin) {
+          stripLocalPath(path.join(target, "supbot-market-install.json"));
+        }
         count += 1;
         copiedSkillNames.add(productEntry.name);
         if (productId) {

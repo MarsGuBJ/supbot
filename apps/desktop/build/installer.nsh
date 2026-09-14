@@ -7,6 +7,8 @@
 !macro customInstall
   CreateDirectory "$APPDATA\HyBot\data\skills"
   CopyFiles /SILENT "$INSTDIR\resources\default-data\skills\*" "$APPDATA\HyBot\data\skills"
+  CreateDirectory "$APPDATA\HyBot\data\plugins"
+  CopyFiles /SILENT "$INSTDIR\resources\default-data\plugins\*" "$APPDATA\HyBot\data\plugins"
   CreateDirectory "$APPDATA\HyBot\data\tool-market"
   CopyFiles /SILENT "$INSTDIR\resources\default-data\tool-market\*" "$APPDATA\HyBot\data\tool-market"
 !macroend

@@ -83,6 +83,75 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
+const remotePluginProduct = {
+  id: "anthropic-agent-skills",
+  name: "Anthropic Agent Skills",
+  type: "plugin",
+  provider_name: "Anthropic",
+  description: "Bundled Anthropic skills.",
+  billing_mode: "free",
+  capability: {
+    id: "market.plugin.anthropic-agent-skills",
+    name: "Anthropic Agent Skills",
+    kind: "plugin",
+    description: "Bundled Anthropic skills.",
+    enabled: true,
+  },
+  local_deployment: {
+    kind: "plugin",
+    files: [
+      {
+        path: "skills/pdf/SKILL.md",
+        content: "---\nname: pdf\ndescription: PDF workflows\n---\n# PDF\n",
+      },
+      {
+        path: "skills/docx/SKILL.md",
+        content: "---\nname: docx\ndescription: DOCX workflows\n---\n# DOCX\n",
+      },
+    ],
+  },
+};
+
+async function startRemotePluginMarket(product: Record<string, unknown> = remotePluginProduct) {
+  const seenOrigins: Array<string | undefined> = [];
+  const server = createServer((request, response) => {
+    seenOrigins.push(request.headers.origin);
+    const url = new URL(request.url || "/", "http://127.0.0.1");
+    response.setHeader("Content-Type", "application/json");
+    if (url.searchParams.get("action") === "login") {
+      response.setHeader("Set-Cookie", "toolsmarket_session=session-1; Path=/; HttpOnly");
+      response.end(JSON.stringify({ authenticated: true }));
+      return;
+    }
+    response.end(JSON.stringify({ items: [product] }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address() as AddressInfo;
+  return {
+    apiUrl: `http://127.0.0.1:${address.port}`,
+    seenOrigins,
+    close: () => new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+  };
+}
+
+async function installRemotePlugin(runtime: SupbotRuntime, apiUrl: string, productId = "anthropic-agent-skills") {
+  await runtime.updateToolMarketConfig({
+    source: "remote",
+    apiUrl,
+    accountEmail: "subscriber@example.com",
+    password: "market123",
+  });
+  await runtime.listToolMarket({});
+  return runtime.installToolMarketProduct(productId);
+}
+
+function memberSkillCapabilities(runtime: SupbotRuntime) {
+  return runtime
+    .snapshot()
+    .capabilities.filter((item) => item.pluginId === "market.plugin.anthropic-agent-skills")
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
 async function waitForJob(runtime: SupbotRuntime, jobId: string): Promise<void> {
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
@@ -1921,6 +1990,208 @@ describe("SupbotRuntime", () => {
       await expect(readFile(join(receiptPath, "supbot-market-install.json"), "utf8")).rejects.toThrow();
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  test("installs a market plugin product as one plugin capability with member skill capabilities", async () => {
+    const market = await startRemotePluginMarket();
+    try {
+      const runtime = await createRuntime();
+      const dataDir = tempDirs[tempDirs.length - 1];
+      const installed = await installRemotePlugin(runtime, market.apiUrl);
+      expect(installed).toMatchObject({ id: "anthropic-agent-skills", installed: true });
+
+      const capabilities = runtime.snapshot().capabilities;
+      const plugin = capabilities.find((item) => item.id === "market.plugin.anthropic-agent-skills");
+      expect(plugin).toMatchObject({ kind: "plugin", enabled: true });
+      const members = memberSkillCapabilities(runtime);
+      expect(members.map((item) => item.id)).toEqual([
+        "market.skill.anthropic-agent-skills.docx",
+        "market.skill.anthropic-agent-skills.pdf",
+      ]);
+      for (const member of members) {
+        expect(member).toMatchObject({ kind: "skill", enabled: true });
+      }
+      expect(members.find((item) => item.id.endsWith(".pdf"))).toMatchObject({
+        name: "pdf",
+        description: "PDF workflows",
+      });
+
+      const pluginDir = join(dataDir, "plugins", "anthropic-agent-skills");
+      const receipt = JSON.parse(await readFile(join(pluginDir, "supbot-local-package.json"), "utf8")) as {
+        skills: Array<{ path: string; capabilityId: string }>;
+      };
+      expect(receipt.skills).toHaveLength(2);
+      for (const skill of receipt.skills) {
+        expect(skill.path).toBe(join(pluginDir, "skills", skill.capabilityId.endsWith(".pdf") ? "pdf" : "docx"));
+      }
+      expect(receipt.skills.map((skill) => skill.capabilityId).sort()).toEqual(members.map((item) => item.id));
+    } finally {
+      await market.close();
+    }
+  });
+
+  test("sends the HyBot client origin to the remote market adapter", async () => {
+    const market = await startRemotePluginMarket();
+    try {
+      const runtime = await createRuntime();
+      await installRemotePlugin(runtime, market.apiUrl);
+      expect(market.seenOrigins.length).toBeGreaterThan(0);
+      expect(new Set(market.seenOrigins)).toEqual(new Set(["https://hybot.local"]));
+    } finally {
+      await market.close();
+    }
+  });
+
+  test("derives member skill ids from the declared plugin capability id, not the product id", async () => {
+    const product = { ...remotePluginProduct, id: "tool_9f51511ea1b4ea81" };
+    const market = await startRemotePluginMarket(product);
+    try {
+      const runtime = await createRuntime();
+      await installRemotePlugin(runtime, market.apiUrl, "tool_9f51511ea1b4ea81");
+      expect(runtime.snapshot().capabilities.some((item) => item.id === "market.plugin.anthropic-agent-skills")).toBe(
+        true,
+      );
+      expect(memberSkillCapabilities(runtime).map((item) => item.id)).toEqual([
+        "market.skill.anthropic-agent-skills.docx",
+        "market.skill.anthropic-agent-skills.pdf",
+      ]);
+    } finally {
+      await market.close();
+    }
+  });
+
+  test("reconcile preserves member skill enabled state and respects deleted capability ids", async () => {
+    const market = await startRemotePluginMarket();
+    try {
+      const runtime = await createRuntime();
+      const dataDir = tempDirs[tempDirs.length - 1];
+      const rootDir = tempDirs[tempDirs.length - 2];
+      await installRemotePlugin(runtime, market.apiUrl);
+
+      await runtime.updateCapability("market.skill.anthropic-agent-skills.pdf", { enabled: false });
+      await runtime.deleteCapability("market.skill.anthropic-agent-skills.docx");
+
+      const restarted = new SupbotRuntime(new JsonFileStorage(dataDir), { rootDir });
+      await restarted.init();
+      const members = memberSkillCapabilities(restarted);
+      expect(members.map((item) => item.id)).toEqual(["market.skill.anthropic-agent-skills.pdf"]);
+      expect(members[0]?.enabled).toBe(false);
+      expect(
+        restarted.snapshot().capabilities.some((item) => item.id === "market.skill.anthropic-agent-skills.docx"),
+      ).toBe(false);
+      expect(restarted.snapshot().capabilities.some((item) => item.id === "market.plugin.anthropic-agent-skills")).toBe(
+        true,
+      );
+    } finally {
+      await market.close();
+    }
+  });
+
+  test("reconcile absorbs stale standalone market skills shadowed by plugin member skills", async () => {
+    const market = await startRemotePluginMarket();
+    try {
+      const runtime = await createRuntime();
+      const dataDir = tempDirs[tempDirs.length - 1];
+      const rootDir = tempDirs[tempDirs.length - 2];
+      await installRemotePlugin(runtime, market.apiUrl);
+
+      // Simulate an old install: a standalone market skill receipt whose skill
+      // name matches a plugin member, plus its persisted capability.
+      const staleSkillDir = join(dataDir, "skills", "anthropic-pdf");
+      await mkdir(staleSkillDir, { recursive: true });
+      await writeFile(
+        join(staleSkillDir, "SKILL.md"),
+        "---\nname: pdf\ndescription: Old standalone PDF skill\n---\n# PDF\n",
+        "utf8",
+      );
+      const staleReceiptDir = join(dataDir, "tool-market", "remote", "anthropic-pdf");
+      await mkdir(staleReceiptDir, { recursive: true });
+      await writeFile(
+        join(staleReceiptDir, "supbot-market-install.json"),
+        `${JSON.stringify(
+          {
+            version: 1,
+            installedAt: new Date().toISOString(),
+            localKind: "skill",
+            localPath: staleSkillDir,
+            product: { id: "anthropic-pdf", name: "pdf", type: "skill", origin: "remote", free: true },
+            deployment: {
+              kind: "skill",
+              capability: {
+                id: "market.skill.anthropic.pdf",
+                name: "pdf",
+                kind: "skill",
+                description: "Old standalone PDF skill",
+                enabled: true,
+              },
+              files: [],
+            },
+          },
+          null,
+          2,
+        )}\n`,
+        "utf8",
+      );
+      const statePath = join(dataDir, "state.json");
+      const state = JSON.parse(await readFile(statePath, "utf8")) as { capabilities: unknown[] };
+      state.capabilities.push({
+        id: "market.skill.anthropic.pdf",
+        name: "pdf",
+        kind: "skill",
+        description: "Old standalone PDF skill",
+        enabled: true,
+      });
+      await writeFile(statePath, JSON.stringify(state), "utf8");
+
+      const restarted = new SupbotRuntime(new JsonFileStorage(dataDir), { rootDir });
+      await restarted.init();
+      const capabilities = restarted.snapshot().capabilities;
+      expect(capabilities.some((item) => item.id === "market.skill.anthropic.pdf")).toBe(false);
+      const member = capabilities.find((item) => item.id === "market.skill.anthropic-agent-skills.pdf");
+      expect(member).toMatchObject({ kind: "skill", pluginId: "market.plugin.anthropic-agent-skills" });
+    } finally {
+      await market.close();
+    }
+  });
+
+  test("uninstalling or deleting a plugin cascades to its member skills", async () => {
+    const market = await startRemotePluginMarket();
+    try {
+      const runtime = await createRuntime();
+      const dataDir = tempDirs[tempDirs.length - 1];
+      const rootDir = tempDirs[tempDirs.length - 2];
+      await installRemotePlugin(runtime, market.apiUrl);
+
+      await runtime.uninstallToolMarketProduct("anthropic-agent-skills");
+      expect(runtime.snapshot().capabilities.some((item) => item.id === "market.plugin.anthropic-agent-skills")).toBe(
+        false,
+      );
+      expect(memberSkillCapabilities(runtime)).toHaveLength(0);
+
+      await installRemotePlugin(runtime, market.apiUrl);
+      expect(memberSkillCapabilities(runtime)).toHaveLength(2);
+      await runtime.deleteCapability("market.plugin.anthropic-agent-skills");
+      expect(memberSkillCapabilities(runtime)).toHaveLength(0);
+      const persisted = JSON.parse(await readFile(join(dataDir, "state.json"), "utf8")) as {
+        deletedCapabilityIds: string[];
+      };
+      for (const id of [
+        "market.plugin.anthropic-agent-skills",
+        "market.skill.anthropic-agent-skills.docx",
+        "market.skill.anthropic-agent-skills.pdf",
+      ]) {
+        expect(persisted.deletedCapabilityIds).toContain(id);
+      }
+
+      const restarted = new SupbotRuntime(new JsonFileStorage(dataDir), { rootDir });
+      await restarted.init();
+      expect(restarted.snapshot().capabilities.some((item) => item.id === "market.plugin.anthropic-agent-skills")).toBe(
+        false,
+      );
+      expect(memberSkillCapabilities(restarted)).toHaveLength(0);
+    } finally {
+      await market.close();
     }
   });
 

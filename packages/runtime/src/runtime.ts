@@ -1816,8 +1816,11 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     if (!this.state.capabilities.some((item) => item.id === id)) {
       throw new Error(`Capability not found: ${id}`);
     }
-    this.state.capabilities = this.state.capabilities.filter((item) => item.id !== id);
-    this.state.deletedCapabilityIds = [...new Set([...this.state.deletedCapabilityIds, id])];
+    // Deleting a plugin capability cascades to its member skills so reconcile
+    // does not resurrect them.
+    const removedIds = [id, ...this.state.capabilities.filter((item) => item.pluginId === id).map((item) => item.id)];
+    this.state.capabilities = this.state.capabilities.filter((item) => !removedIds.includes(item.id));
+    this.state.deletedCapabilityIds = [...new Set([...this.state.deletedCapabilityIds, ...removedIds])];
     await this.persistAndBroadcast();
   }
 
@@ -1884,6 +1887,22 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     };
     this.state.capabilities = [...this.state.capabilities.filter((item) => item.id !== capability.id), capability];
     this.state.deletedCapabilityIds = this.state.deletedCapabilityIds.filter((id) => id !== capability.id);
+    if (deployment.kind === "plugin") {
+      const members = await this.marketPluginSkillCapabilities(product, capability.id, installPath);
+      const deletedCapabilityIds = new Set(this.state.deletedCapabilityIds);
+      for (const member of members) {
+        if (deletedCapabilityIds.has(member.capability.id)) {
+          continue;
+        }
+        const existing = this.state.capabilities.find((item) => item.id === member.capability.id);
+        const memberCapability: CapabilityDefinition = { ...member.capability, enabled: existing?.enabled ?? true };
+        this.state.capabilities = [
+          ...this.state.capabilities.filter((item) => item.id !== memberCapability.id),
+          memberCapability,
+        ];
+      }
+      await this.writeMarketPluginSkillReceipt(installPath, members);
+    }
     const mcpServer = this.upsertMarketMcpServer(product, deployment, installPath);
     if (mcpServer) {
       await this.recordMcpEvent("Tool market MCP installed locally", mcpServer.id, {
@@ -1909,7 +1928,9 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     await this.removeMarketMcpServer(product, deployment);
     await rm(this.localToolInstallDir(product, deployment), { recursive: true, force: true });
     await rm(this.toolMarketInstallDir(product), { recursive: true, force: true });
-    this.state.capabilities = this.state.capabilities.filter((item) => item.id !== capabilityId);
+    this.state.capabilities = this.state.capabilities.filter(
+      (item) => item.id !== capabilityId && item.pluginId !== capabilityId,
+    );
     await this.persistAndBroadcast();
     return listToolMarketCatalog([product], this.state.capabilities, {}).find((item) => item.id === product.id)!;
   }
@@ -3576,9 +3597,60 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     const existingCapabilities = new Map(this.state.capabilities.map((capability) => [capability.id, capability]));
     const deletedCapabilityIds = new Set(this.state.deletedCapabilityIds);
     const installedCapabilities = new Map<string, CapabilityDefinition>();
+    const pluginMemberSkillNames = new Set<string>();
+    const absorbedCapabilityIds = new Set<string>();
+
+    // Expand plugin products first so their member skills can absorb older
+    // standalone market skill capabilities with the same skill name.
     for (const product of installed) {
-      const capability = product.localDeployment?.capability || product.capability;
-      if (!capability || deletedCapabilityIds.has(capability.id)) {
+      const deployment = product.localDeployment || defaultLocalDeployment(product);
+      if (deployment.kind !== "plugin") {
+        continue;
+      }
+      const capability = deployment.capability || product.capability;
+      if (!capability) {
+        continue;
+      }
+      if (!deletedCapabilityIds.has(capability.id)) {
+        installedCapabilities.set(capability.id, {
+          ...capability,
+          enabled: existingCapabilities.get(capability.id)?.enabled ?? capability.enabled ?? true,
+        });
+      }
+      const installPath =
+        (await this.toolMarketReceiptLocalPath(product)) || this.localToolInstallDir(product, deployment);
+      const members = await this.marketPluginSkillCapabilities(product, capability.id, installPath);
+      for (const member of members) {
+        pluginMemberSkillNames.add(member.capability.name.trim().toLowerCase());
+        if (deletedCapabilityIds.has(member.capability.id)) {
+          continue;
+        }
+        installedCapabilities.set(member.capability.id, {
+          ...member.capability,
+          enabled: existingCapabilities.get(member.capability.id)?.enabled ?? true,
+        });
+      }
+      if (members.length && !(await pathExists(join(installPath, "supbot-local-package.json")))) {
+        await this.writeMarketPluginSkillReceipt(installPath, members);
+      }
+    }
+
+    for (const product of installed) {
+      const deployment = product.localDeployment || defaultLocalDeployment(product);
+      if (deployment.kind === "plugin") {
+        continue;
+      }
+      const capability = deployment.capability || product.capability;
+      if (!capability) {
+        continue;
+      }
+      // Older installs registered each bundled skill as its own market skill
+      // product; a plugin member skill with the same name now absorbs it.
+      if (deployment.kind === "skill" && pluginMemberSkillNames.has(capability.name.trim().toLowerCase())) {
+        absorbedCapabilityIds.add(capability.id);
+        continue;
+      }
+      if (deletedCapabilityIds.has(capability.id)) {
         continue;
       }
       installedCapabilities.set(capability.id, {
@@ -3586,11 +3658,11 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         enabled: existingCapabilities.get(capability.id)?.enabled ?? capability.enabled ?? true,
       });
     }
-    if (!installedCapabilities.size) {
-      return;
-    }
+
     this.state.capabilities = [
-      ...this.state.capabilities.filter((capability) => !installedCapabilities.has(capability.id)),
+      ...this.state.capabilities.filter(
+        (capability) => !installedCapabilities.has(capability.id) && !absorbedCapabilityIds.has(capability.id),
+      ),
       ...installedCapabilities.values(),
     ];
   }
@@ -4580,6 +4652,77 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
 
   private localToolInstallDir(product: ToolMarketProduct, deployment: ToolMarketLocalDeployment): string {
     return join(this.storage.getDataDir(), localToolDirName(deployment.kind), marketInstallSlug(product.id));
+  }
+
+  /**
+   * Expand a plugin install into one capability per bundled skill. Scans
+   * installPath/skills/<name>/SKILL.md, falling back to a top-level SKILL.md.
+   */
+  private async marketPluginSkillCapabilities(
+    product: ToolMarketProduct,
+    pluginCapabilityId: string,
+    installPath: string,
+  ): Promise<Array<{ capability: CapabilityDefinition; skillPath: string }>> {
+    // Derive member ids from the plugin capability id when possible so the
+    // same plugin installed from different market product ids (bundled vs
+    // remote) yields identical member skill ids.
+    const pluginSlug = pluginCapabilityId.startsWith("market.plugin.")
+      ? pluginCapabilityId.slice("market.plugin.".length)
+      : marketInstallSlug(product.id);
+    const skillsRoot = join(installPath, "skills");
+    const entries = await readdir(skillsRoot, { withFileTypes: true }).catch(() => []);
+    const skillDirs: string[] = [];
+    for (const entry of entries) {
+      if (entry.isDirectory() && (await pathExists(join(skillsRoot, entry.name, "SKILL.md")))) {
+        skillDirs.push(join(skillsRoot, entry.name));
+      }
+    }
+    if (!skillDirs.length && (await pathExists(join(installPath, "SKILL.md")))) {
+      skillDirs.push(installPath);
+    }
+    const members: Array<{ capability: CapabilityDefinition; skillPath: string }> = [];
+    for (const skillPath of skillDirs) {
+      const metadata = parseSkillMetadataLoose(await readFile(join(skillPath, "SKILL.md"), "utf8").catch(() => ""));
+      const name = metadata.name || basename(skillPath);
+      members.push({
+        capability: {
+          id: `market.skill.${pluginSlug}.${slug(name)}`,
+          name,
+          kind: "skill",
+          description: metadata.description || "",
+          enabled: true,
+          pluginId: pluginCapabilityId,
+        },
+        skillPath,
+      });
+    }
+    return members;
+  }
+
+  /** Receipt that lets contextManager.collectInstalledSkillEntries load plugin member skills. */
+  private async writeMarketPluginSkillReceipt(
+    installPath: string,
+    members: Array<{ capability: CapabilityDefinition; skillPath: string }>,
+  ): Promise<void> {
+    if (!members.length) {
+      return;
+    }
+    const receipt = {
+      version: 1,
+      kind: "plugin",
+      skills: members.map((member) => ({ path: resolve(member.skillPath), capabilityId: member.capability.id })),
+    };
+    await writeFile(join(installPath, "supbot-local-package.json"), `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
+  }
+
+  private async toolMarketReceiptLocalPath(product: ToolMarketProduct): Promise<string | undefined> {
+    try {
+      const raw = await readFile(join(this.toolMarketInstallDir(product), "supbot-market-install.json"), "utf8");
+      const localPath = (JSON.parse(raw) as { localPath?: unknown }).localPath;
+      return typeof localPath === "string" && localPath.trim() ? localPath : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private async resolveMarketProduct(productId: string) {
