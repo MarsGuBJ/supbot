@@ -125,11 +125,7 @@ describe("listVisibleGeneratedFiles", () => {
   }
 
   it("deduplicates entries that point to the same file path", () => {
-    const files = [
-      generatedFile({ id: "file-1" }),
-      generatedFile({ id: "file-2" }),
-      generatedFile({ id: "file-3" }),
-    ];
+    const files = [generatedFile({ id: "file-1" }), generatedFile({ id: "file-2" }), generatedFile({ id: "file-3" })];
     const visible = listVisibleGeneratedFiles(files);
     expect(visible).toHaveLength(1);
     expect(visible[0]?.id).toBe("file-1");

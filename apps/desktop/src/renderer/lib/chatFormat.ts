@@ -1,4 +1,11 @@
-import type { AgentJob, ChatMessage, GeneratedFile, RuntimeEventRecord, RuntimeSnapshot, ToolCallRecord } from "@supbot/shared";
+import type {
+  AgentJob,
+  ChatMessage,
+  GeneratedFile,
+  RuntimeEventRecord,
+  RuntimeSnapshot,
+  ToolCallRecord,
+} from "@supbot/shared";
 
 export const hiddenChatGeneratedFileExtensions = new Set([
   ".bat",

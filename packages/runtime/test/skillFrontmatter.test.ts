@@ -4,9 +4,7 @@ import { parseSkillFrontmatter } from "@supbot/shared";
 describe("parseSkillFrontmatter", () => {
   test("reads plain scalar values", () => {
     const metadata = parseSkillFrontmatter(
-      ['---', "name: demo-skill", 'description: "Does a thing."', "version: '1.2'", "---", "", "# Body"].join(
-        "\n",
-      ),
+      ["---", "name: demo-skill", 'description: "Does a thing."', "version: '1.2'", "---", "", "# Body"].join("\n"),
     );
     expect(metadata).toEqual({ name: "demo-skill", description: "Does a thing.", version: "1.2" });
   });

@@ -590,7 +590,7 @@ const zh: Record<string, string> = {
   Experts: "专家",
   "No skills installed": "还没有安装技能",
   "No subagents": "还没有子智能体",
-  "Click a skill to insert it into the prompt.": "点击技能填入输入框。",
+  "Click a skill to insert it into the prompt. Drag cards to reorder.": "点击技能填入输入框，拖拽卡片可调整顺序。",
   "Click an expert to insert @name into the prompt.": "点击专家将 @名称 填入输入框。",
   "Search skills and MCPs": "搜索技能名称、MCP、ID 或描述",
   "No matching capabilities": "没有匹配的技能或 MCP",

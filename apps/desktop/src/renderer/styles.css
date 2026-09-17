@@ -2751,6 +2751,28 @@ button {
   box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.12);
 }
 
+.skill-hub-card-sortable {
+  cursor: grab;
+}
+
+.skill-hub-card-dragging {
+  border-style: dashed;
+  opacity: 0.55;
+}
+
+.skill-hub-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.skill-hub-card-grip {
+  flex-shrink: 0;
+  color: var(--muted);
+  cursor: grab;
+}
+
 .skill-hub-card-head {
   display: flex;
   align-items: flex-start;
