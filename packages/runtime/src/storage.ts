@@ -142,7 +142,7 @@ const defaultSubagents: SubagentConfig[] = [
   {
     id: "research",
     name: "research",
-    description: "Collects context and summarizes options before implementation.",
+    description: "在实施前收集上下文并总结可选方案。",
     systemPrompt:
       "You are a local research subagent. Be concise, cite local evidence when available, and hand back actionable findings.",
     enabled: true,
@@ -150,7 +150,7 @@ const defaultSubagents: SubagentConfig[] = [
   {
     id: "builder",
     name: "builder",
-    description: "Focuses on implementation plans, code edits, and verification steps.",
+    description: "专注于实施计划、代码修改和验证步骤。",
     systemPrompt:
       "You are a local builder subagent. Turn the task into concrete implementation steps and call out risks.",
     enabled: true,
@@ -158,7 +158,7 @@ const defaultSubagents: SubagentConfig[] = [
   {
     id: "collector",
     name: "collector",
-    description: "Collects source data for project-based data runs.",
+    description: "为项目数据运行采集源数据。",
     systemPrompt:
       "You are a local data collection staff-agent. Gather source data into approved project data folders, record sources, and keep outputs concise.",
     enabled: true,
@@ -166,7 +166,7 @@ const defaultSubagents: SubagentConfig[] = [
   {
     id: "processor",
     name: "processor",
-    description: "Cleans, deduplicates, and transforms collected data.",
+    description: "对已采集的数据进行清洗、去重和转换。",
     systemPrompt:
       "You are a local data processing staff-agent. Clean, deduplicate, transform, and summarize data artifacts inside approved project output folders.",
     enabled: true,
@@ -174,7 +174,7 @@ const defaultSubagents: SubagentConfig[] = [
   {
     id: "analyst",
     name: "analyst",
-    description: "Analyzes processed data and extracts evidence-backed findings.",
+    description: "分析处理后的数据，提炼有据可依的结论。",
     systemPrompt:
       "You are a local data analysis staff-agent. Produce evidence-backed findings from project data artifacts and cite the files you used.",
     enabled: true,
@@ -182,7 +182,7 @@ const defaultSubagents: SubagentConfig[] = [
   {
     id: "reviewer",
     name: "reviewer",
-    description: "Reviews data-run outputs against the goal and evidence ledger.",
+    description: "对照目标和证据台账审查数据运行的产出。",
     systemPrompt:
       "You are a local data review staff-agent. Check whether the run output satisfies the goal, identify unsupported claims, and request fixes when evidence is missing.",
     enabled: true,
@@ -981,11 +981,31 @@ function normalizeMessage(message: ChatMessage): ChatMessage {
 
 // Note: subagents have no deletion tracking, so a default subagent that the
 // user deleted will be restored on the next state load.
+//
+// legacyDefaultSubagentDescriptions maps default subagent ids to descriptions
+// shipped by older versions. When an existing state still carries one of those
+// exact strings, it was never user-edited, so refresh it to the current
+// default description (older builds shipped English text).
+const legacyDefaultSubagentDescriptions = new Map<string, string[]>([
+  ["research", ["Collects context and summarizes options before implementation."]],
+  ["builder", ["Focuses on implementation plans, code edits, and verification steps."]],
+  ["collector", ["Collects source data for project-based data runs."]],
+  ["processor", ["Cleans, deduplicates, and transforms collected data."]],
+  ["analyst", ["Analyzes processed data and extracts evidence-backed findings."]],
+  ["reviewer", ["Reviews data-run outputs against the goal and evidence ledger."]],
+]);
+
 function mergeDefaultSubagents(current: SubagentConfig[], defaults: SubagentConfig[]): SubagentConfig[] {
   const byId = new Map(current.map((item) => [item.id, item]));
   for (const item of defaults) {
-    if (!byId.has(item.id)) {
+    const existing = byId.get(item.id);
+    if (!existing) {
       byId.set(item.id, { ...item });
+      continue;
+    }
+    const legacyDescriptions = legacyDefaultSubagentDescriptions.get(item.id) ?? [];
+    if (legacyDescriptions.includes(existing.description)) {
+      byId.set(item.id, { ...existing, description: item.description });
     }
   }
   return [...byId.values()];
