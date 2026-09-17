@@ -3101,7 +3101,8 @@ button {
 }
 
 .server-agent-message-grid {
-  grid-template-columns: minmax(260px, 0.34fr) minmax(0, 1fr);
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 0;
 }
 
 .server-agent-conversations,
@@ -3122,6 +3123,15 @@ button {
 
 .server-agent-conversations {
   grid-template-rows: auto auto minmax(0, 1fr);
+  margin: -12px 0 -12px -12px;
+  padding: 8px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: #f7f8fa;
+}
+
+.server-agent-message-grid .server-agent-chat {
+  border-left: 0;
 }
 
 .server-agent-flow-column {
@@ -3153,15 +3163,11 @@ button {
 
 .server-agent-project-group {
   min-width: 0;
-  padding: 7px;
-  border: 1px solid rgba(104, 65, 45, 0.14);
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.72);
 }
 
-.server-agent-project-group.is-active {
-  border-color: rgba(59, 130, 246, 0.38);
-  background: rgba(255, 246, 235, 0.88);
+.server-agent-project-group.is-active > .server-agent-project-heading {
+  border-color: rgba(59, 130, 246, 0.2);
+  background: rgba(255, 239, 224, 0.72);
 }
 
 .server-agent-project-group.is-draft {
@@ -3174,6 +3180,12 @@ button {
   align-items: center;
   gap: 4px;
   min-width: 0;
+  min-height: 32px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
 }
 
 .server-agent-project-toggle {
@@ -3244,8 +3256,8 @@ button {
 
 .server-agent-project-conversations {
   display: grid;
-  gap: 3px;
-  padding: 6px 0 0 26px;
+  gap: 2px;
+  padding: 3px 0 0 28px;
 }
 
 .server-agent-project-conversation {
@@ -3254,16 +3266,16 @@ button {
   align-items: center;
   gap: 4px;
   min-width: 0;
-  padding: 5px 3px 5px 8px;
-  border-radius: 5px;
+  padding: 6px 4px 6px 8px;
+  border-radius: 6px;
 }
 
 .server-agent-project-conversation:hover {
-  background: rgba(255, 255, 255, 0.82);
+  background: #eceff3;
 }
 
 .server-agent-project-conversation.is-active {
-  background: rgba(59, 130, 246, 0.12);
+  background: rgba(59, 130, 246, 0.16);
 }
 
 .server-agent-project-conversation > button:first-child {
@@ -4456,6 +4468,13 @@ textarea.ant-input::placeholder {
 
   .server-agent-conversations {
     max-height: 440px;
+    margin: -12px -12px 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .server-agent-message-grid .server-agent-chat {
+    border-left: 1px solid var(--line);
   }
 
   .server-agent-chat {

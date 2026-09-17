@@ -3,9 +3,48 @@ import { describe, expect, it } from "vitest";
 import type { ServstationConversation, ServstationSessionJob } from "@supbot/shared";
 import {
   extractServstationGeneratedFiles,
+  servstationConversationTitle,
   servstationMessagesFromJobs,
   servstationMessagesFromTranscript,
 } from "./servstationFormat";
+
+function conversation(title: string, messages?: ServstationConversation["messages"]): ServstationConversation {
+  return {
+    id: "conversation-1",
+    agentInstanceId: "agent-1",
+    title,
+    runtimeSessionId: "runtime-1",
+    jobCount: 0,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    messages,
+  };
+}
+
+describe("Servstation conversation title", () => {
+  it("keeps a custom title", () => {
+    expect(servstationConversationTitle(conversation("周报整理"), "新对话")).toBe("周报整理");
+  });
+
+  it("uses the first user prompt when the title is the untranslated default", () => {
+    const item = conversation("New conversation", [
+      { id: "m1", role: "user", text: "帮我总结这份文档", createdAt: "2026-01-01T00:00:00.000Z" },
+    ]);
+    expect(servstationConversationTitle(item, "新对话")).toBe("帮我总结这份文档");
+  });
+
+  it("falls back to the localized label for a fresh conversation", () => {
+    expect(servstationConversationTitle(conversation("New conversation"), "新对话")).toBe("新对话");
+    expect(servstationConversationTitle(conversation(""), "新对话")).toBe("新对话");
+  });
+
+  it("truncates a long prompt", () => {
+    const item = conversation("New conversation", [
+      { id: "m1", role: "user", text: "长".repeat(80), createdAt: "2026-01-01T00:00:00.000Z" },
+    ]);
+    expect(servstationConversationTitle(item, "新对话")).toBe("长".repeat(60));
+  });
+});
 
 function completedJob(result: unknown): ServstationSessionJob {
   return {

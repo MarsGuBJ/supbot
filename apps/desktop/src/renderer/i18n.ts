@@ -360,6 +360,7 @@ const zh: Record<string, string> = {
   "Daily around {time}": "每天约 {time}",
   "Cron {expr}": "Cron {expr}",
   "New conversation": "新会话",
+  "New chat": "新对话",
   "Start a fresh local thread.": "开始一个新的本地会话。",
   "Open conversation history.": "打开会话历史。",
   "Open the local job list.": "打开本地任务列表。",

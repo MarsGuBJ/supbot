@@ -264,7 +264,7 @@ export function MessageBlocks({
   );
 }
 
-function MarkdownText({
+export function MarkdownText({
   text,
   live = false,
   knownFiles,

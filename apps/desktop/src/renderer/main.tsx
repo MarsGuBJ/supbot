@@ -96,6 +96,7 @@ import { ChatPanel } from "./components/ChatPanel";
 import { FileTypeIcon } from "./components/FileTypeIcon";
 import { CronBuilder } from "./components/CronBuilder";
 import { LeftPanel } from "./components/LeftPanel";
+import { MarkdownText } from "./components/MessageBubble";
 import { RightPanel } from "./components/RightPanel";
 import { Topbar } from "./components/Topbar";
 import { readClipboardText, selectedTextWithin, selectionMemoryTitle, writeClipboardText } from "./lib/clipboard";
@@ -2218,7 +2219,7 @@ function ServerAgentMessages({
               {draftConversation
                 ? activeProject?.name || t("Unfiled")
                 : activeConversation
-                  ? servstationConversationTitle(activeConversation, t("New conversation"))
+                  ? servstationConversationTitle(activeConversation, t("New chat"))
                   : t("No conversation yet")}
             </strong>
             {activeProject ? (
@@ -2263,11 +2264,19 @@ function ServerAgentMessages({
           {messages.map((item) => (
             <div className={`message-row ${item.role === "agent" ? "assistant" : item.role}`} key={item.id}>
               <div className="message-bubble">
-                <div className="message-meta">
-                  <span>{item.role === "user" ? t("You") : t("Agent")}</span>
-                  {item.status ? <Tag color={servstationStatusColor(item.status)}>{t(item.status)}</Tag> : null}
-                </div>
-                <div className="message-text">{item.text || t("Waiting for model response...")}</div>
+                {item.role === "user" ? null : (
+                  <div className="message-meta">
+                    <span>{t("Agent")}</span>
+                    {item.status ? <Tag color={servstationStatusColor(item.status)}>{t(item.status)}</Tag> : null}
+                  </div>
+                )}
+                {item.role === "user" ? (
+                  <div className="message-text">{item.text}</div>
+                ) : item.text ? (
+                  <MarkdownText text={item.text} knownFiles={[]} />
+                ) : (
+                  <div className="message-text">{t("Waiting for model response...")}</div>
+                )}
                 {item.attachments?.length ? (
                   <div className="message-attachments">
                     {item.attachments.map((attachment) => (
@@ -2604,7 +2613,7 @@ function ServerAgentProjectGroup({
                 data-conversation-id={conversation.id}
                 onClick={() => void onSelectConversation(conversation)}
               >
-                <strong>{servstationConversationTitle(conversation, t("New conversation"))}</strong>
+                <strong>{servstationConversationTitle(conversation, t("New chat"))}</strong>
               </button>
             </div>
           ))}

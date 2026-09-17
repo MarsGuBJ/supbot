@@ -92,7 +92,14 @@ export function servstationJobIsTerminal(job: Pick<ServstationSessionJob, "statu
 }
 
 export function servstationConversationTitle(conversation: ServstationConversation, fallback: string): string {
-  return conversation.title?.trim() || formatDateTime(conversation.createdAt) || fallback;
+  // Conversations created before a first prompt carry the untranslated default
+  // title "New conversation"; treat it as untitled so the localized fallback shows.
+  const title = conversation.title?.trim() || "";
+  if (title && title.toLowerCase() !== "new conversation") {
+    return title;
+  }
+  const prompt = conversation.messages?.find((message) => message.role === "user")?.text.trim() || "";
+  return prompt.slice(0, 60) || fallback;
 }
 
 export function servstationJobTitle(job: ServstationSessionJob): string {
