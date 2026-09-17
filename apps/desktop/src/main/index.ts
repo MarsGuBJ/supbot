@@ -1,6 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, safeStorage, shell, type WebContents } from "electron";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
-import { cp, copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { cp, copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { hostname, userInfo } from "node:os";
 import { basename, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import {
@@ -129,23 +129,66 @@ async function seedBundledDefaultData(dataDir: string): Promise<void> {
   if (!bundledDataDir) {
     return;
   }
-  // Top up missing bundled data on every launch so upgrades and accidental
-  // cleanup self-heal; copyMissingTree never overwrites existing files. The
-  // marker is kept only as a record of the most recent seed, not as a gate.
-  for (const folder of ["skills", "plugins", "tool-market"]) {
+  const manifestRaw = await readFile(join(bundledDataDir, "manifest.json"), "utf8").catch(() => undefined);
+  const markerPath = join(dataDir, "default-data-seed.json");
+  const previousSeededSkills = await readPreviouslySeededSkills(markerPath);
+  // Bundled skills are owned by the installer: replace them on every launch so
+  // upgrades overwrite stale copies instead of accumulating duplicates, and
+  // prune skills that a previous bundle seeded but the current bundle no
+  // longer ships. Plugins and tool-market receipts keep top-up-only behavior:
+  // copyMissingTree never overwrites existing files.
+  const bundledSkillsDir = join(bundledDataDir, "skills");
+  if (await pathExists(bundledSkillsDir)) {
+    const targetSkillsDir = join(dataDir, "skills");
+    await mkdir(targetSkillsDir, { recursive: true });
+    const bundledSkillNames: string[] = [];
+    for (const entry of await readdir(bundledSkillsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+      bundledSkillNames.push(entry.name);
+      const target = join(targetSkillsDir, entry.name);
+      await rm(target, { recursive: true, force: true });
+      await cp(join(bundledSkillsDir, entry.name), target, { recursive: true });
+    }
+    const currentSkillNames = new Set(bundledSkillNames);
+    for (const staleName of previousSeededSkills) {
+      if (!currentSkillNames.has(staleName) && isPlainEntryName(staleName)) {
+        await rm(join(targetSkillsDir, staleName), { recursive: true, force: true });
+      }
+    }
+  }
+  for (const folder of ["plugins", "tool-market"]) {
     const source = join(bundledDataDir, folder);
     if (await pathExists(source)) {
       await copyMissingTree(source, join(dataDir, folder));
     }
   }
-  const markerPath = join(dataDir, "default-data-seed.json");
-  const manifestRaw = await readFile(join(bundledDataDir, "manifest.json"), "utf8").catch(() => undefined);
   const marker = {
     seededAt: new Date().toISOString(),
     source: bundledDataDir,
     manifest: manifestRaw ? JSON.parse(manifestRaw) : undefined,
   };
   await writeFile(markerPath, `${JSON.stringify(marker, null, 2)}\n`, "utf8");
+}
+
+async function readPreviouslySeededSkills(markerPath: string): Promise<string[]> {
+  const raw = await readFile(markerPath, "utf8").catch(() => undefined);
+  if (!raw) {
+    return [];
+  }
+  try {
+    const skills = (JSON.parse(raw) as { manifest?: { skills?: unknown } }).manifest?.skills;
+    return Array.isArray(skills) ? skills.filter((name): name is string => typeof name === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+// Guard against pruning anything outside the skills directory if a marker
+// file was hand-edited or corrupted.
+function isPlainEntryName(name: string): boolean {
+  return name.length > 0 && !name.includes("/") && !name.includes("\\") && name !== "." && name !== "..";
 }
 
 async function resolveBundledDefaultDataDir(): Promise<string | undefined> {
