@@ -684,6 +684,7 @@ export function ModelConfigCard({
                   <Space wrap>
                     <span>{provider.providerName}</span>
                     {isActive ? <Tag color="green">{t("Current")}</Tag> : null}
+                    {provider.multimodal ? <Tag color="purple">{t("Multimodal")}</Tag> : null}
                     <Tag
                       color={provider.apiKeySaved ? (provider.apiKeyStorage === "file" ? "orange" : "blue") : "default"}
                     >
@@ -794,6 +795,14 @@ export function ModelConfigCard({
           <Form.Item label={t("Max tokens")} name="maxTokens">
             <InputNumber min={64} max={200_000} style={{ width: "100%" }} />
           </Form.Item>
+          <Form.Item
+            label={t("Multimodal (for OCR)")}
+            name="multimodal"
+            valuePropName="checked"
+            extra={t("Check if this model accepts image input; resource management OCR prefers multimodal providers.")}
+          >
+            <Switch />
+          </Form.Item>
         </Form>
       </Modal>
     </div>
@@ -825,6 +834,7 @@ export function modelProviderFormValues(provider: ModelProviderConfig): ModelPro
     maxTokens: provider.maxTokens,
     apiKey: "",
     clearApiKey: false,
+    multimodal: provider.multimodal === true,
   };
 }
 
@@ -837,6 +847,7 @@ export function newModelProviderValues(snapshot: RuntimeSnapshot): ModelProvider
     maxTokens: snapshot.modelConfig.maxTokens,
     apiKey: "",
     clearApiKey: false,
+    multimodal: false,
   };
 }
 

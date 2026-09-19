@@ -11,8 +11,23 @@ import type {
   Conversation,
   CreateConversationInput,
   GeneratedFile,
+  GraphExtraction,
+  GraphTemplate,
   HBClientUpdateState,
   IdentityContext,
+  KbChatHistoryMessage,
+  KbChatResponse,
+  KbDeleteSourceResult,
+  KbDocumentWithProgress,
+  KbGraphStatus,
+  KbIngestTask,
+  KbLintReport,
+  KbMarkdownDocument,
+  KbProject,
+  KbRescanResult,
+  KbReviewItem,
+  KbSearchResult,
+  KbUploadFileInput,
   MemoryAddInput,
   MemoryFact,
   MemoryImportInput,
@@ -107,6 +122,8 @@ import type {
   TranscriptLoadResult,
   TranscriptPage,
   UserQuestionAnswer,
+  KbWikiGraph,
+  WikiPage,
 } from "@supbot/shared";
 
 declare global {
@@ -281,6 +298,28 @@ declare global {
       createScheduledJob(input: ScheduledJobInput): Promise<ScheduledJob>;
       updateScheduledJob(id: string, input: Partial<ScheduledJobInput>): Promise<ScheduledJob>;
       deleteScheduledJob(id: string): Promise<void>;
+      kbListProjects(): Promise<KbProject[]>;
+      kbCreateProject(name: string): Promise<KbProject>;
+      kbUploadDocuments(project: string, files: KbUploadFileInput[]): Promise<KbIngestTask[]>;
+      kbListDocuments(project: string): Promise<KbDocumentWithProgress[]>;
+      kbReadMarkdown(project: string, docName: string): Promise<KbMarkdownDocument>;
+      kbDeleteSource(project: string, docName: string): Promise<KbDeleteSourceResult>;
+      kbRescan(project: string): Promise<KbRescanResult>;
+      kbSearch(project: string, query: string): Promise<KbSearchResult[]>;
+      kbChat(project: string, query: string, history?: KbChatHistoryMessage[]): Promise<KbChatResponse>;
+      kbListWikiPages(project: string): Promise<string[]>;
+      kbReadWikiPage(project: string, relPath: string): Promise<WikiPage>;
+      kbWikiGraph(project: string): Promise<KbWikiGraph>;
+      openWikiGraphWindow(project: string): Promise<void>;
+      kbListReviews(project: string): Promise<KbReviewItem[]>;
+      kbResolveReview(project: string, id: number): Promise<boolean>;
+      kbLint(project: string): Promise<KbLintReport>;
+      kbListGraphTemplates(): Promise<GraphTemplate[]>;
+      kbSaveGraphTemplate(template: GraphTemplate): Promise<GraphTemplate>;
+      kbDeleteGraphTemplate(name: string): Promise<boolean>;
+      kbGraphExtract(project: string, docName: string, templateName: string): Promise<GraphExtraction>;
+      kbGraphStatus(project: string, docName: string): Promise<KbGraphStatus[]>;
+      kbGraphView(project: string, docName: string, templateName: string): Promise<GraphExtraction>;
       pickAttachments(): Promise<Attachment[]>;
       importAttachmentPaths(paths: string[]): Promise<Attachment[]>;
       importDroppedAttachments(files: File[]): Promise<Attachment[]>;

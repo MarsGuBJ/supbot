@@ -199,7 +199,7 @@ export class ServstationReverseBridgeClient {
     this.controller?.abort();
     this.controller = undefined;
     this.wakeRetry?.();
-    await this.host.updateReverseState({
+    await this.safeUpdateReverseState({
       ...(disable ? { enabled: false } : {}),
       status: "disconnected",
       connectedAt: undefined,
@@ -207,18 +207,31 @@ export class ServstationReverseBridgeClient {
     });
   }
 
+  /**
+   * updateReverseState 会先更新内存态再持久化；持久化失败（如 Windows 下 state.json
+   * 被杀毒软件/其他进程短暂占用导致 EPERM）不应杀死反连事件流——内存态已正确，
+   * 失败的快照会由下一次成功持久化兜底。
+   */
+  private async safeUpdateReverseState(input: Partial<ServstationA2AReverseConfig>): Promise<void> {
+    try {
+      await this.host.updateReverseState(input);
+    } catch {
+      // 故意吞掉：仅持久化失败，内存态已由 host 更新。
+    }
+  }
+
   private async runLoop(): Promise<void> {
     while (!this.stopped) {
       this.controller = new AbortController();
       try {
-        await this.host.updateReverseState({ enabled: true, status: "connecting", lastError: undefined });
+        await this.safeUpdateReverseState({ enabled: true, status: "connecting", lastError: undefined });
         await this.connectOnce(this.controller.signal);
         this.retryDelayMs = 1_000;
       } catch (error) {
         if (this.stopped || this.controller.signal.aborted) {
           break;
         }
-        await this.host.updateReverseState({
+        await this.safeUpdateReverseState({
           enabled: true,
           status: "error",
           connectedAt: undefined,
@@ -229,7 +242,7 @@ export class ServstationReverseBridgeClient {
       }
     }
     if (!this.stopped) {
-      await this.host.updateReverseState({ status: "disconnected", connectedAt: undefined });
+      await this.safeUpdateReverseState({ status: "disconnected", connectedAt: undefined });
     }
   }
 
@@ -238,7 +251,7 @@ export class ServstationReverseBridgeClient {
     const identity = this.requireIdentity();
     const baseUrl = this.requireBaseUrl(config, identity);
     const clientInstanceId = config.reverse?.clientInstanceId || this.host.randomId("hbclient");
-    await this.host.updateReverseState({ enabled: true, status: "connecting", clientInstanceId });
+    await this.safeUpdateReverseState({ enabled: true, status: "connecting", clientInstanceId });
     const agentInstanceId = await this.ensureAgentInstanceId(baseUrl, signal);
     const registration = await this.registerReverseConnection(baseUrl, agentInstanceId, clientInstanceId, signal);
     const peerId = registration.peer?.id;
@@ -248,7 +261,7 @@ export class ServstationReverseBridgeClient {
     const streamUrl =
       registration.streamUrl ||
       `/api/v1/agent/${encodeURIComponent(agentInstanceId)}/a2a-peers/${encodeURIComponent(peerId)}/events`;
-    await this.host.updateReverseState({
+    await this.safeUpdateReverseState({
       enabled: true,
       status: "connected",
       peerId,
@@ -351,7 +364,7 @@ export class ServstationReverseBridgeClient {
       const text = await response.text().catch(() => "");
       throw new Error(`Botstation HyBot reverse event stream failed: ${text || `HTTP ${response.status}`}`);
     }
-    await this.host.updateReverseState({
+    await this.safeUpdateReverseState({
       enabled: true,
       status: "connected",
       peerId,
@@ -372,7 +385,7 @@ export class ServstationReverseBridgeClient {
             throw error;
           }
         }
-        await this.host.updateReverseState({
+        await this.safeUpdateReverseState({
           status: "connected",
           lastHeartbeatAt: this.host.nowIso(),
           lastError: undefined,

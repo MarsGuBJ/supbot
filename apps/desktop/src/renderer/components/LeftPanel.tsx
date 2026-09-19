@@ -283,6 +283,13 @@ export function LeftPanel({
       active: view === "schedule",
       action: () => setView("schedule"),
     },
+    {
+      id: "assets",
+      label: t("Resource management"),
+      icon: <FolderOpenOutlined />,
+      active: view === "assets",
+      action: () => setView("assets"),
+    },
   ];
 
   return (

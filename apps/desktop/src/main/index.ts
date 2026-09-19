@@ -9,6 +9,7 @@ import {
   ensureRuntimeDirs,
   identityContextFromAccessToken,
   oidcTokenSetFromTokenResponse,
+  type KbUploadInput,
   type RuntimeState,
   type StorageAdapter,
 } from "@supbot/runtime";
@@ -18,7 +19,9 @@ import type {
   CapabilityUpdateInput,
   CreateConversationInput,
   DataSourceSpec,
+  GraphTemplate,
   IdentityContext,
+  KbChatHistoryMessage,
   McpConfigTransfer,
   McpRemoteAddInput,
   McpServerInput,
@@ -114,6 +117,7 @@ async function createRuntime(): Promise<SupbotRuntime> {
   });
   await service.init();
   service.startScheduler();
+  service.startSkillTranslationScheduler();
   service.onEvent((event) => {
     mainWindow?.webContents.send("supbot:event", event);
     if (event.type === "job" && isTerminalJobStatus(event.job.status)) {
@@ -889,6 +893,71 @@ function showMainWindow(): void {
   }
 }
 
+// ---- 知识图谱独立窗体（单例） ----
+
+let wikiGraphWindow: BrowserWindow | null = null;
+
+function wikiGraphWindowUrl(project: string): { url?: string; file?: { query: Record<string, string> } } {
+  const devServerUrl = process.env.HBCLIENT_DEV_SERVER_URL || process.env.SUPBOT_DEV_SERVER_URL;
+  if (devServerUrl) {
+    if (!isDev) {
+      throw new Error("HBCLIENT_DEV_SERVER_URL is disabled in packaged production builds.");
+    }
+    if (!isAllowedAppUrl(devServerUrl)) {
+      throw new Error(`Unsupported HyBot dev server URL: ${devServerUrl}`);
+    }
+    return { url: `${devServerUrl}?window=wikigraph&project=${encodeURIComponent(project)}` };
+  }
+  return { file: { query: { window: "wikigraph", project } } };
+}
+
+async function loadWikiGraphWindow(window: BrowserWindow, project: string): Promise<void> {
+  const target = wikiGraphWindowUrl(project);
+  if (target.url) {
+    await window.loadURL(target.url);
+  } else {
+    installProductionCsp(window.webContents);
+    await window.loadFile(join(__dirname, "../renderer/index.html"), target.file);
+  }
+}
+
+/** Open (or refocus + reload) the singleton knowledge-graph window for a kb project. */
+async function openWikiGraphWindow(project: string): Promise<void> {
+  const title = `知识图谱 — ${project}`;
+  if (wikiGraphWindow && !wikiGraphWindow.isDestroyed()) {
+    wikiGraphWindow.setTitle(title);
+    await loadWikiGraphWindow(wikiGraphWindow, project);
+    wikiGraphWindow.show();
+    wikiGraphWindow.focus();
+    return;
+  }
+  wikiGraphWindow = new BrowserWindow({
+    width: 1120,
+    height: 760,
+    minWidth: 720,
+    minHeight: 480,
+    backgroundColor: "#ffffff",
+    title,
+    icon: appIconPath,
+    webPreferences: {
+      preload: join(__dirname, "../preload/index.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+    },
+  });
+  hardenWebContents(wikiGraphWindow.webContents);
+  wikiGraphWindow.on("page-title-updated", (event) => {
+    event.preventDefault();
+  });
+  wikiGraphWindow.on("closed", () => {
+    wikiGraphWindow = null;
+  });
+  await loadWikiGraphWindow(wikiGraphWindow, project);
+}
+
 async function hbClientUpdateFeedContext(forceRefresh: boolean): Promise<{ baseUrl: string; accessToken?: string }> {
   const service = getRuntime();
   const [config, identity] = await Promise.all([service.servstationA2AConfig(), service.identityContext()]);
@@ -1454,6 +1523,78 @@ function registerIpc(): void {
   );
   ipcMain.handle("schedule:delete", (_event, id: string) =>
     getRuntime().deleteScheduledJob(requiredString(id, "scheduled job id")),
+  );
+  ipcMain.handle("kb:listProjects", () => getRuntime().kb.listProjects());
+  ipcMain.handle("kb:createProject", (_event, name: unknown) =>
+    getRuntime().kb.createProject(requiredString(name, "kb project name")),
+  );
+  ipcMain.handle("kb:uploadDocuments", (_event, project: unknown, files: unknown) =>
+    getRuntime().kb.uploadDocuments(requiredString(project, "kb project"), validateKbUploadFiles(files)),
+  );
+  ipcMain.handle("kb:listDocuments", (_event, project: unknown) =>
+    getRuntime().kb.listDocuments(requiredString(project, "kb project")),
+  );
+  ipcMain.handle("kb:readMarkdown", (_event, project: unknown, docName: unknown) =>
+    getRuntime().kb.readMarkdown(requiredString(project, "kb project"), requiredString(docName, "kb document name")),
+  );
+  ipcMain.handle("kb:deleteSource", (_event, project: unknown, docName: unknown) =>
+    getRuntime().kb.deleteSource(requiredString(project, "kb project"), requiredString(docName, "kb document name")),
+  );
+  ipcMain.handle("kb:rescan", (_event, project: unknown) =>
+    getRuntime().kb.rescan(requiredString(project, "kb project")),
+  );
+  ipcMain.handle("kb:search", (_event, project: unknown, query: unknown) =>
+    getRuntime().kb.search(requiredString(project, "kb project"), requiredString(query, "kb search query")),
+  );
+  ipcMain.handle("kb:chat", (_event, project: unknown, query: unknown, history: unknown) =>
+    getRuntime().kb.chat(
+      requiredString(project, "kb project"),
+      requiredString(query, "kb chat query"),
+      validateKbChatHistory(history),
+    ),
+  );
+  ipcMain.handle("kb:listWikiPages", (_event, project: unknown) =>
+    getRuntime().kb.listWikiPages(requiredString(project, "kb project")),
+  );
+  ipcMain.handle("kb:readWikiPage", (_event, project: unknown, relPath: unknown) =>
+    getRuntime().kb.readWikiPage(requiredString(project, "kb project"), requiredString(relPath, "wiki page path")),
+  );
+  ipcMain.handle("kb:wikiGraph", (_event, project: unknown) =>
+    getRuntime().kb.wikiGraph(requiredString(project, "kb project")),
+  );
+  ipcMain.handle("kb:openWikiGraphWindow", (_event, project: unknown) =>
+    openWikiGraphWindow(requiredString(project, "kb project")),
+  );
+  ipcMain.handle("kb:listReviews", (_event, project: unknown) =>
+    getRuntime().kb.listReviews(requiredString(project, "kb project")),
+  );
+  ipcMain.handle("kb:resolveReview", (_event, project: unknown, id: unknown) =>
+    getRuntime().kb.resolveReview(requiredString(project, "kb project"), requiredInteger(id, "kb review id")),
+  );
+  ipcMain.handle("kb:lint", (_event, project: unknown) => getRuntime().kb.lint(requiredString(project, "kb project")));
+  ipcMain.handle("kb:listGraphTemplates", () => getRuntime().kb.listGraphTemplates());
+  ipcMain.handle("kb:saveGraphTemplate", (_event, template: unknown) =>
+    getRuntime().kb.saveGraphTemplate(validateGraphTemplateInput(template)),
+  );
+  ipcMain.handle("kb:deleteGraphTemplate", (_event, name: unknown) =>
+    getRuntime().kb.deleteGraphTemplate(requiredString(name, "graph template name")),
+  );
+  ipcMain.handle("kb:graphExtract", (_event, project: unknown, docName: unknown, templateName: unknown) =>
+    getRuntime().kb.graphExtract(
+      requiredString(project, "kb project"),
+      requiredString(docName, "kb document name"),
+      requiredString(templateName, "graph template name"),
+    ),
+  );
+  ipcMain.handle("kb:graphStatus", (_event, project: unknown, docName: unknown) =>
+    getRuntime().kb.graphStatus(requiredString(project, "kb project"), requiredString(docName, "kb document name")),
+  );
+  ipcMain.handle("kb:graphView", (_event, project: unknown, docName: unknown, templateName: unknown) =>
+    getRuntime().kb.graphView(
+      requiredString(project, "kb project"),
+      requiredString(docName, "kb document name"),
+      requiredString(templateName, "graph template name"),
+    ),
   );
   ipcMain.handle("attachment:pick", async () => {
     const result = await dialog.showOpenDialog(mainWindow!, {
@@ -2055,6 +2196,7 @@ function validateModelProviderUpdate(input: ModelProviderUpdate): ModelProviderU
     maxTokens: optionalNumber(value.maxTokens, "max tokens") ?? 200_000,
     apiKey: optionalString(value.apiKey, "API key"),
     clearApiKey: optionalBoolean(value.clearApiKey, "clear API key"),
+    multimodal: optionalBoolean(value.multimodal, "multimodal"),
   };
 }
 
@@ -2093,6 +2235,7 @@ function validatePartialModelProviderUpdate(
     maxTokens: optionalNumber(value.maxTokens, "max tokens"),
     apiKey: optionalString(value.apiKey, "API key"),
     clearApiKey: optionalBoolean(value.clearApiKey, "clear API key"),
+    multimodal: optionalBoolean(value.multimodal, "multimodal"),
   };
 }
 
@@ -2231,6 +2374,58 @@ function validateScheduledJobUpdate(input: Partial<ScheduledJobInput>): Partial<
     cronExpr: (value) => optionalString(value, "cron expression"),
     enabled: (value) => optionalBoolean(value, "scheduled job enabled"),
   }) as Partial<ScheduledJobInput>;
+}
+
+// Renderer ships file bytes as ArrayBuffer/Uint8Array; convert to Buffer for the runtime.
+function validateKbUploadFiles(input: unknown): KbUploadInput[] {
+  if (!Array.isArray(input) || !input.length) {
+    throw new Error("kb upload files must be a non-empty array.");
+  }
+  return input.map((item) => {
+    const value = object(item, "kb upload file");
+    const name = requiredString(value.name, "kb upload file name");
+    const raw = value.data;
+    const bytes = raw instanceof Uint8Array ? raw : raw instanceof ArrayBuffer ? new Uint8Array(raw) : undefined;
+    if (!bytes?.byteLength) {
+      throw new Error(`kb upload file data is required: ${name}`);
+    }
+    return { name, data: Buffer.from(bytes) };
+  });
+}
+
+function validateKbChatHistory(input: unknown): KbChatHistoryMessage[] {
+  if (input === undefined || input === null) {
+    return [];
+  }
+  if (!Array.isArray(input)) {
+    throw new Error("kb chat history must be an array.");
+  }
+  return input.slice(-50).map((item) => {
+    const value = object(item, "kb chat history message");
+    const role = optionalEnum(value.role, ["user", "assistant"], "kb chat history role");
+    if (!role) {
+      throw new Error("kb chat history role must be user or assistant.");
+    }
+    return { role, content: requiredString(value.content, "kb chat history content") };
+  });
+}
+
+function validateGraphTemplateInput(input: unknown): GraphTemplate {
+  const value = object(input, "graph template");
+  return {
+    name: requiredString(value.name, "graph template name"),
+    description: optionalString(value.description, "graph template description"),
+    entityTypes: optionalStringArray(value.entityTypes, "graph template entity types") || [],
+    relationTypes: optionalStringArray(value.relationTypes, "graph template relation types") || [],
+    instructions: optionalString(value.instructions, "graph template instructions"),
+  };
+}
+
+function requiredInteger(value: unknown, label: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    throw new Error(`${label} must be an integer.`);
+  }
+  return value;
 }
 
 function validatePartialObject(

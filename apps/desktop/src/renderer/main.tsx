@@ -130,6 +130,8 @@ import { ConfigWorkspace } from "./views/ConfigWorkspace";
 import { ManagePanel, type ManagePanelTab } from "./views/ManagePanel";
 import { SkillHubWorkspace } from "./views/SkillHubWorkspace";
 import { AutopilotMenuView, ScheduleMenuView } from "./views/MenuWorkspaces";
+import { AssetsWorkspace } from "./views/AssetsWorkspace";
+import { WikiGraphWindow } from "./views/assets/WikiGraphWindow";
 import { ServerAgentFlowWorkspace, ServerAgentFlows } from "./views/ServerAgentFlows";
 import { ServerAgentMailWorkspace } from "./views/ServerAgentMailWorkspace";
 import { RemoteScheduleModal } from "./views/ServerAgentWorkspace";
@@ -1020,6 +1022,8 @@ function App() {
                 onClose={() => setView("chat")}
                 t={t}
               />
+            ) : view === "assets" ? (
+              <AssetsWorkspace onClose={() => setView("chat")} t={t} />
             ) : (
               <AutopilotMenuView snapshot={snapshot} refresh={refresh} onClose={() => setView("chat")} t={t} />
             )}
@@ -2869,4 +2873,6 @@ function ScheduleModal({
   );
 }
 
-createRoot(document.getElementById("root")!).render(<App />);
+// Standalone secondary windows opt in via ?window=<name> (see openWikiGraphWindow in main).
+const standaloneWindow = new URLSearchParams(window.location.search).get("window");
+createRoot(document.getElementById("root")!).render(standaloneWindow === "wikigraph" ? <WikiGraphWindow /> : <App />);

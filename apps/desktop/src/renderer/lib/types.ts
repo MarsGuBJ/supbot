@@ -1,4 +1,4 @@
-export type WorkspaceView = "chat" | "server" | "config" | "skill" | "schedule" | "autodrive";
+export type WorkspaceView = "chat" | "server" | "config" | "skill" | "schedule" | "assets" | "autodrive";
 export type Translator = (key: string, vars?: Record<string, string | number>) => string;
 export type SelectionContextMenu = { x: number; y: number; text: string };
 export type PromptContextMenu = {

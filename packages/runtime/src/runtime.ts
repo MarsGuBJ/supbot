@@ -105,10 +105,11 @@ import { parseSkillFrontmatter } from "@supbot/shared";
 import { AutopilotOrchestrator } from "./autopilotOrchestrator";
 import { describeError } from "./errorFormat";
 import { stripQuotes, type LocalToolHost, type LocalToolResult } from "./localTools";
+import { KbManager } from "./kb/kbManager";
 import { LocalPackageManager, type LocalSkillInstallResult } from "./localPackageManager";
 import { MemoryManager } from "./memoryManager";
 import { McpManager } from "./mcpManager";
-import { generateReply, listProviderModels, normalizeModelApiKey } from "./modelAdapter";
+import { generateReply, listProviderModels, normalizeModelApiKey, OpenAIChatCompletionsAdapter } from "./modelAdapter";
 import { PermissionPolicy } from "./permissionPolicy";
 import { ProjectManager } from "./projectManager";
 import { QueryEngine, type QueryEngineResult } from "./queryEngine";
@@ -117,6 +118,15 @@ import { ServstationAgentClient } from "./servstationAgentClient";
 import { ServstationA2AProvider } from "./servstationA2AProvider";
 import { ServstationReverseBridgeClient, type ReversePromptResult } from "./servstationReverseBridgeClient";
 import { ServstationRuntimeFacade } from "./servstationFacade";
+import {
+  readBundledSkillNames,
+  readSkillTranslationLastRunDate,
+  translateEnglishSkills,
+  translateSkillFile,
+  writeSkillTranslationLastRunDate,
+  type SkillTranslationCallLlm,
+  type SkillTranslationSummary,
+} from "./skillTranslator";
 import {
   identityContextFromAccessToken,
   oidcAccessTokenExpiringSoon,
@@ -172,6 +182,7 @@ const SNAPSHOT_RECENT_MESSAGES = 50;
 const MAX_JOBS = 200;
 const MAX_JOB_PROGRESS_ENTRIES = 50;
 const PERSIST_DEBOUNCE_MS = 150;
+const NIGHTLY_SKILL_TRANSLATION_HOUR = 2;
 
 export class SupbotRuntime extends ServstationRuntimeFacade {
   private state: RuntimeState = createInitialState();
@@ -191,12 +202,16 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
   private readonly memoryManager = new MemoryManager({ randomId, nowIso });
   private readonly projectManager = new ProjectManager({ randomId, nowIso });
   private readonly autopilotOrchestrator = new AutopilotOrchestrator({ randomId, nowIso });
+  private readonly kbManager: KbManager;
   private remoteMarketCache: ToolMarketProduct[] = [];
   private loaded = false;
   private readonly secretStorageKind: ModelConfig["apiKeyStorage"];
   private readonly marketSecretStorageKind: ToolMarketConfig["tokenStorage"];
   private readonly rootDir: string;
   private schedulerTimer: ReturnType<typeof setInterval> | null = null;
+  private skillTranslationTimer: ReturnType<typeof setInterval> | null = null;
+  private skillTranslationInProgress = false;
+  private readonly skillTranslationEnabled: boolean;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   private activeConversationId?: string;
 
@@ -206,12 +221,15 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       secretStorageKind?: ModelConfig["apiKeyStorage"];
       marketSecretStorageKind?: ToolMarketConfig["tokenStorage"];
       rootDir?: string;
+      /** Defaults to true; tests disable it so scripted model mocks stay deterministic. */
+      skillTranslationEnabled?: boolean;
     } = {},
   ) {
     super();
     this.secretStorageKind = options.secretStorageKind || "file";
     this.marketSecretStorageKind = options.marketSecretStorageKind || this.secretStorageKind || "file";
     this.rootDir = options.rootDir || process.cwd();
+    this.skillTranslationEnabled = options.skillTranslationEnabled !== false;
     this.localPackageManager = new LocalPackageManager({
       dataDir: this.storage.getDataDir(),
       randomId,
@@ -327,6 +345,35 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     });
     this.toolRegistry.addProvider(this.mcpManager);
     this.toolRegistry.addProvider(this.servstationA2AProvider);
+    this.kbManager = new KbManager({
+      kbRoot: join(this.storage.getDataDir(), "kb-root"),
+      adapter: new OpenAIChatCompletionsAdapter(),
+      resolveModel: () => {
+        const provider = this.ensureActiveModelProvider();
+        return { modelConfig: this.modelConfigFromProvider(provider), apiKey: provider.apiKeySecret };
+      },
+      resolveVisionModel: () => {
+        const provider = this.resolveVisionModelProvider();
+        return { modelConfig: this.modelConfigFromProvider(provider), apiKey: provider.apiKeySecret };
+      },
+      onEvent: (task) => {
+        const record = this.createRuntimeEvent(
+          "kb_ingest",
+          `资料摄入 ${basename(task.documentId || "") || task.id}: ${task.status}`,
+          { task },
+        );
+        this.addRuntimeEvent(record);
+        if (this.loaded) {
+          this.schedulePersistAndBroadcast();
+          this.emitTyped({ type: "kb_ingest", task, event: record });
+        }
+      },
+    });
+  }
+
+  /** 资料管理（kb）子系统入口；方法按项目名路由，详见 KbManager。 */
+  get kb(): KbManager {
+    return this.kbManager;
   }
 
   async init(): Promise<RuntimeSnapshot> {
@@ -345,6 +392,8 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     this.loaded = true;
     await this.recoverTranscriptsOnStartup();
     await this.recoverAutopilotRunsOnStartup();
+    // 恢复上次中断的资料摄入任务；摄入可能耗时较长，不阻塞 init。
+    void this.kbManager.resumeIncompleteAll().catch(() => undefined);
     await this.remoteBridgeManager.configure({
       config: this.state.remoteBridgeConfig,
       token: this.state.remoteBridgeSecret,
@@ -1557,8 +1606,158 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     }
   }
 
+  /**
+   * Nightly scan that translates English-only skills into Chinese. Checks
+   * every 30 minutes; runs once per local day at/after 02:00. The last-run
+   * date is persisted in dataDir/skill-translation-state.json so a restart
+   * does not re-run on the same day.
+   */
+  startSkillTranslationScheduler(intervalMs = 30 * 60_000): void {
+    this.assertLoaded();
+    if (!this.skillTranslationEnabled || this.skillTranslationTimer) {
+      return;
+    }
+    void this.maybeRunNightlySkillTranslation();
+    this.skillTranslationTimer = setInterval(() => {
+      void this.maybeRunNightlySkillTranslation();
+    }, intervalMs);
+  }
+
+  stopSkillTranslationScheduler(): void {
+    if (this.skillTranslationTimer) {
+      clearInterval(this.skillTranslationTimer);
+      this.skillTranslationTimer = null;
+    }
+  }
+
+  private async maybeRunNightlySkillTranslation(now = new Date()): Promise<void> {
+    if (now.getHours() < NIGHTLY_SKILL_TRANSLATION_HOUR) {
+      return;
+    }
+    const today = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+    const dataDir = this.storage.getDataDir();
+    const lastRunDate = await readSkillTranslationLastRunDate(dataDir);
+    if (lastRunDate === today) {
+      return;
+    }
+    const summary = await this.runSkillTranslation();
+    if (summary) {
+      await writeSkillTranslationLastRunDate(dataDir, today).catch(() => undefined);
+    }
+  }
+
+  /**
+   * Fire-and-forget translation of freshly installed skill directories.
+   * Never blocks or fails the install: without a configured model, or on any
+   * LLM error, the original English files are kept as-is.
+   */
+  private triggerSkillTranslation(skillDirs: string[]): void {
+    if (!this.skillTranslationEnabled) {
+      return;
+    }
+    const dirs = skillDirs.filter(Boolean);
+    if (!dirs.length) {
+      return;
+    }
+    void this.runSkillTranslation(dirs).catch(() => undefined);
+  }
+
+  private async runSkillTranslation(skillDirs?: string[]): Promise<SkillTranslationSummary | undefined> {
+    if (this.skillTranslationInProgress) {
+      return undefined;
+    }
+    const callLlm = this.createSkillTranslationCaller();
+    if (!callLlm) {
+      return undefined;
+    }
+    this.skillTranslationInProgress = true;
+    try {
+      const dataDir = this.storage.getDataDir();
+      let summary: SkillTranslationSummary;
+      if (skillDirs) {
+        summary = { translated: [], skipped: 0, failed: [] };
+        for (const dir of skillDirs) {
+          const status = await translateSkillFile(dir, callLlm);
+          if (status === "translated") {
+            summary.translated.push(basename(dir));
+          } else if (status === "failed") {
+            summary.failed.push(basename(dir));
+          } else {
+            summary.skipped += 1;
+          }
+        }
+      } else {
+        const bundledSkills = await readBundledSkillNames(dataDir);
+        summary = await translateEnglishSkills(join(dataDir, "skills"), callLlm, { excludeDirs: bundledSkills });
+      }
+      if (summary.translated.length) {
+        await this.refreshTranslatedSkillCapabilities(summary.translated);
+        await this.persistAndBroadcast();
+      }
+      return summary;
+    } finally {
+      this.skillTranslationInProgress = false;
+    }
+  }
+
+  /** Re-read translated SKILL.md metadata so the skills page shows Chinese name/description. */
+  private async refreshTranslatedSkillCapabilities(skillDirNames: string[]): Promise<void> {
+    const skillsRoot = join(this.storage.getDataDir(), "skills");
+    for (const dirName of skillDirNames) {
+      const capabilityId = `local.skill.${dirName}`;
+      const capability = this.state.capabilities.find((item) => item.id === capabilityId);
+      if (!capability) {
+        continue;
+      }
+      const content = await readFile(join(skillsRoot, dirName, "SKILL.md"), "utf8").catch(() => undefined);
+      if (!content) {
+        continue;
+      }
+      const metadata = parseSkillFrontmatter(content);
+      capability.name = metadata.name || capability.name;
+      capability.description = metadata.description || capability.description;
+    }
+  }
+
+  /**
+   * Build an LLM caller on the active model provider for skill translation,
+   * or undefined when no usable provider/API key is configured.
+   */
+  private createSkillTranslationCaller(): SkillTranslationCallLlm | undefined {
+    let apiKey: string;
+    let modelConfig: ModelConfig;
+    try {
+      const provider = this.ensureActiveModelProvider();
+      apiKey = normalizeModelApiKey(provider.apiKeySecret);
+      modelConfig = this.modelConfigFromProvider(provider);
+    } catch {
+      return undefined;
+    }
+    if (!apiKey) {
+      return undefined;
+    }
+    return async (prompt) => {
+      const result = await generateReply({
+        modelConfig,
+        apiKey,
+        personality: this.state.personality,
+        messages: [
+          {
+            id: randomId("skill-translate"),
+            conversationId: "skill-translation",
+            role: "user",
+            text: prompt,
+            createdAt: nowIso(),
+          },
+        ],
+      });
+      return result.text;
+    };
+  }
+
   async shutdown(): Promise<void> {
     this.stopScheduler();
+    this.stopSkillTranslationScheduler();
     this.resolveAllPermissions("denied");
     this.resolveAllQuestions();
     for (const running of this.runningJobs.values()) {
@@ -1887,8 +2086,13 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     };
     this.state.capabilities = [...this.state.capabilities.filter((item) => item.id !== capability.id), capability];
     this.state.deletedCapabilityIds = this.state.deletedCapabilityIds.filter((id) => id !== capability.id);
+    const skillTranslationDirs: string[] = [];
+    if (deployment.kind === "skill") {
+      skillTranslationDirs.push(installPath);
+    }
     if (deployment.kind === "plugin") {
       const members = await this.marketPluginSkillCapabilities(product, capability.id, installPath);
+      skillTranslationDirs.push(...members.map((member) => member.skillPath));
       const deletedCapabilityIds = new Set(this.state.deletedCapabilityIds);
       for (const member of members) {
         if (deletedCapabilityIds.has(member.capability.id)) {
@@ -1913,6 +2117,9 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     await this.persistAndBroadcast();
     if (mcpServer?.enabled && mcpServer.autoConnect) {
       await this.connectMcpServer(mcpServer.id);
+    }
+    if (deployment.kind === "skill" || deployment.kind === "plugin") {
+      this.triggerSkillTranslation(skillTranslationDirs);
     }
     return listToolMarketCatalog([product], this.state.capabilities, {}).find((item) => item.id === product.id)!;
   }
@@ -2672,7 +2879,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       getPermissionMode: () => "bypassPermissions",
       getPermissionRules: () => this.state.permissionRules,
       signal,
-      maxTurns: 8,
+      maxTurns: 32,
       requestPermission: (permission) => this.requestToolPermission(permission),
       onSession: async (session) => {
         if (!autopilotStillExists()) {
@@ -3506,6 +3713,9 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       mcpServers: finalResult.activatedMcpServerIds,
     });
     await this.persistAndBroadcast();
+    if (finalResult.kind === "skill" || finalResult.kind === "plugin") {
+      this.triggerSkillTranslation(finalResult.skills.map((skill) => skill.path));
+    }
     return finalResult;
   }
 
@@ -3537,6 +3747,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         installPath: result.installPath,
       });
       await this.persistAndBroadcast();
+      this.triggerSkillTranslation(result.skills.map((skill) => skill.path));
       return result;
     }
     const result = await this.localPackageManager.installSkillFromPath(resolvedPath);
@@ -3552,6 +3763,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     this.state.capabilities = [...this.state.capabilities.filter((item) => item.id !== capability.id), capability];
     this.state.deletedCapabilityIds = this.state.deletedCapabilityIds.filter((id) => id !== capability.id);
     await this.persistAndBroadcast();
+    this.triggerSkillTranslation([result.installPath]);
     return result;
   }
 
@@ -4445,8 +4657,21 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       apiKeySecret,
       apiKeySaved: Boolean(apiKeySecret),
       apiKeyStorage: apiKeySecret ? this.secretStorageKind : undefined,
+      multimodal: update.multimodal === true,
       updatedAt: nowIso(),
     };
+  }
+
+  /**
+   * 资料管理 OCR/视觉转写选模型：优先当前激活且勾选多模态的服务商，
+   * 否则第一个勾选多模态的服务商；都没有勾选时回退激活服务商。
+   */
+  private resolveVisionModelProvider(): ModelProviderState {
+    const active = this.ensureActiveModelProvider();
+    if (active.multimodal) {
+      return active;
+    }
+    return this.state.modelProviders.find((provider) => provider.multimodal) ?? active;
   }
 
   private modelConfigFromProvider(provider: ModelProviderState): ModelConfig {
@@ -4471,6 +4696,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       maxTokens: provider.maxTokens,
       apiKeySaved: Boolean(provider.apiKeySecret),
       apiKeyStorage: provider.apiKeySecret ? provider.apiKeyStorage || this.secretStorageKind : undefined,
+      multimodal: provider.multimodal === true,
       tokenUsage: provider.tokenUsage,
       createdAt: provider.createdAt,
       updatedAt: provider.updatedAt,

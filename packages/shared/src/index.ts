@@ -86,6 +86,8 @@ export interface ModelProviderConfig {
   maxTokens: number;
   apiKeySaved: boolean;
   apiKeyStorage?: "safeStorage" | "file";
+  /** 是否多模态模型（支持图像输入，资料管理 OCR/视觉转写优先选用）。 */
+  multimodal?: boolean;
   /** Cumulative tokens consumed through this provider across all conversations. */
   tokenUsage?: ModelUsage;
   createdAt: string;
@@ -100,6 +102,7 @@ export interface ModelProviderUpdate {
   maxTokens: number;
   apiKey?: string;
   clearApiKey?: boolean;
+  multimodal?: boolean;
 }
 
 export interface ToolMarketConfig {
@@ -1612,6 +1615,7 @@ export type RuntimeEventKind =
   | "worktree_event"
   | "remote_bridge"
   | "servstation_a2a"
+  | "kb_ingest"
   | "turn_complete"
   | "turn_failed";
 
@@ -1975,6 +1979,7 @@ export type SupbotEvent =
   | { type: "worktree_event"; worktree: TaskWorktree; event: RuntimeEventRecord }
   | { type: "remote_bridge"; config: RemoteBridgeConfig; event?: RuntimeEventRecord }
   | { type: "servstation_a2a"; config: ServstationA2AConfig; event?: RuntimeEventRecord }
+  | { type: "kb_ingest"; task: KbIngestTask; event: RuntimeEventRecord }
   | { type: "error"; message: string };
 
 export interface SendPromptInput {
@@ -2272,4 +2277,209 @@ function literalYamlBlock(lines: string[]): string {
     kept.pop();
   }
   return kept.join("\n");
+}
+
+// ---- Knowledge base (资料管理) ----
+
+export type KbIngestTaskStatus = "pending" | "parsing" | "ingesting" | "done" | "failed";
+
+export interface KbProject {
+  id: string;
+  name: string;
+  /** Absolute path of the kb_root directory (raw/ + wiki/ + .kbase/ layout). */
+  rootPath: string;
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface KbDocument {
+  id: string;
+  projectId: string;
+  fileName: string;
+  /** Path relative to kb_root, e.g. "raw/sources/采购白皮书.pdf". */
+  relPath: string;
+  format: string;
+  sizeBytes: number;
+  /** Content hash used for incremental ingest (skip when unchanged). */
+  sha256?: string;
+  createdAt: string;
+}
+
+export interface KbIngestTask {
+  id: string;
+  projectId: string;
+  documentId?: string;
+  status: KbIngestTaskStatus;
+  /** Progress in the 0..1 range. */
+  progress: number;
+  error?: string;
+  attempts: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type WikiPageType = "entity" | "concept" | "source" | "query" | "synthesis" | "graph";
+
+/**
+ * YAML frontmatter of a wiki page. Unknown extra keys are preserved so
+ * frontmatter written by other tools round-trips losslessly.
+ */
+export interface WikiPageMeta {
+  type?: WikiPageType;
+  title?: string;
+  /** Page path relative to wiki/, e.g. "entities/供应商管理系统.md". */
+  path?: string;
+  tags?: string[];
+  links?: string[];
+  /** Source documents this page traces back to, e.g. "raw/sources/xxx.pdf". */
+  sources?: string[];
+  created?: string;
+  updated?: string;
+  [key: string]: unknown;
+}
+
+export interface WikiPage {
+  meta: WikiPageMeta;
+  body: string;
+}
+
+/** Node of the whole-wiki link graph (one wiki page). */
+export interface KbWikiGraphNode {
+  /** Page path relative to wiki/, e.g. "entities/供应商.md". */
+  id: string;
+  /** meta.title || file stem. */
+  title: string;
+  /** WikiPageType or "" when unannotated. */
+  type: string;
+  tags: string[];
+  /** Total inbound + outbound link count (drives node size). */
+  degree: number;
+}
+
+/** Directed edge of the wiki link graph; source/target are node ids. */
+export interface KbWikiGraphLink {
+  source: string;
+  target: string;
+}
+
+export interface KbWikiGraph {
+  nodes: KbWikiGraphNode[];
+  links: KbWikiGraphLink[];
+}
+
+export type KbReviewStatus = "unresolved" | "resolved";
+
+export interface KbReviewItem {
+  id: number;
+  sourceFile: string;
+  format: string;
+  reason: string;
+  confidence: number;
+  status: KbReviewStatus;
+  createdAt: string;
+}
+
+export interface KbSearchResult {
+  /** Hit path: `wiki/<rel>` for wiki pages, `raw/markdown/<name>` for raw Markdown files. */
+  page: string;
+  title?: string;
+  score: number;
+  snippet?: string;
+  sources: string[];
+}
+
+export interface KbChatCitation {
+  ref: number;
+  /** Hit path: `wiki/<rel>` for wiki pages, `raw/markdown/<name>` for raw Markdown files. */
+  page: string;
+  title?: string;
+  /** Page anchor for UI deep-linking (wiki page filename stem). */
+  anchor?: string;
+  sources: string[];
+}
+
+export interface KbChatResponse {
+  answer: string;
+  citations: KbChatCitation[];
+}
+
+export interface GraphTemplate {
+  name: string;
+  description?: string;
+  entityTypes: string[];
+  relationTypes: string[];
+  instructions?: string;
+}
+
+export interface GraphNode {
+  name: string;
+  type: string;
+  description?: string;
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+  relation: string;
+  description?: string;
+}
+
+export interface GraphExtraction {
+  match: boolean;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
+/** Renderer → main upload payload; the main process converts data to a Buffer before calling the runtime. */
+export interface KbUploadFileInput {
+  name: string;
+  data: ArrayBuffer;
+}
+
+/** A raw source document merged with its latest ingest task state. */
+export interface KbDocumentWithProgress extends KbDocument {
+  task?: KbIngestTask;
+}
+
+/** Converted Markdown artifact under raw/markdown/. */
+export interface KbMarkdownDocument {
+  /** Document stem (raw/markdown/<name>.md). */
+  name: string;
+  relPath: string;
+  markdown: string;
+  sizeBytes: number;
+  updatedAt: string;
+}
+
+export type KbChatHistoryMessage = { role: "user" | "assistant"; content: string };
+
+export interface KbDeleteSourceResult {
+  /** Deleted wiki page rel paths. */
+  deletedPages: string[];
+  /** Deleted disk files (raw source + markdown artifact), absolute paths. */
+  deletedFiles: string[];
+}
+
+export interface KbRescanResult {
+  /** Source file names re-enqueued for ingest (new or content-changed). */
+  enqueued: string[];
+  /** Source file names skipped (sha256 unchanged). */
+  skipped: string[];
+  /** Document stems cascade-deleted because the source file disappeared. */
+  deletedSources: string[];
+}
+
+/** Per-template extraction state for one document. */
+export interface KbGraphStatus {
+  templateName: string;
+  extracted: boolean;
+  /** Wiki page rel path when extracted, e.g. "graphs/<doc>--<template>.md". */
+  page?: string;
+}
+
+export interface KbLintReport {
+  dead_links: { page: string; target: string }[];
+  orphan_pages: string[];
+  index_drift: { missing_in_index: string[]; stale_in_index: string[] };
 }

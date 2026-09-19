@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test } from "vitest";
@@ -64,6 +64,25 @@ describe("JsonFileStorage", () => {
     // A previous rejection must not poison later saves.
     await storage.save(createInitialState());
     await stat(join(dir, "state.json"));
+  });
+
+  test("retries the state.json rename when the destination is briefly locked", async () => {
+    const dir = await createTempDir();
+    const storage = new JsonFileStorage(dir);
+    await storage.save(createInitialState());
+    const statePath = join(dir, "state.json");
+    // On Windows, an open handle without delete sharing blocks renaming over the
+    // file (EPERM); elsewhere the rename succeeds immediately. Either way the save
+    // must complete once the lock clears.
+    const handle = await open(statePath, "r");
+    const next = createInitialState();
+    next.agentName = "saved-after-lock";
+    const pending = storage.save(next);
+    setTimeout(() => {
+      void handle.close();
+    }, 200);
+    await pending;
+    expect(JSON.parse(await readFile(statePath, "utf8")).agentName).toBe("saved-after-lock");
   });
 
   test("persists conversation metadata without duplicating transcript messages", async () => {

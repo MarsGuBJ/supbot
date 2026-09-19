@@ -21,6 +21,7 @@ export {
   type ModelTurnRequest,
   type ModelTurnResult,
 } from "./modelAdapter";
+export { KbManager, type KbManagerOptions, type KbUploadInput } from "./kb/kbManager";
 export { PermissionPolicy } from "./permissionPolicy";
 export { QueryEngine, type QueryEngineInput, type QueryEngineResult } from "./queryEngine";
 export { queryLoop, toRuntimeEvent, type QueryLoopEvent, type QueryLoopInput, type QueryLoopResult } from "./queryLoop";

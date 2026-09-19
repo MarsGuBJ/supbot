@@ -497,7 +497,31 @@ export class JsonFileStorage implements StorageAdapter {
     // Best effort: keep the previous state.json as a backup, but a failed
     // backup copy must not break the save itself.
     await copyFile(this.statePath, this.backupPath).catch(() => undefined);
-    await rename(tempPath, this.statePath);
+    await renameWithRetry(tempPath, this.statePath);
+  }
+}
+
+const TRANSIENT_RENAME_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
+
+/**
+ * On Windows, renaming over an existing state.json can transiently fail while the
+ * destination is held open by antivirus, an indexer, or another process. Retry with
+ * backoff so a brief lock does not crash the caller; non-transient errors throw at once.
+ */
+async function renameWithRetry(tempPath: string, statePath: string, maxAttempts = 10): Promise<void> {
+  let delayMs = 50;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await rename(tempPath, statePath);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException | undefined)?.code;
+      if (attempt >= maxAttempts || !code || !TRANSIENT_RENAME_CODES.has(code)) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      delayMs = Math.min(500, Math.round(delayMs * 1.5));
+    }
   }
 }
 
@@ -669,6 +693,7 @@ function normalizeModelProvider(
     apiKeySecret,
     apiKeySaved: Boolean(apiKeySecret),
     apiKeyStorage: apiKeySecret ? normalizeApiKeyStorage(input.apiKeyStorage) : undefined,
+    multimodal: input.multimodal === true,
     tokenUsage: normalizeModelUsage(input.tokenUsage),
     createdAt: typeof input.createdAt === "string" && input.createdAt ? input.createdAt : now,
     updatedAt: typeof input.updatedAt === "string" && input.updatedAt ? input.updatedAt : now,

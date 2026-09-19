@@ -30,7 +30,7 @@ async function createRuntime() {
   const rootDir = await createGitRoot();
   const dir = await mkdtemp(join(tmpdir(), "supbot-test-"));
   tempDirs.push(dir);
-  const runtime = new SupbotRuntime(new JsonFileStorage(dir), { rootDir });
+  const runtime = new SupbotRuntime(new JsonFileStorage(dir), { rootDir, skillTranslationEnabled: false });
   await runtime.init();
   return runtime;
 }
@@ -39,7 +39,7 @@ async function createRuntimeWithPaths() {
   const rootDir = await createGitRoot();
   const dir = await mkdtemp(join(tmpdir(), "supbot-test-"));
   tempDirs.push(dir);
-  const runtime = new SupbotRuntime(new JsonFileStorage(dir), { rootDir });
+  const runtime = new SupbotRuntime(new JsonFileStorage(dir), { rootDir, skillTranslationEnabled: false });
   await runtime.init();
   return { runtime, dataDir: dir, rootDir };
 }
@@ -50,7 +50,7 @@ async function createRuntimeWithoutBaseline() {
   await runGit(rootDir, ["init"]);
   const dir = await mkdtemp(join(tmpdir(), "supbot-test-"));
   tempDirs.push(dir);
-  const runtime = new SupbotRuntime(new JsonFileStorage(dir), { rootDir });
+  const runtime = new SupbotRuntime(new JsonFileStorage(dir), { rootDir, skillTranslationEnabled: false });
   await runtime.init();
   return runtime;
 }
@@ -993,6 +993,78 @@ describe("SupbotRuntime", () => {
 
     await runtime.deleteModelProvider(initial.id);
     await expect(runtime.deleteModelProvider(tertiary.id)).rejects.toThrow("At least one model provider is required.");
+  });
+
+  test("prefers multimodal providers for vision/OCR model resolution", async () => {
+    const runtime = await createRuntime();
+    const initial = runtime.snapshot().modelProviders[0];
+    const secondary = await runtime.createModelProvider({
+      providerName: "Vision Provider",
+      baseUrl: "http://127.0.0.1:9004/v1",
+      model: "vision-model",
+      temperature: 0.2,
+      maxTokens: 4096,
+      apiKey: "vision-secret",
+      multimodal: true,
+    });
+    expect(secondary.multimodal).toBe(true);
+    expect(runtime.snapshot().modelProviders.find((item) => item.id === secondary.id)?.multimodal).toBe(true);
+    expect(JSON.stringify(runtime.snapshot())).not.toContain("vision-secret");
+
+    const internals = runtime as unknown as { resolveVisionModelProvider(): { id: string } };
+    // 激活服务商未勾选多模态时，OCR 用第一个勾选的服务商。
+    expect(internals.resolveVisionModelProvider().id).toBe(secondary.id);
+
+    // 激活服务商也勾选时优先用激活的。
+    await runtime.updateModelProvider(initial.id, {
+      providerName: initial.providerName,
+      baseUrl: initial.baseUrl,
+      model: initial.model,
+      temperature: initial.temperature,
+      maxTokens: initial.maxTokens,
+      multimodal: true,
+    });
+    expect(internals.resolveVisionModelProvider().id).toBe(initial.id);
+
+    // 全部取消勾选后回退到激活服务商（保持现状）。
+    await runtime.updateModelProvider(initial.id, {
+      providerName: initial.providerName,
+      baseUrl: initial.baseUrl,
+      model: initial.model,
+      temperature: initial.temperature,
+      maxTokens: initial.maxTokens,
+      multimodal: false,
+    });
+    await runtime.updateModelProvider(secondary.id, {
+      providerName: "Vision Provider",
+      baseUrl: "http://127.0.0.1:9004/v1",
+      model: "vision-model",
+      temperature: 0.2,
+      maxTokens: 4096,
+      multimodal: false,
+    });
+    expect(internals.resolveVisionModelProvider().id).toBe(initial.id);
+  });
+
+  test("persists the multimodal flag across reloads", async () => {
+    const rootDir = await createGitRoot();
+    const dir = await mkdtemp(join(tmpdir(), "supbot-test-"));
+    tempDirs.push(dir);
+    const runtime = new SupbotRuntime(new JsonFileStorage(dir), { rootDir, skillTranslationEnabled: false });
+    await runtime.init();
+    const provider = runtime.snapshot().modelProviders[0];
+    await runtime.updateModelProvider(provider.id, {
+      providerName: provider.providerName,
+      baseUrl: provider.baseUrl,
+      model: provider.model,
+      temperature: provider.temperature,
+      maxTokens: provider.maxTokens,
+      multimodal: true,
+    });
+
+    const reloaded = new SupbotRuntime(new JsonFileStorage(dir), { rootDir, skillTranslationEnabled: false });
+    await reloaded.init();
+    expect(reloaded.snapshot().modelProviders[0]?.multimodal).toBe(true);
   });
 
   test("prompts for model configuration when no model is configured", async () => {
