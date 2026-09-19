@@ -108,7 +108,7 @@ export class SubagentRunner {
         getPermissionMode: this.host.getPermissionMode,
         getPermissionRules: this.host.getPermissionRules,
         signal: input.signal,
-        maxTurns: 6,
+        maxTurns: 24,
         requestPermission: (permission) => this.host.requestPermission(permission),
         onSession: (session) => this.host.onSession(session),
         onRuntimeEvent: (event) => this.host.onRuntimeEvent(event),

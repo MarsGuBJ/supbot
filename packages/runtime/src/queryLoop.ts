@@ -52,7 +52,7 @@ export interface QueryLoopResult {
 }
 
 export async function queryLoop(input: QueryLoopInput): Promise<QueryLoopResult> {
-  const maxTurns = input.maxTurns ?? 32;
+  const maxTurns = input.maxTurns ?? 128;
   const messages = [...input.messages];
   const trace: AgentLoopTrace = {
     jobId: input.jobId,
@@ -130,6 +130,19 @@ export async function queryLoop(input: QueryLoopInput): Promise<QueryLoopResult>
       await emit(input, events, { type: "turn_complete", text: artifactCompletionText, trace, generatedFiles });
       return { text: artifactCompletionText, trace, generatedFiles, events, usage, totalUsage };
     }
+    // The loop exhausted its turn budget mid-task. Give the model one last
+    // chance — with tools disabled — to answer from what it already gathered,
+    // instead of failing a job whose research is sitting in the context.
+    const wrapUp = await requestWrapUpAnswer(input, messages);
+    if (wrapUp?.usage) {
+      usage = wrapUp.usage;
+      totalUsage = addModelUsage(totalUsage, wrapUp.usage);
+    }
+    const wrapUpText = wrapUp && !wrapUp.toolCalls.length ? wrapUp.text.trim() : "";
+    if (wrapUpText) {
+      await emit(input, events, { type: "turn_complete", text: wrapUpText, trace, generatedFiles });
+      return { text: wrapUpText, trace, generatedFiles, events, usage, totalUsage };
+    }
     throw new Error(`Agent loop reached maxTurns (${maxTurns}) before producing a final answer.`);
   } catch (error) {
     const message = describeError(error);
@@ -205,10 +218,38 @@ function upsertRecord(records: ToolCallRecord[], record: ToolCallRecord): ToolCa
   return [...records.filter((item) => item.id !== record.id), record];
 }
 
+const WRAP_UP_NUDGE =
+  "You have reached the maximum number of tool-using turns. Do not call any more tools. " +
+  "Using only the information already gathered above, write the final answer to the original request now.";
+
+async function requestWrapUpAnswer(
+  input: QueryLoopInput,
+  messages: AdapterMessage[],
+): Promise<Awaited<ReturnType<ModelAdapter["complete"]>> | undefined> {
+  try {
+    return await input.model.complete({
+      ...input.modelRequest,
+      tools: [],
+      messages: [...messages, { role: "user", content: WRAP_UP_NUDGE }],
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+// Only tools that actually produce files may contribute an artifact summary.
+// Read-only tools (ReadFile, Agent, search/connectors) merely *mention* paths
+// — ReadFile's "Read <path>" header once became a research job's bogus
+// "Completed. Read ..." final answer after the loop hit maxTurns.
+const ARTIFACT_PRODUCING_TOOLS = new Set(["Shell", "WriteFile"]);
+
 export function artifactCompletionFromTrace(trace: AgentLoopTrace): string | undefined {
   const completedOutputs = [...trace.toolCalls]
     .reverse()
-    .filter((record) => record.status === "completed" && record.output?.trim())
+    .filter(
+      (record) =>
+        record.status === "completed" && ARTIFACT_PRODUCING_TOOLS.has(record.toolName) && record.output?.trim(),
+    )
     .map((record) => record.output || "");
   for (const output of completedOutputs) {
     const summary = artifactSummaryLine(output);
