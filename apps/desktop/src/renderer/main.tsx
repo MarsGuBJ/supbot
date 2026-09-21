@@ -378,15 +378,30 @@ function App() {
         setUpdateState(await window.supbot.installHBClientUpdate());
         return;
       }
-      const downloaded = await window.supbot.downloadHBClientUpdate();
-      setUpdateState(downloaded);
-      if (downloaded.status === "downloaded") {
-        setUpdateState(await window.supbot.installHBClientUpdate());
+      if (updateState.status === "checking" || updateState.status === "downloading") {
+        return;
       }
+      let state = updateState;
+      if (state.status !== "available") {
+        state = await window.supbot.checkHBClientUpdate();
+        setUpdateState(state);
+      }
+      if (state.status === "available") {
+        // The update-available effect also watches this state; pre-mark it so
+        // the manual flow downloads directly without a duplicate confirm modal.
+        promptedUpdateRef.current = `available:${state.availableVersion || "unknown"}`;
+        const downloaded = await window.supbot.downloadHBClientUpdate();
+        setUpdateState(downloaded);
+        if (downloaded.status === "downloaded") {
+          setUpdateState(await window.supbot.installHBClientUpdate());
+        }
+        return;
+      }
+      messageApi.info(t("HyWork is already up to date."));
     } catch (error) {
       messageApi.error((error as Error).message);
     }
-  }, [messageApi, updateState.status]);
+  }, [messageApi, t, updateState]);
 
   const showHBClientVersion = useCallback(async () => {
     let currentVersion = updateState.currentVersion;
