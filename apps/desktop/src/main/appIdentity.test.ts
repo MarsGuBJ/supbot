@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { configureUserDataPath, HYBOT_USER_DATA_DIRECTORY, resolveUserDataPath } from "./appIdentity";
 
-describe("HyBot application identity", () => {
+describe("HyWork application identity", () => {
   it("uses a dedicated user-data namespace instead of the shared HBClient directory", () => {
     const appDataPath = join("test-root", "AppData", "Roaming");
 

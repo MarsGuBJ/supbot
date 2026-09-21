@@ -3,6 +3,7 @@ import { ApiOutlined, CheckCircleOutlined } from "@ant-design/icons";
 import { Button, Form, Input, Modal, Select, message } from "antd";
 import type { RuntimeSnapshot } from "@supbot/shared";
 import { connectServstationAgent } from "../servstationConnection";
+import { promptContainsScheduleIntent } from "../lib/schedulePromptGuard";
 import type { Translator } from "../lib/types";
 
 export function ServerAgentConnectionButton({
@@ -110,6 +111,15 @@ export function RemoteScheduleModal({
         form={form}
         layout="vertical"
         onFinish={async (values) => {
+          if (promptContainsScheduleIntent(values.prompt)) {
+            Modal.warning({
+              title: t("Prompt cannot set the schedule"),
+              content: t(
+                "The prompt of a scheduled task cannot set the time or cycle. Please remove the time/cycle wording from the prompt and use the schedule options below instead.",
+              ),
+            });
+            return;
+          }
           setSaving(true);
           try {
             await onSave(values);

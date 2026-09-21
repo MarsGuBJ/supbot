@@ -103,6 +103,7 @@ import { readClipboardText, selectedTextWithin, selectionMemoryTitle, writeClipb
 import { filesFromPasteEvent, renamePastedFiles } from "./lib/pastedAttachments";
 import { formatFileSize } from "./lib/flowSchema";
 import { formatSkillPromptDirective } from "./lib/skills";
+import { promptContainsScheduleIntent } from "./lib/schedulePromptGuard";
 import {
   servstationConversationTitle,
   servstationJobIsTerminal,
@@ -393,10 +394,10 @@ function App() {
     }
     const chinese = language === "zh";
     modalApi.info({
-      title: chinese ? "关于 HyBot" : "About HyBot",
+      title: chinese ? "关于 HyWork" : "About HyWork",
       content: (
         <div className="version-info">
-          <div className="version-info-product">HyBot</div>
+          <div className="version-info-product">HyWork</div>
           <div className="version-info-number">
             <span>{chinese ? "版本号" : "Version"}</span>
             <strong>{currentVersion ? `v${currentVersion}` : chinese ? "未知" : "Unknown"}</strong>
@@ -510,7 +511,7 @@ function App() {
     const version = updateState.availableVersion ? ` v${updateState.availableVersion}` : "";
     const currentVersion = updateState.currentVersion ? ` v${updateState.currentVersion}` : "";
     modalApi.confirm({
-      title: chinese ? `发现 HyBot 新版本${version}` : `HyBot update${version} is available`,
+      title: chinese ? `发现 HyWork 新版本${version}` : `HyWork update${version} is available`,
       content: chinese
         ? `当前版本${currentVersion || "未知"}。是否立即升级？`
         : `Current version${currentVersion || " unknown"}. Upgrade now?`,
@@ -663,9 +664,9 @@ function App() {
     }
   };
 
-  const changeModelProvider = async (providerId: string) => {
+  const changeModelProvider = async (providerId: string, model: string) => {
     try {
-      await window.supbot.setActiveModelProvider(providerId);
+      await window.supbot.setActiveModelProviderModel(providerId, model);
       await refresh();
     } catch (error) {
       messageApi.error((error as Error).message);
@@ -865,7 +866,7 @@ function App() {
           <div className="brand-mark">
             <RobotOutlined />
           </div>
-          <Typography.Title level={3}>{t("Starting HyBot")}</Typography.Title>
+          <Typography.Title level={3}>{t("Starting HyWork")}</Typography.Title>
         </div>
       </ConfigProvider>
     );
@@ -947,7 +948,7 @@ function App() {
                   modelProviders={snapshot.modelProviders}
                   activeModelProviderId={snapshot.activeModelProviderId}
                   currentModelLabel={`${snapshot.modelConfig.providerName} / ${snapshot.modelConfig.model}`}
-                  onModelProviderChange={(providerId) => void changeModelProvider(providerId)}
+                  onModelSelect={(providerId, model) => void changeModelProvider(providerId, model)}
                   onOpenModelConfig={() => openConfig("model")}
                   onOpenSkillView={() => setView("skill")}
                   onOpenFile={openConversationFile}
@@ -2786,8 +2787,8 @@ function ScheduleModal({
   onSave: (input: ScheduledJobInput) => Promise<void>;
   t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
-  // runAt is a Dayjs inside the form (DatePicker), converted to ISO on save.
-  const [form] = Form.useForm<Omit<ScheduledJobInput, "runAt"> & { runAt?: Dayjs }>();
+  // runAt/endDate are Dayjs inside the form (DatePicker), converted to ISO on save.
+  const [form] = Form.useForm<Omit<ScheduledJobInput, "runAt" | "endDate"> & { runAt?: Dayjs; endDate?: Dayjs }>();
   useEffect(() => {
     if (!open) {
       return;
@@ -2800,6 +2801,7 @@ function ScheduleModal({
         scheduleKind: editingJob.scheduleKind,
         cronExpr: editingJob.cronExpr,
         runAt: editingJob.runAt ? dayjs(editingJob.runAt) : undefined,
+        endDate: editingJob.endDate ? dayjs(editingJob.endDate) : undefined,
         enabled: editingJob.enabled,
       });
     } else {
@@ -2819,7 +2821,22 @@ function ScheduleModal({
         form={form}
         layout="vertical"
         initialValues={{ scheduleKind: "once", enabled: true }}
-        onFinish={(values) => void onSave({ ...values, runAt: values.runAt ? values.runAt.toISOString() : undefined })}
+        onFinish={(values) => {
+          if (promptContainsScheduleIntent(values.prompt)) {
+            Modal.warning({
+              title: t("Prompt cannot set the schedule"),
+              content: t(
+                "The prompt of a scheduled task cannot set the time or cycle. Please remove the time/cycle wording from the prompt and use the schedule options below instead.",
+              ),
+            });
+            return;
+          }
+          void onSave({
+            ...values,
+            runAt: values.runAt ? values.runAt.toISOString() : undefined,
+            endDate: values.scheduleKind === "daily" && values.endDate ? values.endDate.toISOString() : undefined,
+          });
+        }}
       >
         <Form.Item label={t("Title")} name="title" rules={[{ required: true }]}>
           <Input />
@@ -2854,14 +2871,21 @@ function ScheduleModal({
                 <CronBuilder t={t} />
               </Form.Item>
             ) : (
-              <Form.Item label={t("Run at")} name="runAt">
-                <DatePicker
-                  showTime={{ format: "HH:mm" }}
-                  format="YYYY-MM-DD HH:mm"
-                  style={{ width: "100%" }}
-                  placeholder={t("Pick run time")}
-                />
-              </Form.Item>
+              <>
+                <Form.Item label={t("Run at")} name="runAt">
+                  <DatePicker
+                    showTime={{ format: "HH:mm" }}
+                    format="YYYY-MM-DD HH:mm"
+                    style={{ width: "100%" }}
+                    placeholder={t("Pick run time")}
+                  />
+                </Form.Item>
+                {getFieldValue("scheduleKind") === "daily" ? (
+                  <Form.Item label={t("End date")} name="endDate" extra={t("The task stops after this date.")}>
+                    <DatePicker format="YYYY-MM-DD" style={{ width: "100%" }} placeholder={t("Pick end date")} />
+                  </Form.Item>
+                ) : null}
+              </>
             )
           }
         </Form.Item>

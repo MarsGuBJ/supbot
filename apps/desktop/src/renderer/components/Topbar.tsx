@@ -89,11 +89,11 @@ function VersionDropdown({
   const label =
     view === "server"
       ? chinese
-        ? "HyBot 企业工作区"
-        : "HyBot Enterprise"
+        ? "HyWork 企业工作区"
+        : "HyWork Enterprise"
       : chinese
-        ? "HyBot 个人空间"
-        : "HyBot Personal";
+        ? "HyWork 个人空间"
+        : "HyWork Personal";
   return (
     <div className={`hb-version-dropdown ${open ? "open" : ""}`} ref={ref}>
       <button
@@ -118,7 +118,7 @@ function VersionDropdown({
         >
           <UserOutlined className="hb-version-item-icon" />
           <div className="hb-version-item-body">
-            <div className="hb-version-item-title">{chinese ? "HyBot 个人空间" : "HyBot Personal"}</div>
+            <div className="hb-version-item-title">{chinese ? "HyWork 个人空间" : "HyWork Personal"}</div>
             <div className="hb-version-item-desc">
               {chinese ? "面向个人工作与日常学习智能体" : "Agent for personal work and study"}
             </div>
@@ -136,7 +136,7 @@ function VersionDropdown({
         >
           <GlobalOutlined className="hb-version-item-icon" />
           <div className="hb-version-item-body">
-            <div className="hb-version-item-title">{chinese ? "HyBot 企业工作区" : "HyBot Enterprise"}</div>
+            <div className="hb-version-item-title">{chinese ? "HyWork 企业工作区" : "HyWork Enterprise"}</div>
             <div className="hb-version-item-desc">
               {chinese ? "面向团队与企业的智能工作平台" : "Agent workspace for teams and enterprises"}
             </div>
@@ -223,7 +223,7 @@ export function Topbar({
       items.push({
         id: "hbclient-update",
         kind: "update",
-        title: chinese ? `HyBot 新版本${version}` : `New HyBot version${version}`,
+        title: chinese ? `HyWork 新版本${version}` : `New HyWork version${version}`,
         desc: downloading
           ? chinese
             ? "正在下载更新…"
@@ -503,7 +503,7 @@ export function Topbar({
             onClick={() => void showVersionInfo()}
             aria-label={chinese ? "版本信息" : "Version information"}
           >
-            <span className="topbar-version-glyph">HyBot</span>
+            <span className="topbar-version-glyph">HyWork</span>
           </button>
         </Tooltip>
         {view !== "server" ? (

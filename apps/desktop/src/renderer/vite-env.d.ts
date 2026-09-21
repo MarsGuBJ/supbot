@@ -268,6 +268,7 @@ declare global {
       updateModelProvider(id: string, input: ModelProviderUpdate): Promise<ModelProviderConfig>;
       deleteModelProvider(id: string): Promise<void>;
       setActiveModelProvider(id: string): Promise<ModelProviderConfig>;
+      setActiveModelProviderModel(id: string, model: string): Promise<ModelProviderConfig>;
       testModelProvider(id?: string, input?: Partial<ModelProviderUpdate>): Promise<ModelTestResult>;
       listModelProviderModels(id?: string, input?: Partial<ModelProviderUpdate>): Promise<ModelListResult>;
       updateToolMarketConfig(input: ToolMarketConfigUpdate): Promise<ToolMarketConfig>;
@@ -313,6 +314,8 @@ declare global {
       openWikiGraphWindow(project: string): Promise<void>;
       kbListReviews(project: string): Promise<KbReviewItem[]>;
       kbResolveReview(project: string, id: number): Promise<boolean>;
+      kbRemoveDeadLink(project: string, id: number): Promise<boolean>;
+      kbRemoveReview(project: string, id: number): Promise<boolean>;
       kbLint(project: string): Promise<KbLintReport>;
       kbListGraphTemplates(): Promise<GraphTemplate[]>;
       kbSaveGraphTemplate(template: GraphTemplate): Promise<GraphTemplate>;
@@ -329,6 +332,7 @@ declare global {
       showFileInFolder(filePath: string): Promise<void>;
       previewFile(filePath: string): Promise<FilePreviewResult>;
       downloadFile(filePath: string, suggestedName?: string): Promise<boolean>;
+      saveBase64File(suggestedName: string, contentBase64: string): Promise<boolean>;
       userDataPath(): Promise<string>;
       onEvent(listener: (event: SupbotEvent) => void): () => void;
     };

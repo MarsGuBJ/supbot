@@ -17,9 +17,18 @@ export class ReviewQueue {
     mkdirSync(dirname(this.filePath), { recursive: true });
   }
 
-  /** Add a review item; returns its auto-incremented id. */
+  /**
+   * Add a review item; returns its auto-incremented id. If an item with the
+   * same sourceFile + reason already exists (in any status), returns the
+   * existing id instead of creating a duplicate — lint re-runs and repeated
+   * low-confidence conversions must not re-flood the queue.
+   */
   add(sourceFile: string, format: string, reason: string, confidence: number): number {
     const items = this.load();
+    const existing = items.find((item) => item.sourceFile === sourceFile && item.reason === reason);
+    if (existing) {
+      return existing.id;
+    }
     const id = items.reduce((max, item) => Math.max(max, item.id), 0) + 1;
     items.push({
       id,

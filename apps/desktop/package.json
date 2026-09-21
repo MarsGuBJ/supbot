@@ -1,8 +1,8 @@
 {
   "name": "hbclient",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Local single-user desktop agent.",
-  "author": "HyBot contributors",
+  "author": "HyWork contributors",
   "desktopName": "hbclient.desktop",
   "main": "dist/main/index.js",
   "bin": {
@@ -20,7 +20,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build:renderer": "vite build",
     "build:main": "esbuild src/main/index.ts src/preload/index.ts --bundle --platform=node --target=node22 --format=cjs --outdir=dist --external:electron --external:@aws-sdk/client-s3 --external:canvas && node ../../scripts/prepare-pdf-worker.cjs",
-    "test": "vitest run src/main/appIdentity.test.ts src/main/filePreview.test.ts src/main/updateManager.test.ts src/main/oidcLoginWindowLifecycle.test.ts src/main/trayManager.test.ts src/renderer/lib/chatFormat.test.ts src/renderer/lib/filePreview.test.ts src/renderer/lib/fileType.test.ts src/renderer/lib/officePreview.test.ts src/renderer/lib/servstationFormat.test.ts src/renderer/lib/skills.test.ts src/renderer/lib/mentions.test.ts src/renderer/lib/modelProviderPresets.test.ts src/renderer/lib/promptQueue.test.ts src/renderer/lib/scheduleRecords.test.ts src/renderer/lib/assetsFormat.test.ts src/renderer/servstationAutopilot.test.ts src/renderer/servstationCapabilities.test.ts src/renderer/servstationConnection.test.ts src/renderer/servstationProjects.test.ts src/renderer/pastedAttachments.test.ts src/renderer/cronBuilder.test.ts",
+    "test": "vitest run src/main/appIdentity.test.ts src/main/filePreview.test.ts src/main/updateManager.test.ts src/main/oidcLoginWindowLifecycle.test.ts src/main/trayManager.test.ts src/renderer/lib/chatFormat.test.ts src/renderer/lib/filePreview.test.ts src/renderer/lib/fileType.test.ts src/renderer/lib/officePreview.test.ts src/renderer/lib/servstationFormat.test.ts src/renderer/lib/skills.test.ts src/renderer/lib/mentions.test.ts src/renderer/lib/modelProviderPresets.test.ts src/renderer/lib/promptQueue.test.ts src/renderer/lib/scheduleRecords.test.ts src/renderer/lib/schedulePromptGuard.test.ts src/renderer/lib/assetsFormat.test.ts src/renderer/servstationAutopilot.test.ts src/renderer/servstationCapabilities.test.ts src/renderer/servstationConnection.test.ts src/renderer/servstationProjects.test.ts src/renderer/pastedAttachments.test.ts src/renderer/cronBuilder.test.ts",
     "dev": "npm run build:main && concurrently -k \"vite --host 127.0.0.1 --port 5273 --strictPort\" \"cross-env HBCLIENT_DEV_SERVER_URL=http://127.0.0.1:5273 electron .\"",
     "start": "electron .",
     "prepare:default-skills": "node ../../scripts/prepare-bundled-skills.cjs",
@@ -58,10 +58,10 @@
   },
   "build": {
     "appId": "local.hbclient.desktop",
-    "productName": "HyBot",
+    "productName": "HyWork",
     "electronVersion": "42.4.1",
-    "artifactName": "HyBot-${version}-${os}-${arch}.${ext}",
-    "copyright": "Copyright © 2026 HyBot contributors",
+    "artifactName": "HyWork-${version}-${os}-${arch}.${ext}",
+    "copyright": "Copyright © 2026 HyWork contributors",
     "directories": {
       "output": "release"
     },
@@ -86,7 +86,7 @@
     "publish": [
       {
         "provider": "generic",
-        "url": "http://101.227.67.76:8800/api/v1/hbclient/updates/stable/win32-x64",
+        "url": "https://update.i-shu.com/api/v1/hbclient/updates/stable/win32-x64",
         "useMultipleRangeRequest": false
       }
     ],
@@ -98,7 +98,7 @@
       "requestedExecutionLevel": "asInvoker",
       "verifyUpdateCodeSignature": false,
       "signtoolOptions": {
-        "publisherName": "HyBot"
+        "publisherName": "HyWork"
       }
     },
     "nsis": {
@@ -111,7 +111,7 @@
       "deleteAppDataOnUninstall": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "HyBot"
+      "shortcutName": "HyWork"
     },
     "linux": {
       "target": [

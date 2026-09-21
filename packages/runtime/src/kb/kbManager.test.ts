@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -105,6 +105,18 @@ describe("KbManager 文档摄入", () => {
     await expect(manager.uploadDocuments("p1", [{ name: "../escape.txt", data: Buffer.from("x") }])).rejects.toThrow(
       /非法文件名/,
     );
+  });
+
+  test("listDocuments 按上传时间倒序排列（最新在上）", async () => {
+    const { manager, kbRoot } = createManager();
+    manager.createProject("p1");
+    const sourcesDir = join(kbRoot, "projects", "p1", "raw", "sources");
+    writeFileSync(join(sourcesDir, "b-旧.txt"), "旧文档", "utf8");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    writeFileSync(join(sourcesDir, "a-新.txt"), "新文档", "utf8");
+
+    const docs = manager.listDocuments("p1");
+    expect(docs.map((doc) => doc.fileName)).toEqual(["a-新.txt", "b-旧.txt"]);
   });
 
   test("上传 txt → 摄入完成 → 进度事件 → search 命中 → listDocuments 关联任务", async () => {

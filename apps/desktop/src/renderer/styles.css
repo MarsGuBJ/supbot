@@ -11,7 +11,7 @@ body,
 
 :root {
   color-scheme: light;
-  /* HyBot prototype design tokens (docs/HyBot妗岄潰绔師鍨媉V5.html) */
+  /* HyWork prototype design tokens (docs/HyWork妗岄潰绔師鍨媉V5.html) */
   --bg: #ffffff;
   --bg-2: #f0f2f5;
   --panel: #ffffff;
@@ -1298,7 +1298,7 @@ button {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  margin: -1px -8px 0;
+  margin: -1px 0 0;
   background: #ffffff;
   border: 1px solid var(--border-light);
   border-radius: 8px;
@@ -1421,6 +1421,72 @@ button {
 
 .file-text-viewport .ant-tag {
   margin-top: 12px;
+}
+
+.file-markdown-viewport {
+  min-height: 100%;
+  padding: 16px 18px;
+  background: #ffffff;
+  border: 1px solid var(--border-light);
+  border-radius: 5px;
+  color: var(--text-primary);
+  zoom: var(--md-zoom, 1);
+}
+
+.file-markdown-viewport .markdown-body {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.file-markdown-scroll {
+  min-height: 100%;
+}
+
+.file-markdown-view-toggle {
+  position: sticky;
+  top: 8px;
+  float: right;
+  margin-right: 8px;
+  z-index: 6;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.file-context-menu-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+}
+
+.file-context-menu {
+  position: fixed;
+  min-width: 168px;
+  padding: 4px;
+  display: grid;
+  gap: 2px;
+  background: #ffffff;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+}
+
+.file-context-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-context-menu button:hover {
+  background: rgba(27, 31, 36, 0.06);
 }
 
 .file-image-viewport {
@@ -4506,7 +4572,7 @@ textarea.ant-input::placeholder {
 }
 
 /* ============================================================
-   Prototype V5 shell & chrome (docs/HyBot桌面端原型_V5.html)
+   Prototype V5 shell & chrome (docs/HyWork桌面端原型_V5.html)
    ============================================================ */
 
 @keyframes fadeIn {
@@ -8148,6 +8214,27 @@ body.right-resizing iframe {
   display: flex;
   align-items: flex-start;
   gap: 8px;
+}
+
+.assets-review-tabs {
+  flex: 1;
+  min-width: 0;
+}
+
+.assets-review-tabs .ant-tabs-nav {
+  margin-bottom: 0;
+}
+
+.assets-review-tabs .ant-tabs-nav::before {
+  border-bottom: 0;
+}
+
+.assets-review-tabs .ant-tabs-content-holder {
+  display: none;
+}
+
+.assets-review-item > .ant-checkbox-wrapper {
+  margin-top: 3px;
 }
 
 .assets-review-reason {

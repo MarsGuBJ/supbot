@@ -4,7 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const appPath =
-  process.env.HBCLIENT_PACKAGED_EXE || path.resolve("apps", "desktop", "release", "win-unpacked", "HyBot.exe");
+  process.env.HBCLIENT_PACKAGED_EXE || path.resolve("apps", "desktop", "release", "win-unpacked", "HyWork.exe");
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "hbclient-packaged-"));
 const port = Number(process.env.HBCLIENT_VERIFY_PORT || 9347);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -24,7 +24,7 @@ async function waitForPage() {
     }
     await sleep(300);
   }
-  throw new Error("No packaged HyBot page exposed through DevTools.");
+  throw new Error("No packaged HyWork page exposed through DevTools.");
 }
 
 async function evaluate(wsUrl, expression) {
@@ -101,7 +101,7 @@ async function main() {
   const updateConfig = fs.existsSync(updateConfigPath) ? fs.readFileSync(updateConfigPath, "utf8") : "";
   const hasUpdateConfig =
     updateConfig.includes("provider: generic") &&
-    updateConfig.includes("101.227.67.76:8800") &&
+    updateConfig.includes("update.i-shu.com") &&
     updateConfig.includes("useMultipleRangeRequest: false");
   const verification = { ...result, seededSkillCount, markerExists, hasUpdateConfig, userDataDir };
   console.log(JSON.stringify(verification, null, 2));

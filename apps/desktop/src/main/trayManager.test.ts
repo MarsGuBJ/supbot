@@ -56,7 +56,7 @@ function createManager() {
   const quit = vi.fn();
   const manager = new TrayManager({
     iconPath: "/tmp/icon.ico",
-    displayName: "HyBot",
+    displayName: "HyWork",
     showWindow,
     quit,
   });
@@ -105,8 +105,8 @@ describe("TrayManager", () => {
 
     expect(electronMock.trayInstances).toHaveLength(1);
     const tray = electronMock.trayInstances[0];
-    expect(tray.setToolTip).toHaveBeenCalledWith("HyBot");
-    expect(electronMock.menuTemplate.map((item) => item.label)).toEqual(["打开 HyBot", undefined, "退出"]);
+    expect(tray.setToolTip).toHaveBeenCalledWith("HyWork");
+    expect(electronMock.menuTemplate.map((item) => item.label)).toEqual(["打开 HyWork", undefined, "退出"]);
 
     const openItem = electronMock.menuTemplate[0] as { click: () => void };
     openItem.click();

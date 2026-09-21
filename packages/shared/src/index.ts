@@ -27,6 +27,8 @@ export const defaultToolMarketApiUrl = "https://i-shu.com";
 // plain HTTP on this host; migrate these defaults to https:// once TLS is available.
 export const defaultServstationBaseUrl = "http://101.227.67.76:8800";
 export const defaultServstationIssuerUrl = "http://101.227.67.76:8092";
+// Dedicated HTTPS endpoint for app update checks/downloads.
+export const defaultUpdateFeedBaseUrl = "https://update.i-shu.com";
 export const defaultServstationClientId = "botstation-agent-client-web";
 export const defaultServstationScope = "openid profile email";
 export const defaultServstationRedirectUri = "http://localhost:8800/oauth2/callback";
@@ -82,6 +84,8 @@ export interface ModelProviderConfig {
   providerName: string;
   baseUrl: string;
   model: string;
+  /** Cached list of models available under this provider's base URL. */
+  models?: string[];
   temperature: number;
   maxTokens: number;
   apiKeySaved: boolean;
@@ -97,7 +101,8 @@ export interface ModelProviderConfig {
 export interface ModelProviderUpdate {
   providerName: string;
   baseUrl: string;
-  model: string;
+  model?: string;
+  models?: string[];
   temperature: number;
   maxTokens: number;
   apiKey?: string;
@@ -1725,6 +1730,8 @@ export interface ScheduledJob {
   scheduleKind: ScheduleKind;
   runAt?: string;
   cronExpr?: string;
+  /** Daily jobs stop after this date (inclusive of that day's run). */
+  endDate?: string;
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
@@ -2021,6 +2028,8 @@ export interface ScheduledJobInput {
   scheduleKind: ScheduleKind;
   runAt?: string;
   cronExpr?: string;
+  /** Daily jobs stop after this date (inclusive of that day's run). */
+  endDate?: string;
   enabled?: boolean;
 }
 
@@ -2181,6 +2190,17 @@ export function formatDateTime(value?: string): string {
   }).format(new Date(value));
 }
 
+export function formatDate(value?: string): string {
+  if (!value) {
+    return "-";
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+  }).format(new Date(value));
+}
+
 export function formatSchedule(
   job: ScheduledJob,
   t: (key: string, vars?: Record<string, string | number>) => string = (key, vars) => {
@@ -2192,11 +2212,20 @@ export function formatSchedule(
     return job.runAt ? t("Once at {time}", { time: formatDateTime(job.runAt) }) : t("One-time task");
   }
   if (job.scheduleKind === "daily") {
-    return job.runAt
-      ? t("Daily around {time}", {
-          time: new Date(job.runAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        })
-      : t("Daily");
+    const time = job.runAt
+      ? new Date(job.runAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : undefined;
+    const end = job.endDate ? formatDate(job.endDate) : undefined;
+    if (time && end) {
+      return t("Daily around {time} until {date}", { time, date: end });
+    }
+    if (time) {
+      return t("Daily around {time}", { time });
+    }
+    if (end) {
+      return t("Daily until {date}", { date: end });
+    }
+    return t("Daily");
   }
   return job.cronExpr ? t("Cron {expr}", { expr: job.cronExpr }) : t("Cron");
 }

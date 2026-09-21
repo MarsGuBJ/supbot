@@ -40,7 +40,7 @@ import { IngestCache } from "./ingest/cache";
 import { lintWiki } from "./ingest/lint";
 import { createConvertIngestHandler, IngestQueue } from "./ingest/queue";
 import { TwoStepIngest } from "./ingest/twoStep";
-import { KbStore } from "./kbStore";
+import { KbStore, removeWikilink } from "./kbStore";
 import { sha256Of } from "./pipelines/base";
 import type { VisionLlm } from "./pipelines/vision";
 import { KbQueryPipeline } from "./query/pipeline";
@@ -155,7 +155,7 @@ export class KbManager {
     return Promise.all(paths.map((path) => ctx.ingestQueue.enqueue(path)));
   }
 
-  /** raw/sources 列表 + 关联的最新摄入任务状态。 */
+  /** raw/sources 列表（按上传时间倒序）+ 关联的最新摄入任务状态。 */
   listDocuments(project: string): KbDocumentWithProgress[] {
     const ctx = this.contextFor(project);
     const sourcesDir = join(ctx.root, "raw", "sources");
@@ -166,7 +166,7 @@ export class KbManager {
           .sort()
       : [];
     const tasks = ctx.ingestQueue.list();
-    return names.map((name) => {
+    const docs = names.map((name) => {
       const path = join(sourcesDir, name);
       const stat = statSync(path);
       const relPath = `raw/sources/${name}`;
@@ -183,6 +183,8 @@ export class KbManager {
         task,
       };
     });
+    // 最新上传的排在前面，文件名作为同时间戳时的稳定次序。
+    return docs.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.fileName.localeCompare(b.fileName));
   }
 
   /** 读 raw/markdown 产物。 */
@@ -291,6 +293,38 @@ export class KbManager {
 
   resolveReview(project: string, id: number): boolean {
     return this.contextFor(project).reviewQueue.resolve(id);
+  }
+
+  /** 删除一条评审记录（用于清理已处理的历史记录）。 */
+  removeReview(project: string, id: number): boolean {
+    return this.contextFor(project).reviewQueue.remove(id);
+  }
+
+  /**
+   * 删除死链评审项对应的 [[wikilink]]：从源页正文中移除指向不存在页的链接
+   * （保留显示文本），并把评审项标记为已解决。源页或链接已不存在时仅解决评审项。
+   */
+  removeDeadLink(project: string, reviewId: number): boolean {
+    const ctx = this.contextFor(project);
+    const item = ctx.reviewQueue.list().find((entry) => entry.id === reviewId);
+    if (!item || !item.reason.startsWith("lint:dead_link")) {
+      return false;
+    }
+    const target = /\[\[([^\]]+)\]\]\s*$/.exec(item.reason)?.[1]?.trim();
+    if (!target) {
+      return false;
+    }
+    const rel = item.sourceFile.replace(/\\/g, "/").replace(/^wiki\//, "");
+    try {
+      const page = ctx.store.readPage(rel);
+      const { body, removed } = removeWikilink(page.body, target);
+      if (removed) {
+        ctx.store.writePage(rel, page.meta, body);
+      }
+    } catch {
+      // 源页已删除：死链随之消失，只需解决评审项。
+    }
+    return ctx.reviewQueue.resolve(reviewId);
   }
 
   lint(project: string): KbLintReport {

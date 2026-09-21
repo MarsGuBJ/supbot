@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import {
   ApiOutlined,
   CloseOutlined,
+  CodeOutlined,
   CompressOutlined,
+  CopyOutlined,
+  FileMarkdownOutlined,
   DownloadOutlined,
   FileImageOutlined,
   FilePdfOutlined,
@@ -57,6 +60,8 @@ import {
 } from "../lib/chatFormat";
 import { compareCreatedAt, shouldShowJobRuntimeEvent } from "../lib/snapshotApply";
 import { decodeBase64Utf8, formatJsonPreview } from "../lib/filePreview";
+import { writeClipboardText } from "../lib/clipboard";
+import { MarkdownPreview } from "../views/assets/MarkdownPreview";
 import { convertDocxToHtml, parseXlsxFirstSheet, renderPptxInto, type XlsxSheetPreview } from "../lib/officePreview";
 import { connectServstationAgent } from "../servstationConnection";
 
@@ -169,6 +174,13 @@ function FilePreviewPanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [zoom, setZoom] = useState(100);
+  const [markdownRendered, setMarkdownRendered] = useState(true);
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    selection: string;
+    imageSrc: string | null;
+  } | null>(null);
   const [messageApi, contextHolder] = message.useMessage();
 
   useEffect(() => {
@@ -177,6 +189,7 @@ function FilePreviewPanel({
     setError("");
     setPreview(null);
     setZoom(100);
+    setMarkdownRendered(true);
     void window.supbot
       .previewFile(file.path)
       .then((result) => {
@@ -230,12 +243,52 @@ function FilePreviewPanel({
       : "";
   const jsonPreview = preview?.kind === "json" ? formatJsonPreview(displayText) : undefined;
   const dataUrl = preview?.contentBase64 ? `data:${preview.mimeType};base64,${preview.contentBase64}` : undefined;
+  const isMarkdown = preview?.mimeType === "text/markdown" || /\.(md|markdown)$/i.test(file.name);
 
   const runAction = async (action: () => Promise<void>, successKey?: string) => {
     try {
       await action();
       if (successKey) {
         messageApi.success(t(successKey));
+      }
+    } catch (reason) {
+      messageApi.error(reason instanceof Error ? reason.message : t("File action failed."));
+    }
+  };
+
+  const handleContentContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
+    const target = event.target;
+    const imageSrc = target instanceof HTMLImageElement ? target.currentSrc || target.src : null;
+    const selection = window.getSelection()?.toString() || "";
+    event.preventDefault();
+    setContextMenu({ x: event.clientX, y: event.clientY, selection, imageSrc });
+  };
+
+  const copyContextMenuSelection = async (text: string) => {
+    try {
+      await writeClipboardText(text);
+      messageApi.success(t("Copied selection."));
+    } catch (reason) {
+      messageApi.error(reason instanceof Error ? reason.message : t("File action failed."));
+    }
+  };
+
+  const saveContextMenuImage = async (imageSrc: string) => {
+    if (preview?.kind === "image") {
+      await runAction(() => onSaveAs(file), "File saved.");
+      return;
+    }
+    const match = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(imageSrc);
+    if (!match) {
+      messageApi.warning(t("This image cannot be saved."));
+      return;
+    }
+    const extension = match[1].split("/")[1].replace("jpeg", "jpg").replace("svg+xml", "svg");
+    const baseName = file.name.replace(/\.[^.]+$/, "") || "image";
+    try {
+      const saved = await window.supbot.saveBase64File(`${baseName}.${extension}`, match[2]);
+      if (saved) {
+        messageApi.success(t("File saved."));
       }
     } catch (reason) {
       messageApi.error(reason instanceof Error ? reason.message : t("File action failed."));
@@ -251,7 +304,9 @@ function FilePreviewPanel({
           <span>
             <strong>{file.name}</strong>
             <small>
-              {preview ? `${fileKindLabel(preview.kind, t)} · ${formatBytes(preview.size)}` : t("Loading...")}
+              {preview
+                ? `${isMarkdown && preview.kind === "text" ? t("Markdown file") : fileKindLabel(preview.kind, t)} · ${formatBytes(preview.size)}`
+                : t("Loading...")}
             </small>
           </span>
         </div>
@@ -294,7 +349,7 @@ function FilePreviewPanel({
           <Button type="text" icon={<CloseOutlined />} aria-label={t("Close")} onClick={onClose} />
         </div>
       </div>
-      <div className="file-preview-content">
+      <div className="file-preview-content" onContextMenu={handleContentContextMenu}>
         {loading ? (
           <div className="file-preview-state">
             <Spin />
@@ -318,6 +373,26 @@ function FilePreviewPanel({
           <iframe className="file-pdf-frame" src={dataUrl} title={file.name} />
         ) : preview.kind === "html" ? (
           <iframe className="file-html-frame" srcDoc={displayText} sandbox="" title={file.name} />
+        ) : preview.kind === "text" && isMarkdown ? (
+          <div className="file-markdown-scroll">
+            <Button
+              className="file-markdown-view-toggle"
+              size="small"
+              icon={markdownRendered ? <CodeOutlined /> : <FileMarkdownOutlined />}
+              onClick={() => setMarkdownRendered((value) => !value)}
+            >
+              {markdownRendered ? t("Raw text") : t("Rendered")}
+            </Button>
+            {markdownRendered ? (
+              <div className="file-markdown-viewport" style={{ "--md-zoom": zoom / 100 } as CSSProperties}>
+                <MarkdownPreview text={displayText} />
+              </div>
+            ) : (
+              <div className="file-text-viewport">
+                <pre style={{ fontSize: `${(12 * zoom) / 100}px` }}>{displayText}</pre>
+              </div>
+            )}
+          </div>
         ) : (
           <div className="file-text-viewport">
             <pre style={{ fontSize: `${(12 * zoom) / 100}px` }}>{jsonPreview?.text || displayText}</pre>
@@ -327,6 +402,61 @@ function FilePreviewPanel({
           </div>
         )}
       </div>
+      {contextMenu ? (
+        <div
+          className="file-context-menu-overlay"
+          onClick={() => setContextMenu(null)}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            setContextMenu(null);
+          }}
+        >
+          <div
+            className="file-context-menu"
+            style={{
+              left: Math.min(contextMenu.x, window.innerWidth - 180),
+              top: Math.min(contextMenu.y, window.innerHeight - 140),
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            {contextMenu.selection ? (
+              <button
+                type="button"
+                onClick={() => {
+                  const text = contextMenu.selection;
+                  setContextMenu(null);
+                  void copyContextMenuSelection(text);
+                }}
+              >
+                <CopyOutlined /> {t("Copy")}
+              </button>
+            ) : null}
+            {contextMenu.imageSrc ? (
+              <button
+                type="button"
+                onClick={() => {
+                  const imageSrc = contextMenu.imageSrc;
+                  setContextMenu(null);
+                  if (imageSrc) {
+                    void saveContextMenuImage(imageSrc);
+                  }
+                }}
+              >
+                <FileImageOutlined /> {t("Save image as...")}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => {
+                setContextMenu(null);
+                void runAction(() => onSaveAs(file), "File saved.");
+              }}
+            >
+              <DownloadOutlined /> {t("Download")}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

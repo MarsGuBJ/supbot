@@ -138,7 +138,7 @@ export function WikiPanel({ project, t, messageApi }: { project: string; t: Tran
             {previewBody ? (
               <>
                 <div className="assets-preview-title">{previewTitle}</div>
-                <MarkdownPreview text={previewBody} />
+                <MarkdownPreview text={previewBody} copyLabel={t("Copy")} />
               </>
             ) : (
               <p className="assets-placeholder">{t("Search or ask, then click a hit to preview the page")}</p>

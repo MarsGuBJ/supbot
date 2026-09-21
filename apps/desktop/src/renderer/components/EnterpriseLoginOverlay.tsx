@@ -115,7 +115,7 @@ export function EnterpriseLoginOverlay({
           </svg>
         </div>
         <div className="login-title">{t("Welcome back")}</div>
-        <div className="login-subtitle">{t("Log in to your HyBot account to continue smart workflows")}</div>
+        <div className="login-subtitle">{t("Log in to your HyWork account to continue smart workflows")}</div>
 
         <div className="login-field">
           <label className="login-field-label" htmlFor="enterpriseLoginUsername">
@@ -189,7 +189,7 @@ export function EnterpriseLoginOverlay({
         <div className="login-error" aria-live="polite">
           {error}
         </div>
-        <div className="login-footer">{t("HyBot © 2026 · Intelligent work platform")}</div>
+        <div className="login-footer">{t("HyWork © 2026 · Intelligent work platform")}</div>
       </div>
     </div>
   );

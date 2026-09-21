@@ -79,6 +79,23 @@ export function extractWikilinks(body: string): string[] {
   return seen;
 }
 
+/**
+ * Remove every [[target]] / [[target|alias]] link from a body, keeping the
+ * display text (alias if present, otherwise the target). Used to clean up
+ * dead links whose target page was deleted.
+ */
+export function removeWikilink(body: string, target: string): { body: string; removed: boolean } {
+  let removed = false;
+  const next = body.replace(/\[\[([^[\]|]+)(?:\|([^[\]]*))?\]\]/g, (raw, name: string, alias?: string) => {
+    if (name.trim() !== target) {
+      return raw;
+    }
+    removed = true;
+    return alias?.trim() || name.trim();
+  });
+  return { body: next, removed };
+}
+
 // ---- Minimal YAML subset (flat key: value, string arrays, no dependencies) ----
 
 type YamlValue = string | number | boolean | string[];

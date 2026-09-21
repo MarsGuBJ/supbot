@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { KbStore } from "../kbStore";
+import { KbStore, removeWikilink } from "../kbStore";
 import { ReviewQueue } from "../review";
 import { lintWiki } from "./lint";
 
@@ -71,5 +71,21 @@ describe("lintWiki", () => {
     const report = lintWiki(store, reviewQueue);
     expect(report.orphan_pages).toEqual(["concepts/孤岛.md"]);
     expect(report.index_drift).toEqual({ missing_in_index: [], stale_in_index: [] });
+  });
+});
+
+describe("removeWikilink", () => {
+  test("删除目标链接并保留显示文本", () => {
+    const body = "参见 [[乙]] 与 [[不存在的页]]，以及 [[不存在的页|别名]]。";
+    const { body: next, removed } = removeWikilink(body, "不存在的页");
+    expect(removed).toBe(true);
+    expect(next).toBe("参见 [[乙]] 与 不存在的页，以及 别名。");
+  });
+
+  test("目标不存在时不改动正文", () => {
+    const body = "参见 [[乙]]。";
+    const { body: next, removed } = removeWikilink(body, "丙");
+    expect(removed).toBe(false);
+    expect(next).toBe(body);
   });
 });

@@ -204,7 +204,7 @@ export function LeftPanel({
     modalApi.confirm({
       title: t("Remove project?"),
       content: t(
-        "This removes the project, its conversations, and related HyBot records. The project folder and its files will not be deleted.",
+        "This removes the project, its conversations, and related HyWork records. The project folder and its files will not be deleted.",
       ),
       okText: t("Remove"),
       cancelText: t("Cancel"),
@@ -479,7 +479,7 @@ export function LeftPanel({
                 <div className="account-popup-avatar">{avatarLetter}</div>
                 <div className="account-popup-header-info">
                   <div className="account-popup-name">{displayName}</div>
-                  <div className="account-popup-version">HyBot</div>
+                  <div className="account-popup-version">HyWork</div>
                 </div>
                 <span className="account-popup-status" />
               </div>

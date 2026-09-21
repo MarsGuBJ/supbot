@@ -1,8 +1,8 @@
-# HyBot 桌面端原型 V5 — CSS 设计系统规格说明
+# HyWork 桌面端原型 V5 — CSS 设计系统规格说明
 
-> 分析对象：`docs/HyBot桌面端原型_V5.html` 中 `<style>` 块（第 7–4980 行，`</style>` 结束），对照 HTML 结构（4983–12311 行）与当前应用 `apps/desktop/src/renderer/styles.css`（3832 行）。
+> 分析对象：`docs/HyWork桌面端原型_V5.html` 中 `<style>` 块（第 7–4980 行，`</style>` 结束），对照 HTML 结构（4983–12311 行）与当前应用 `apps/desktop/src/renderer/styles.css`（3832 行）。
 > 目标：把真实应用（React + Vite，`apps/desktop/src/renderer`）的 UX 改成原型样式。
-> 所有行号均指 `docs/HyBot桌面端原型_V5.html`，除非另注明。
+> 所有行号均指 `docs/HyWork桌面端原型_V5.html`，除非另注明。
 
 ---
 
@@ -189,7 +189,7 @@
 - 用量进度条（404–427）：文字 11.5px，`bar` 高 6px `--bg-hover` 圆角 3px，`fill` 渐变 `linear-gradient(90deg,#3b82f6,#6366f1)`、`transition:width 0.3s ease`
 - 分隔线 `.topbar-context-divider`：1px `--border-light`，`margin:4px 6px`
 
-#### 3.1.6 HyBot 版本下拉（个人版/企业版，434–499）
+#### 3.1.6 HyWork 版本下拉（个人版/企业版，434–499）
 
 - 按钮 `.hb-version-btn`：`padding:5px 8px`、13px、`--text-primary`、hover `rgba(0,0,0,0.06)`；caret 旋转 180°（`.open`）
 - 菜单 `.hb-version-menu`（455–469）：`top:calc(100% + 6px); left:0; min-width:220px`，样式同上下文菜单

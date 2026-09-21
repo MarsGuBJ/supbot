@@ -48,5 +48,5 @@ HBCLIENT_BUNDLED_DATA_DIR="$source_data_dir" "${npm_cli[@]}" run dist:linux
 
 release_target="$repo_root/apps/desktop/release"
 mkdir -p "$release_target"
-cp -f apps/desktop/release/HyBot-*-linux-*.AppImage "$release_target"/
+cp -f apps/desktop/release/HyWork-*-linux-*.AppImage "$release_target"/
 cp -f apps/desktop/release/latest-linux.yml "$release_target"/

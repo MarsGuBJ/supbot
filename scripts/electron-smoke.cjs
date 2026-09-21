@@ -225,7 +225,7 @@ async function main() {
     })()`,
   );
   const text = String(bodyText);
-  const hasHyBot = text.includes("HyBot");
+  const hasHyWork = text.includes("HyWork");
   const hasDefaultChinese = text.includes("新会话") && text.includes("模型管理") && text.includes("每次询问");
   const versionDialog = await evaluate(
     page.webSocketDebuggerUrl,
@@ -235,7 +235,7 @@ async function main() {
       await new Promise((resolve) => setTimeout(resolve, 100));
       const dialog = document.querySelector(".ant-modal-confirm");
       const text = dialog?.textContent || "";
-      const visible = Boolean(dialog) && text.includes("HyBot") && /v\\d+\\.\\d+\\.\\d+/.test(text);
+      const visible = Boolean(dialog) && text.includes("HyWork") && /v\\d+\\.\\d+\\.\\d+/.test(text);
       const dialogIsVisible = () => {
         const current = document.querySelector(".ant-modal-confirm");
         if (!current) return false;
@@ -289,7 +289,7 @@ async function main() {
     JSON.stringify(
       {
         rootChildren,
-        hasHyBot,
+        hasHyWork,
         hasDefaultChinese,
         versionDialog,
         layoutMetrics,
@@ -304,11 +304,11 @@ async function main() {
       2,
     ),
   );
-  if (!rootChildren || !hasHyBot || !hasDefaultChinese) {
-    throw new Error("Electron renderer did not render the HyBot workspace.");
+  if (!rootChildren || !hasHyWork || !hasDefaultChinese) {
+    throw new Error("Electron renderer did not render the HyWork workspace.");
   }
   if (!versionDialog?.triggerFound || !versionDialog.visible || !versionDialog.closed) {
-    throw new Error(`HyBot version dialog did not complete its open/close flow: ${JSON.stringify(versionDialog)}`);
+    throw new Error(`HyWork version dialog did not complete its open/close flow: ${JSON.stringify(versionDialog)}`);
   }
   step("checking skill workspace tabs");
   const skillWorkspaceUi = await evaluate(
@@ -386,7 +386,7 @@ async function main() {
   );
   if (
     !securityIpc?.permissionMode.includes("Unsupported permission mode") ||
-    !securityIpc?.openFile.includes("HyBot can only open")
+    !securityIpc?.openFile.includes("HyWork can only open")
   ) {
     throw new Error(`Renderer IPC security checks failed: ${JSON.stringify(securityIpc)}`);
   }
@@ -1485,7 +1485,7 @@ function seedSmokeState(userDataDir, smokeMcpServerPath) {
     path.join(dataDir, "state.json"),
     `${JSON.stringify(
       {
-        agentName: "HyBot Local Agent",
+        agentName: "HyWork Local Agent",
         modelConfig: {
           providerName: "OpenAI Compatible",
           baseUrl: "https://api.openai.com/v1",

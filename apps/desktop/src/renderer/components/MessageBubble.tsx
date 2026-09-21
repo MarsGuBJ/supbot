@@ -184,7 +184,7 @@ export const MessageBubble = memo(function MessageBubble({
       <div className="msg-body">
         <div className="msg-header">
           <span className="msg-header-name">
-            {item.role === "assistant" ? "HyBot" : item.role === "tool" ? t("Tool") : t("System")}
+            {item.role === "assistant" ? "HyWork" : item.role === "tool" ? t("Tool") : t("System")}
           </span>
           {item.status ? (
             <Tag

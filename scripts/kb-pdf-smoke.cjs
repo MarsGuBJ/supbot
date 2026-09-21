@@ -27,7 +27,7 @@ async function main() {
     try {
       return safeStorage.decryptString(Buffer.from(secret.slice("safe:v1:".length), "base64"));
     } catch {
-      return undefined; // 安装版加密 app-bound 到 HyBot.exe，dev electron 解不开
+      return undefined; // 安装版加密 app-bound 到 HyWork.exe，dev electron 解不开
     }
   };
   const providers = (state.modelProviders || []).map((p) => ({ ...p, apiKey: decrypt(p.apiKeySecret) }));

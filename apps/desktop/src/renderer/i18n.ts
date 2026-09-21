@@ -7,7 +7,7 @@ export interface I18nValue {
 }
 
 const zh: Record<string, string> = {
-  "Starting HyBot": "正在启动 HyBot",
+  "Starting HyWork": "正在启动 HyWork",
   "LOCAL AGENT CONSOLE": "本地智能体控制台",
   Chat: "对话",
   Config: "配置",
@@ -61,11 +61,11 @@ const zh: Record<string, string> = {
   Conversation: "会话",
   "No conversation yet": "还没有会话",
   "Copy latest response": "复制最新回复",
-  "HyBot is ready": "HyBot 已就绪",
+  "HyWork is ready": "HyWork 已就绪",
   "Ask a question, attach local files, use /commands, or mention @research and @builder.":
     "可以提问、附加本地文件、使用 / 命令，或提及 @research、@builder。",
   "Attach files": "附加文件",
-  "Message HyBot, use /config, or mention @research...": "给 HyBot 发消息，使用 /config，或提及 @research...",
+  "Message HyWork, use /config, or mention @research...": "给 HyWork 发消息，使用 /config，或提及 @research...",
   Stop: "停止",
   Send: "发送",
   "Submit prompt": "提交提示词",
@@ -93,8 +93,8 @@ const zh: Record<string, string> = {
   "Restore project": "恢复项目",
   Remove: "移除",
   "Remove project?": "移除这个项目？",
-  "This removes the project, its conversations, and related HyBot records. The project folder and its files will not be deleted.":
-    "将移除项目、项目下的历史对话及相关 HyBot 记录，但不会删除项目文件夹及其中的文件。",
+  "This removes the project, its conversations, and related HyWork records. The project folder and its files will not be deleted.":
+    "将移除项目、项目下的历史对话及相关 HyWork 记录，但不会删除项目文件夹及其中的文件。",
   "Rename project": "重命名项目",
   "Delete project?": "删除这个项目？",
   "Delete project resource?": "删除这个项目资源？",
@@ -175,7 +175,7 @@ const zh: Record<string, string> = {
   "Use scheduled prompts and subagents for the first version's automation loop.":
     "第一版可通过计划提示词和子智能体实现自动化循环。",
   "LOCAL CONFIG": "本地配置",
-  "HyBot Settings": "HyBot 设置",
+  "HyWork Settings": "HyWork 设置",
   "Model, personality, local capabilities, and subagents live on this machine.":
     "模型、人格、本地能力和子智能体都保存在这台机器上。",
   Model: "模型",
@@ -222,12 +222,15 @@ const zh: Record<string, string> = {
   "Run local commands with /shell when the user asks the agent to automate work.":
     "需要自动化时，可用 /shell 运行本地命令。",
   "Scheduled tasks": "定时任务",
+  "Prompt cannot set the schedule": "提示词不能设置时间/周期",
+  "The prompt of a scheduled task cannot set the time or cycle. Please remove the time/cycle wording from the prompt and use the schedule options below instead.":
+    "定时任务的提示词中不能设置时间/周期。请删除提示词中的时间/周期表述，改用下方的时间设置。",
   "Create and manage local reminders or recurring prompts.": "创建和管理本地提醒或周期提示词。",
   "Track artifacts created by local agent jobs.": "追踪本地智能体任务创建的产物。",
   "Loading...": "加载中...",
   "Credential storage": "凭据存储",
-  "HyBot uses the operating system safe storage when available. If the app reports file storage for a credential, treat that fallback as local obfuscation rather than strong encryption.":
-    "HyBot 会优先使用操作系统安全存储。如果凭据显示为 file 存储，请将其视为本地混淆而不是强加密。",
+  "HyWork uses the operating system safe storage when available. If the app reports file storage for a credential, treat that fallback as local obfuscation rather than strong encryption.":
+    "HyWork 会优先使用操作系统安全存储。如果凭据显示为 file 存储，请将其视为本地混淆而不是强加密。",
   "Local tool commands": "本地工具命令",
   "/read <path> reads a UTF-8 text file, /write <name-or-path> creates a generated file, and /shell <command> runs a local command with a 60-second timeout.":
     "/read <路径> 读取 UTF-8 文本文件；/write <文件名或路径> 创建生成文件；/shell <命令> 运行本地命令，超时 60 秒。",
@@ -246,9 +249,14 @@ const zh: Record<string, string> = {
   "Select a provider to autofill Base URL and models.": "选择服务商后自动填充基础地址和模型。",
   "Fetch models": "拉取模型列表",
   "Fetched {count} models.": "已拉取 {count} 个模型。",
+  "Available models": "可用模型",
+  "Fetching models…": "正在拉取模型列表…",
+  "No models fetched yet; they are loaded automatically from the Base URL.":
+    "尚未拉取到模型；填写基础地址和密钥后会自动获取。",
+  "Current model": "当前模型",
+  "Not set": "未设置",
   "Fill in Base URL first.": "请先填写基础地址。",
   "Enter the API key first.": "请先输入 API 密钥。",
-  "Fetch models or type one manually.": "拉取模型列表或手动输入模型。",
   "Base URL": "基础地址",
   "API key": "API 密钥",
   Saved: "已保存",
@@ -293,6 +301,9 @@ const zh: Record<string, string> = {
   "Run at ISO time": "运行时间（ISO）",
   "Run at": "运行时间",
   "Pick run time": "选择运行时间",
+  "End date": "结束日期",
+  "Pick end date": "选择结束日期",
+  "The task stops after this date.": "到达该日期后任务结束。",
   "Cron expression": "Cron 表达式",
   Every: "每（任意）",
   Month: "月",
@@ -362,6 +373,8 @@ const zh: Record<string, string> = {
   "Once at {time}": "一次，时间 {time}",
   "One-time task": "一次性任务",
   "Daily around {time}": "每天约 {time}",
+  "Daily around {time} until {date}": "每天约 {time}，截止 {date}",
+  "Daily until {date}": "每天，截止 {date}",
   "Cron {expr}": "Cron {expr}",
   "New conversation": "新会话",
   "New chat": "新对话",
@@ -386,7 +399,7 @@ const zh: Record<string, string> = {
   "Work locally, explain important actions, and keep user data on this machine.":
     "在本地工作，说明重要操作，并将用户数据保留在这台机器上。",
   "precise, calm, proactive": "精准、冷静、主动",
-  "HyBot Local": "HyBot 本地",
+  "HyWork Local": "HyWork 本地",
   "Local Files Plus": "本地文件增强",
   "Curated file workflows for reading, writing, and tracking generated local artifacts.":
     "用于读取、写入和追踪本地生成产物的精选文件工作流。",
@@ -464,10 +477,10 @@ const zh: Record<string, string> = {
   Confidence: "置信度",
   Configure: "配置",
   Connect: "连接",
-  "Connect local stdio MCP servers. Tools are registered through HyBot permissions.":
-    "连接本地 stdio MCP 服务器。工具会通过 HyBot 权限注册。",
-  "Connect local stdio or remote (HTTP/SSE) MCP servers. Tools are registered through HyBot permissions.":
-    "连接本地 stdio 或远程 (HTTP/SSE) MCP 服务器。工具会通过 HyBot 权限注册。",
+  "Connect local stdio MCP servers. Tools are registered through HyWork permissions.":
+    "连接本地 stdio MCP 服务器。工具会通过 HyWork 权限注册。",
+  "Connect local stdio or remote (HTTP/SSE) MCP servers. Tools are registered through HyWork permissions.":
+    "连接本地 stdio 或远程 (HTTP/SSE) MCP 服务器。工具会通过 HyWork 权限注册。",
   Transport: "传输方式",
   "Local command (stdio)": "本地命令 (stdio)",
   "Remote (streamable HTTP)": "远程 (HTTP)",
@@ -778,7 +791,7 @@ const zh: Record<string, string> = {
   "Transcript recovery": "转录恢复",
   Type: "类型",
   Warning: "警告",
-  "What should HyBot remember?": "HyBot 应该记住什么？",
+  "What should HyWork remember?": "HyWork 应该记住什么？",
   "Working directory": "工作目录",
   "Worktree applied.": "工作区修改已应用。",
   "Worktree discarded.": "工作区修改已丢弃。",
@@ -835,6 +848,13 @@ const zh: Record<string, string> = {
   "Preview failed.": "文件预览失败。",
   "File action failed.": "文件操作失败。",
   "Text file": "文本文件",
+  "Markdown file": "Markdown 文件",
+  "Raw text": "原文",
+  Rendered: "美化",
+  Copy: "复制",
+  "Copied selection.": "已复制所选内容。",
+  "Save image as...": "图片另存为...",
+  "This image cannot be saved.": "无法保存该图片。",
   "JSON file": "JSON 文件",
   "HTML file": "HTML 文件",
   "PDF file": "PDF 文件",
@@ -872,7 +892,7 @@ const zh: Record<string, string> = {
   "Read aloud": "朗读",
   "Read aloud is not supported.": "当前环境不支持朗读。",
   Share: "分享",
-  HyBot: "HyBot",
+  HyWork: "HyWork",
   "SCHEDULED TASKS": "定时任务",
   "Create scheduled task": "创建定时任务",
   "Edit scheduled task": "编辑定时任务",
@@ -895,7 +915,7 @@ const zh: Record<string, string> = {
   "Enterprise workspace sign in": "企业工作区登录",
   "Back to personal space": "返回个人空间",
   "Welcome back": "欢迎回来",
-  "Log in to your HyBot account to continue smart workflows": "登录你的 HyBot 账户，继续智能工作流",
+  "Log in to your HyWork account to continue smart workflows": "登录你的 HyWork 账户，继续智能工作流",
   Username: "用户名",
   Password: "密码",
   "Enter username": "请输入用户名",
@@ -908,7 +928,7 @@ const zh: Record<string, string> = {
   "Signing in…": "登录中…",
   "Please enter your username.": "请输入用户名。",
   "Password reset is not available yet.": "密码重置功能开发中",
-  "HyBot © 2026 · Intelligent work platform": "中诚信和逸科技 © 2026 HyBot · 智能工作平台",
+  "HyWork © 2026 · Intelligent work platform": "中诚信和逸科技 © 2026 HyWork · 智能工作平台",
   "Resize right panel": "拖拽调整右侧面板宽度",
   "Searching files…": "正在搜索文件…",
   "No matching files": "没有匹配的文件",
@@ -996,6 +1016,19 @@ const zh: Record<string, string> = {
   Unresolved: "未解决",
   Resolve: "标记解决",
   "Review resolved.": "已标记解决。",
+  "Review item was already resolved.": "该评审项已被解决或不存在。",
+  "Select all": "全选",
+  "Resolve selected": "批量解决",
+  "Resolved {count} review items.": "已批量解决 {count} 个评审项。",
+  "Delete dead link": "删除死链",
+  "Dead link removed.": "死链已删除。",
+  "Failed to remove the dead link.": "无法删除该死链。",
+  "Remove this dead link from the source page?": "将从源页面中删除该死链链接？",
+  Handled: "已处理",
+  "No handled items": "暂无已处理项",
+  "Delete this review record?": "删除该评审记录？",
+  "Review record deleted.": "评审记录已删除。",
+  "Failed to delete the review record.": "删除评审记录失败。",
   "No review items": "暂无评审项",
 };
 

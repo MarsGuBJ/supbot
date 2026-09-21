@@ -375,7 +375,7 @@ export function createInitialState(): RuntimeState {
     updatedAt: createdAt,
   };
   return {
-    agentName: "HyBot Local Agent",
+    agentName: "HyWork Local Agent",
     identityContext: undefined,
     modelProviders: [defaultProvider],
     activeModelProviderId: defaultProvider.id,
@@ -645,13 +645,15 @@ function normalizeModelProviders(input: LegacyRuntimeStateInput, initial: ModelP
   const secret = typeof input.modelSecret === "string" ? input.modelSecret : undefined;
   const timestamp = new Date().toISOString();
   const apiKeyStorage = normalizeApiKeyStorage(legacy.apiKeyStorage);
+  const legacyModel = stringOr(legacy.model, fallback.model);
   return [
     {
       ...fallback,
       id: fallback.id,
       providerName: stringOr(legacy.providerName, fallback.providerName),
       baseUrl: stringOr(legacy.baseUrl, fallback.baseUrl),
-      model: stringOr(legacy.model, fallback.model),
+      model: legacyModel,
+      models: legacyModel ? [legacyModel] : [],
       temperature: finiteNumberOr(legacy.temperature, fallback.temperature),
       maxTokens: normalizePositiveNumber(legacy.maxTokens, fallback.maxTokens),
       apiKeySecret: secret,
@@ -682,12 +684,14 @@ function normalizeModelProvider(
         : `model-provider-${index + 1}`;
   const id = uniqueModelProviderId(rawId, seen);
   const apiKeySecret = typeof input.apiKeySecret === "string" ? input.apiKeySecret : undefined;
+  const model = stringOr(input.model, fallback.model);
   return {
     ...fallback,
     id,
     providerName: stringOr(input.providerName, fallback.providerName),
     baseUrl: stringOr(input.baseUrl, fallback.baseUrl),
-    model: stringOr(input.model, fallback.model),
+    model,
+    models: normalizeModelList(input.models) ?? (model ? [model] : []),
     temperature: finiteNumberOr(input.temperature, fallback.temperature),
     maxTokens: normalizePositiveNumber(input.maxTokens, fallback.maxTokens),
     apiKeySecret,
@@ -1066,6 +1070,13 @@ function normalizeDeletedCapabilityIds(value: unknown): string[] {
 
 function stringOr(value: unknown, fallback: string): string {
   return typeof value === "string" && value.trim() ? value : fallback;
+}
+
+function normalizeModelList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  return [...new Set(value.map((item) => (typeof item === "string" ? item.trim() : "")).filter(Boolean))];
 }
 
 function normalizeMcpServer(server: McpServerConfig): McpServerConfig | undefined {

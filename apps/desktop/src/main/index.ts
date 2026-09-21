@@ -71,6 +71,7 @@ import {
   defaultServstationRedirectUri,
   defaultServstationScope,
   defaultServstationUser,
+  defaultUpdateFeedBaseUrl,
 } from "@supbot/shared";
 import { configureUserDataPath } from "./appIdentity";
 import { TrayManager, isTerminalJobStatus, jobNotificationText } from "./trayManager";
@@ -91,7 +92,7 @@ let isQuitting = false;
 const servstationMessageEventSubscriptions = new Map<string, AbortController>();
 const servstationAutopilotEventSubscriptions = new Map<string, AbortController>();
 const isDev = !app.isPackaged;
-const appDisplayName = "HyBot";
+const appDisplayName = "HyWork";
 // Dev-only fallback password for the local Botstation login form autofill.
 const defaultBotstationPassword = "dev-user";
 const allowedDevServerOrigin =
@@ -402,7 +403,7 @@ function safeUserName(): string {
 
 function getRuntime(): SupbotRuntime {
   if (!runtime) {
-    throw new Error("HyBot runtime is not ready.");
+    throw new Error("HyWork runtime is not ready.");
   }
   return runtime;
 }
@@ -860,7 +861,7 @@ async function createWindow(): Promise<void> {
       throw new Error("HBCLIENT_DEV_SERVER_URL is disabled in packaged production builds.");
     }
     if (!isAllowedAppUrl(devServerUrl)) {
-      throw new Error(`Unsupported HyBot dev server URL: ${devServerUrl}`);
+      throw new Error(`Unsupported HyWork dev server URL: ${devServerUrl}`);
     }
     await mainWindow.loadURL(devServerUrl);
     mainWindow.webContents.openDevTools({ mode: "detach" });
@@ -904,7 +905,7 @@ function wikiGraphWindowUrl(project: string): { url?: string; file?: { query: Re
       throw new Error("HBCLIENT_DEV_SERVER_URL is disabled in packaged production builds.");
     }
     if (!isAllowedAppUrl(devServerUrl)) {
-      throw new Error(`Unsupported HyBot dev server URL: ${devServerUrl}`);
+      throw new Error(`Unsupported HyWork dev server URL: ${devServerUrl}`);
     }
     return { url: `${devServerUrl}?window=wikigraph&project=${encodeURIComponent(project)}` };
   }
@@ -960,9 +961,7 @@ async function openWikiGraphWindow(project: string): Promise<void> {
 
 async function hbClientUpdateFeedContext(forceRefresh: boolean): Promise<{ baseUrl: string; accessToken?: string }> {
   const service = getRuntime();
-  const [config, identity] = await Promise.all([service.servstationA2AConfig(), service.identityContext()]);
-  const baseUrl =
-    config.baseUrl || identity?.servstationUrl || process.env.HBCLIENT_BOTSTATION_BASE_URL || defaultServstationBaseUrl;
+  const baseUrl = process.env.HBCLIENT_UPDATE_FEED_BASE_URL?.trim() || defaultUpdateFeedBaseUrl;
   let accessToken: string | undefined;
   try {
     accessToken = await service.servstationA2AAccessToken(undefined, forceRefresh);
@@ -971,7 +970,7 @@ async function hbClientUpdateFeedContext(forceRefresh: boolean): Promise<{ baseU
       throw error;
     }
   }
-  return { baseUrl: normalizeOidcUrl(baseUrl, "Botstation base URL"), accessToken };
+  return { baseUrl: normalizeOidcUrl(baseUrl, "Update feed base URL"), accessToken };
 }
 
 async function autoConnectLocalBotstation(): Promise<void> {
@@ -1006,7 +1005,10 @@ async function autoConnectLocalBotstation(): Promise<void> {
     }
     await service.connectServstationReverseBridge();
   } catch (error) {
-    console.warn("HyBot local Botstation auto-connect failed:", error instanceof Error ? error.message : String(error));
+    console.warn(
+      "HyWork local Botstation auto-connect failed:",
+      error instanceof Error ? error.message : String(error),
+    );
   }
 }
 
@@ -1450,6 +1452,12 @@ function registerIpc(): void {
   ipcMain.handle("modelProvider:setActive", (_event, id: string) =>
     getRuntime().setActiveModelProvider(requiredString(id, "model provider id")),
   );
+  ipcMain.handle("modelProvider:setActiveModel", (_event, id: string, model: string) =>
+    getRuntime().setActiveModelProviderModel(
+      requiredString(id, "model provider id"),
+      requiredString(model, "model name"),
+    ),
+  );
   ipcMain.handle("modelProvider:test", (_event, id?: string, input?: Partial<ModelProviderUpdate>) =>
     getRuntime().testModelProvider(optionalString(id, "model provider id"), validatePartialModelProviderUpdate(input)),
   );
@@ -1570,6 +1578,12 @@ function registerIpc(): void {
   );
   ipcMain.handle("kb:resolveReview", (_event, project: unknown, id: unknown) =>
     getRuntime().kb.resolveReview(requiredString(project, "kb project"), requiredInteger(id, "kb review id")),
+  );
+  ipcMain.handle("kb:removeDeadLink", (_event, project: unknown, id: unknown) =>
+    getRuntime().kb.removeDeadLink(requiredString(project, "kb project"), requiredInteger(id, "kb review id")),
+  );
+  ipcMain.handle("kb:removeReview", (_event, project: unknown, id: unknown) =>
+    getRuntime().kb.removeReview(requiredString(project, "kb project"), requiredInteger(id, "kb review id")),
   );
   ipcMain.handle("kb:lint", (_event, project: unknown) => getRuntime().kb.lint(requiredString(project, "kb project")));
   ipcMain.handle("kb:listGraphTemplates", () => getRuntime().kb.listGraphTemplates());
@@ -1695,7 +1709,7 @@ function registerIpc(): void {
     const safePath = requiredPath(filePath, "file path");
     const userDataPath = app.getPath("userData");
     if (!getRuntime().isKnownSafePath(safePath) && !pathIsInside(userDataPath, safePath)) {
-      throw new Error("HyBot can only open files or folders it created, imported, or tracks as a worktree.");
+      throw new Error("HyWork can only open files or folders it created, imported, or tracks as a worktree.");
     }
     await shell.openPath(safePath);
   });
@@ -1703,7 +1717,7 @@ function registerIpc(): void {
     const safePath = requiredPath(filePath, "file path");
     const userDataPath = app.getPath("userData");
     if (!getRuntime().isKnownSafePath(safePath) && !pathIsInside(userDataPath, safePath)) {
-      throw new Error("HyBot can only show files or folders it created, imported, or tracks as a worktree.");
+      throw new Error("HyWork can only show files or folders it created, imported, or tracks as a worktree.");
     }
     shell.showItemInFolder(safePath);
   });
@@ -1711,7 +1725,7 @@ function registerIpc(): void {
     const safePath = requiredPath(filePath, "file path");
     const userDataPath = app.getPath("userData");
     if (!getRuntime().isKnownSafePath(safePath) && !pathIsInside(userDataPath, safePath)) {
-      throw new Error("HyBot can only preview files it created, imported, or tracks as a worktree.");
+      throw new Error("HyWork can only preview files it created, imported, or tracks as a worktree.");
     }
     const info = await stat(safePath);
     if (!info.isFile()) {
@@ -1726,7 +1740,7 @@ function registerIpc(): void {
     const safePath = requiredPath(filePath, "file path");
     const userDataPath = app.getPath("userData");
     if (!getRuntime().isKnownSafePath(safePath) && !pathIsInside(userDataPath, safePath)) {
-      throw new Error("HyBot can only download files it created, imported, or tracks as a worktree.");
+      throw new Error("HyWork can only download files it created, imported, or tracks as a worktree.");
     }
     const defaultName =
       typeof suggestedName === "string" && suggestedName.trim() ? suggestedName.trim() : basename(safePath);
@@ -1735,6 +1749,17 @@ function registerIpc(): void {
       return false;
     }
     await copyFile(safePath, result.filePath);
+    return true;
+  });
+  ipcMain.handle("file:saveBase64", async (_event, suggestedName: unknown, contentBase64: unknown) => {
+    const defaultName =
+      typeof suggestedName === "string" && suggestedName.trim() ? basename(suggestedName.trim()) : "image.png";
+    const data = requiredString(contentBase64, "file content");
+    const result = await dialog.showSaveDialog(mainWindow!, { defaultPath: defaultName });
+    if (result.canceled || !result.filePath) {
+      return false;
+    }
+    await writeFile(result.filePath, Buffer.from(data, "base64"));
     return true;
   });
   ipcMain.handle("path:userData", () => app.getPath("userData"));
@@ -1865,7 +1890,7 @@ function validateRemoteBridgeUpdate(input: Partial<RemoteBridgeConfig> & { token
   const host = optionalString(value.host, "remote bridge host");
   const allowRemoteBind = optionalBoolean(value.allowRemoteBind, "allow remote bridge bind");
   if (host && !isLocalhost(host) && !allowRemoteBind) {
-    throw new Error("Production HyBot only allows Remote Bridge to bind localhost.");
+    throw new Error("Production HyWork only allows Remote Bridge to bind localhost.");
   }
   return compactUndefined({
     enabled: optionalBoolean(value.enabled, "remote bridge enabled"),
@@ -2183,7 +2208,8 @@ function validateMemoryRecallFeedbackInput(input: MemoryRecallFeedbackInput): Me
 }
 
 function validateModelConfigUpdate(input: ModelConfigUpdate): ModelConfigUpdate {
-  return validateModelProviderUpdate(input);
+  const value = validateModelProviderUpdate(input);
+  return { ...value, model: requiredString(value.model, "model name") };
 }
 
 function validateModelProviderUpdate(input: ModelProviderUpdate): ModelProviderUpdate {
@@ -2191,7 +2217,8 @@ function validateModelProviderUpdate(input: ModelProviderUpdate): ModelProviderU
   return {
     providerName: requiredString(value.providerName, "provider name"),
     baseUrl: requiredString(value.baseUrl, "model base URL"),
-    model: requiredString(value.model, "model name"),
+    model: optionalString(value.model, "model name"),
+    models: optionalStringArray(value.models, "models"),
     temperature: optionalNumber(value.temperature, "temperature") ?? 0.2,
     maxTokens: optionalNumber(value.maxTokens, "max tokens") ?? 200_000,
     apiKey: optionalString(value.apiKey, "API key"),
@@ -2620,7 +2647,7 @@ app
     });
   })
   .catch((error) => {
-    dialog.showErrorBox("HyBot failed to start", error instanceof Error ? error.message : String(error));
+    dialog.showErrorBox("HyWork failed to start", error instanceof Error ? error.message : String(error));
     app.quit();
   });
 

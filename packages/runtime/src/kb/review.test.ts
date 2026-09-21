@@ -66,6 +66,22 @@ describe("ReviewQueue", () => {
     expect(queue.list()).toEqual([]);
   });
 
+  test("dedupes items with the same sourceFile and reason", () => {
+    const queue = new ReviewQueue(createTempDir());
+    const id = queue.add("a.pdf", "pdf", "r1", 0.1);
+    // Same issue re-reported (e.g. lint re-run) returns the existing id.
+    expect(queue.add("a.pdf", "pdf", "r1", 0.2)).toBe(id);
+    expect(queue.list()).toHaveLength(1);
+    // A resolved item also suppresses duplicates of the same issue.
+    queue.resolve(id);
+    expect(queue.add("a.pdf", "pdf", "r1", 0.3)).toBe(id);
+    expect(queue.list()).toHaveLength(1);
+    // A different reason or source file still creates a new item.
+    expect(queue.add("a.pdf", "pdf", "r2", 0.3)).toBe(id + 1);
+    expect(queue.add("b.pdf", "pdf", "r1", 0.3)).toBe(id + 2);
+    expect(queue.list()).toHaveLength(3);
+  });
+
   test("reloads state across instances", () => {
     const root = createTempDir();
     const first = new ReviewQueue(root);

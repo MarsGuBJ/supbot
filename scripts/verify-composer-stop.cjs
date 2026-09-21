@@ -212,7 +212,7 @@ function seedState(dir) {
     path.join(dataDir, "state.json"),
     `${JSON.stringify(
       {
-        agentName: "HyBot Local Agent",
+        agentName: "HyWork Local Agent",
         modelConfig: {
           providerName: "OpenAI Compatible",
           baseUrl: "https://api.openai.com/v1",

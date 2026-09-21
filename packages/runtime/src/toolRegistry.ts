@@ -87,6 +87,16 @@ export class ToolRegistry {
     this.providers.push(provider);
   }
 
+  /** Returns a view of this registry with the named tools (or model names) hidden. */
+  withoutTools(names: ReadonlySet<string>): ToolRegistry {
+    const keep = (tool: ToolDefinition) =>
+      !names.has(tool.name) && !(tool.modelName !== undefined && names.has(tool.modelName));
+    return new ToolRegistry(
+      [...this.tools.values()].filter(keep),
+      this.providers.map((provider) => ({ list: () => provider.list().filter(keep) })),
+    );
+  }
+
   toOpenAiTools(): OpenAiToolDefinition[] {
     return this.list().map((tool) => ({
       type: "function",

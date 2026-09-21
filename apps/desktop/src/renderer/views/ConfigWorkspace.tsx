@@ -16,7 +16,6 @@ import {
 } from "@ant-design/icons";
 import {
   Alert,
-  AutoComplete,
   Button,
   Divider,
   Form,
@@ -116,7 +115,7 @@ export function ConfigWorkspace({
       <div className="config-header">
         <div>
           <div className="eyebrow">{t("LOCAL CONFIG")}</div>
-          <Typography.Title level={3}>{t("HyBot Settings")}</Typography.Title>
+          <Typography.Title level={3}>{t("HyWork Settings")}</Typography.Title>
           <div className="muted">
             {t("Model, personality, local capabilities, and subagents live on this machine.")}
           </div>
@@ -217,7 +216,7 @@ export function StorageCard({
         showIcon
         message={t("Credential storage")}
         description={t(
-          "HyBot uses the operating system safe storage when available. If the app reports file storage for a credential, treat that fallback as local obfuscation rather than strong encryption.",
+          "HyWork uses the operating system safe storage when available. If the app reports file storage for a credential, treat that fallback as local obfuscation rather than strong encryption.",
         )}
       />
       <Divider />
@@ -483,7 +482,7 @@ export function ModelConfigCard({
   const autoFetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const applyPreset = (key: string) => {
     if (key === "custom") {
-      form.setFieldsValue({ providerName: "", baseUrl: "", apiKey: "", model: "" });
+      form.setFieldsValue({ providerName: "", baseUrl: "", apiKey: "" });
       setFetchedModels([]);
       return;
     }
@@ -491,7 +490,7 @@ export function ModelConfigCard({
     if (!preset) {
       return;
     }
-    form.setFieldsValue({ providerName: preset.providerName, baseUrl: preset.baseUrl, model: "" });
+    form.setFieldsValue({ providerName: preset.providerName, baseUrl: preset.baseUrl });
     setFetchedModels([]);
   };
   const fetchModels = async (silent = false) => {
@@ -552,6 +551,7 @@ export function ModelConfigCard({
   const openProviderForm = (provider?: ModelProviderConfig) => {
     setEditingProvider(provider || null);
     form.setFieldsValue(provider ? modelProviderFormValues(provider) : newModelProviderValues(snapshot));
+    setFetchedModels(provider?.models ?? []);
     setModalOpen(true);
   };
   const closeProviderForm = () => {
@@ -562,10 +562,21 @@ export function ModelConfigCard({
   const saveProvider = async (values: ModelProviderUpdate) => {
     setSaving(true);
     try {
+      let models = fetchedModels;
+      if (!models.length && values.baseUrl?.trim() && (values.apiKey?.trim() || editingProvider?.apiKeySaved)) {
+        const result = await window.supbot.listModelProviderModels(editingProvider?.id, values);
+        if (result.ok) {
+          models = result.models;
+        }
+      }
+      if (!models.length && editingProvider?.models?.length) {
+        models = editingProvider.models;
+      }
+      const payload: ModelProviderUpdate = { ...values, models };
       if (editingProvider) {
-        await window.supbot.updateModelProvider(editingProvider.id, values);
+        await window.supbot.updateModelProvider(editingProvider.id, payload);
       } else {
-        await window.supbot.createModelProvider(values);
+        await window.supbot.createModelProvider(payload);
       }
       closeProviderForm();
       messageApi.success(t("Model provider saved."));
@@ -701,7 +712,9 @@ export function ModelConfigCard({
                   <Space direction="vertical" size={2}>
                     <span className="mono">{provider.baseUrl}</span>
                     <span>
-                      {provider.model} / temp {provider.temperature} / {provider.maxTokens}
+                      {t("Current model")}: {provider.model || t("Not set")} / temp {provider.temperature} /{" "}
+                      {provider.maxTokens}
+                      {provider.models?.length ? ` · ${t("Available models")}: ${provider.models.length}` : null}
                     </span>
                     {provider.tokenUsage ? (
                       <Tooltip
@@ -733,7 +746,10 @@ export function ModelConfigCard({
               loading={testingId === "__draft__"}
               onClick={async () => {
                 const values = await form.validateFields();
-                await testProvider(editingProvider || undefined, values);
+                await testProvider(
+                  editingProvider || undefined,
+                  editingProvider ? values : { ...values, model: fetchedModels[0] },
+                );
               }}
             >
               {t("Test")}
@@ -776,18 +792,22 @@ export function ModelConfigCard({
               <Switch />
             </Form.Item>
           ) : null}
-          <Form.Item label={t("Model")} required>
-            <Space.Compact style={{ width: "100%" }}>
-              <Form.Item name="model" noStyle rules={[{ required: true }]}>
-                <AutoComplete
-                  placeholder={t("Fetch models or type one manually.")}
-                  options={fetchedModels.map((model) => ({ value: model }))}
-                />
-              </Form.Item>
-              <Button icon={<ReloadOutlined />} loading={fetchingModels} onClick={() => void fetchModels()}>
-                {t("Fetch models")}
-              </Button>
-            </Space.Compact>
+          <Form.Item label={t("Available models")}>
+            {fetchingModels ? (
+              <span className="muted">{t("Fetching models…")}</span>
+            ) : fetchedModels.length ? (
+              <div style={{ maxHeight: 120, overflowY: "auto" }}>
+                <Space wrap size={4}>
+                  {fetchedModels.map((model) => (
+                    <Tag key={model}>{model}</Tag>
+                  ))}
+                </Space>
+              </div>
+            ) : (
+              <span className="muted">
+                {t("No models fetched yet; they are loaded automatically from the Base URL.")}
+              </span>
+            )}
           </Form.Item>
           <Form.Item label={t("Temperature")} name="temperature">
             <Slider min={0} max={2} step={0.1} />
@@ -829,7 +849,6 @@ export function modelProviderFormValues(provider: ModelProviderConfig): ModelPro
   return {
     providerName: provider.providerName,
     baseUrl: provider.baseUrl,
-    model: provider.model,
     temperature: provider.temperature,
     maxTokens: provider.maxTokens,
     apiKey: "",
@@ -842,7 +861,6 @@ export function newModelProviderValues(snapshot: RuntimeSnapshot): ModelProvider
   return {
     providerName: `${snapshot.modelConfig.providerName} copy`,
     baseUrl: snapshot.modelConfig.baseUrl,
-    model: snapshot.modelConfig.model,
     temperature: snapshot.modelConfig.temperature,
     maxTokens: snapshot.modelConfig.maxTokens,
     apiKey: "",

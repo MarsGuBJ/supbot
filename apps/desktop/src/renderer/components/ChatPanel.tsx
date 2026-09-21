@@ -127,7 +127,7 @@ export function ChatPanel({
   modelProviders,
   activeModelProviderId,
   currentModelLabel,
-  onModelProviderChange,
+  onModelSelect,
   onOpenModelConfig,
   onOpenFile,
   promptInjection,
@@ -170,7 +170,7 @@ export function ChatPanel({
   modelProviders: ModelProviderConfig[];
   activeModelProviderId?: string;
   currentModelLabel: string;
-  onModelProviderChange: (providerId: string) => void;
+  onModelSelect: (providerId: string, model: string) => void;
   onOpenModelConfig: () => void;
   onOpenSkillView: () => void;
   onOpenFile: (file: LocalFileReference) => void;
@@ -943,7 +943,22 @@ export function ChatPanel({
   };
 
   const activePermission = permissionOptions.find((item) => item.value === permissionMode) || permissionOptions[0];
-  const modelSelectValue = activeModelProviderId || (modelProviders.length ? "" : "__current__");
+  const activeModelProvider = modelProviders.find((provider) => provider.id === activeModelProviderId);
+  const modelOptions = modelProviders.flatMap((provider) => {
+    const models = provider.models?.length ? [...provider.models] : [];
+    if (provider.model && !models.includes(provider.model)) {
+      models.unshift(provider.model);
+    }
+    return models.map((model) => ({
+      value: `${provider.id}::${model}`,
+      label: `${provider.providerName} / ${model}`,
+    }));
+  });
+  const modelSelectValue = activeModelProvider
+    ? `${activeModelProvider.id}::${activeModelProvider.model}`
+    : modelProviders.length
+      ? ""
+      : "__current__";
   const runningStatusAnimating = Boolean(
     runningJob &&
     runningJob.status === "running" &&
@@ -1082,7 +1097,7 @@ export function ChatPanel({
                     }}
                   >
                     <div className="corner-search-result-title">
-                      {result.message.role === "user" ? t("You") : t("HyBot")}:{" "}
+                      {result.message.role === "user" ? t("You") : t("HyWork")}:{" "}
                       {(result.message.text || "").slice(0, 40)}
                     </div>
                     <div className="corner-search-result-snippet">{highlightMatch(result.snippet, searchQuery)}</div>
@@ -1564,21 +1579,26 @@ export function ChatPanel({
                   value={modelSelectValue}
                   aria-label={t("Choose model")}
                   onChange={(event) => {
-                    if (event.target.value === "__custom__") {
+                    const value = event.target.value;
+                    if (value === "__custom__") {
                       onOpenModelConfig();
                       return;
                     }
-                    onModelProviderChange(event.target.value);
+                    const separator = value.indexOf("::");
+                    if (separator < 0) {
+                      return;
+                    }
+                    onModelSelect(value.slice(0, separator), value.slice(separator + 2));
                   }}
                 >
-                  {!activeModelProviderId ? (
+                  {!activeModelProvider ? (
                     <option value="__current__" disabled>
                       {currentModelLabel}
                     </option>
                   ) : null}
-                  {modelProviders.map((provider) => (
-                    <option key={provider.id} value={provider.id}>
-                      {provider.providerName} / {provider.model}
+                  {modelOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
                     </option>
                   ))}
                   <option value="__custom__">{t("Configure custom model…")}</option>

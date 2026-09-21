@@ -2,7 +2,7 @@
   "name": "hbclient-workspace",
   "version": "0.2.1",
   "private": true,
-  "description": "HyBot local desktop agent workspace.",
+  "description": "HyWork local desktop agent workspace.",
   "config": {
     "electron_mirror": "https://npmmirror.com/mirrors/electron/"
   },

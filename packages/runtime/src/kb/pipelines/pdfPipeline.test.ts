@@ -34,10 +34,10 @@ describe("PdfTextPipeline", () => {
   it("词间无空格字符的英文 PDF 按定位间隙补空格", async () => {
     const file = fixture(
       "gap-words.pdf",
-      makeGapWordsPdf(["Hello", "world", "from", "HyBot", "knowledge", "base", "pipeline", "testing"]),
+      makeGapWordsPdf(["Hello", "world", "from", "HyWork", "knowledge", "base", "pipeline", "testing"]),
     );
     const bundle = await new PdfTextPipeline().convert(file, join(dir, "assets-gap"));
-    expect(bundle.markdown).toContain("Hello world from HyBot knowledge base pipeline testing");
+    expect(bundle.markdown).toContain("Hello world from HyWork knowledge base pipeline testing");
   });
 
   it("千分位金额行 → suspect_pages；无文本页并入 suspect_pages", async () => {

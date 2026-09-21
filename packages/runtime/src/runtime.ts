@@ -394,6 +394,8 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     await this.recoverAutopilotRunsOnStartup();
     // 恢复上次中断的资料摄入任务；摄入可能耗时较长，不阻塞 init。
     void this.kbManager.resumeIncompleteAll().catch(() => undefined);
+    // 后台刷新各服务商的可用模型列表；依赖网络，不阻塞 init。
+    void this.refreshModelProviderModels().catch(() => undefined);
     await this.remoteBridgeManager.configure({
       config: this.state.remoteBridgeConfig,
       token: this.state.remoteBridgeSecret,
@@ -1779,6 +1781,19 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
   async runDueScheduledJobs(at = new Date()): Promise<number> {
     this.assertLoaded();
     const due = this.state.scheduledJobs.filter((job) => isScheduleDue(job, at));
+    // Daily jobs whose end date passed while the app was offline never become
+    // due again; mark them ended so they don't linger as enabled.
+    const expiredIds = new Set(
+      this.state.scheduledJobs
+        .filter((job) => job.enabled && job.scheduleKind === "daily" && scheduleEnded(job, at))
+        .map((job) => job.id),
+    );
+    if (expiredIds.size) {
+      const now = at.toISOString();
+      this.state.scheduledJobs = this.state.scheduledJobs.map((item) =>
+        expiredIds.has(item.id) ? { ...item, enabled: false, nextRunAt: undefined, updatedAt: now } : item,
+      );
+    }
     for (const job of due) {
       const ranAt = at.toISOString();
       const nextSchedule = nextScheduleState(job, at);
@@ -1791,7 +1806,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         prompt: `[Scheduled] ${job.title}\n\n${job.prompt}`,
       });
     }
-    if (due.length) {
+    if (due.length || expiredIds.size) {
       await this.persistAndBroadcast();
     }
     return due.length;
@@ -1857,6 +1872,21 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     this.state.activeModelProviderId = provider.id;
     await this.persistAndBroadcast();
     return this.redactModelProvider(provider);
+  }
+
+  async setActiveModelProviderModel(id: string, model: string): Promise<ModelProviderConfig> {
+    this.assertLoaded();
+    const provider = this.requireModelProvider(id);
+    const nextModel = requiredString(model, "Model");
+    const models = provider.models?.length ? [...provider.models] : [];
+    if (!models.includes(nextModel)) {
+      models.push(nextModel);
+    }
+    const next: ModelProviderState = { ...provider, model: nextModel, models, updatedAt: nowIso() };
+    this.state.modelProviders = this.state.modelProviders.map((item) => (item.id === provider.id ? next : item));
+    this.state.activeModelProviderId = provider.id;
+    await this.persistAndBroadcast();
+    return this.redactModelProvider(next);
   }
 
   async updateToolMarketConfig(update: ToolMarketConfigUpdate): Promise<ToolMarketConfig> {
@@ -1944,7 +1974,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
             id: "model-test",
             conversationId: "model-test",
             role: "user",
-            text: "Reply with exactly: HyBot model test ok",
+            text: "Reply with exactly: HyWork model test ok",
             createdAt: nowIso(),
           },
         ],
@@ -1979,6 +2009,45 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       return { ok: true, message: `${models.length} models`, models };
     } catch (error) {
       return { ok: false, message: describeError(error), models: [] };
+    }
+  }
+
+  /**
+   * 启动后后台刷新每个服务商在当前基础地址下的可用模型列表。
+   * 仅刷新已保存 API key 的服务商；单个失败静默忽略，已缓存的列表保持不变，
+   * 用户已选中的模型即使不在新列表中也不被改写。
+   */
+  private async refreshModelProviderModels(): Promise<void> {
+    const providers = this.state.modelProviders.map((provider) => ({ ...provider }));
+    let changed = false;
+    for (const provider of providers) {
+      if (!provider.apiKeySecret) {
+        continue;
+      }
+      try {
+        const models = normalizeProviderModels(await listProviderModels(provider.baseUrl, provider.apiKeySecret));
+        if (!models.length) {
+          continue;
+        }
+        const unchanged =
+          provider.models?.length === models.length &&
+          [...provider.models].sort().join("\n") === [...models].sort().join("\n");
+        if (unchanged && provider.model) {
+          continue;
+        }
+        provider.models = models;
+        if (!provider.model) {
+          provider.model = models[0];
+        }
+        provider.updatedAt = nowIso();
+        changed = true;
+      } catch {
+        // 单个服务商刷新失败不影响其他服务商。
+      }
+    }
+    if (changed) {
+      this.state.modelProviders = providers;
+      await this.persistAndBroadcast();
     }
   }
 
@@ -2156,6 +2225,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       scheduleKind: input.scheduleKind,
       runAt: input.runAt,
       cronExpr: input.cronExpr,
+      endDate: input.endDate,
       enabled: input.enabled ?? true,
       createdAt: now,
       updatedAt: now,
@@ -2240,6 +2310,10 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     return () => this.off("event", listener);
   }
 
+  private registryForJob(job: AgentJob | undefined): ToolRegistry {
+    return job?.scheduledJobId ? this.toolRegistry.withoutTools(SERVSTATION_A2A_TOOL_NAMES) : this.toolRegistry;
+  }
+
   private async runJob(jobId: string): Promise<void> {
     const job = this.findJob(jobId);
     if (!job) {
@@ -2274,7 +2348,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         id: randomId("msg"),
         conversationId: conversation.id,
         role: "assistant",
-        text: subagent ? `@${subagent.name} is thinking...` : "HyBot is thinking...",
+        text: subagent ? `@${subagent.name} is thinking...` : "HyWork is thinking...",
         createdAt: nowIso(),
         jobId,
         status: "running",
@@ -2321,7 +2395,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
           compactBoundaries: this.state.compactBoundaries,
           memory: this.state.memory,
           memoryEnabled: this.state.memoryEnabled,
-          registry: this.toolRegistry,
+          registry: this.registryForJob(job),
           toolContext: this.createToolExecutionContext(controller.signal, jobId, 0, toolContextOptions),
           getPermissionMode: () => this.state.permissionMode,
           getPermissionRules: () => this.state.permissionRules,
@@ -3554,7 +3628,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
           compactBoundaries: this.state.compactBoundaries,
           memory: this.state.memory,
           memoryEnabled: this.state.memoryEnabled,
-          registry: this.toolRegistry,
+          registry: this.registryForJob(job),
           getPermissionMode: () => this.state.permissionMode,
           getPermissionRules: () => this.state.permissionRules,
           randomId,
@@ -4523,7 +4597,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       status: "failed",
       conversationId: sent.job.conversationId,
       jobId: sent.job.id,
-      error: "Timed out waiting for HyBot prompt result.",
+      error: "Timed out waiting for HyWork prompt result.",
     };
   }
 
@@ -4638,7 +4712,12 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
 
   private applyModelProviderUpdate(current: ModelProviderState, update: ModelProviderUpdate): ModelProviderState {
     const providerName = requiredString(update.providerName, "Provider name");
-    const model = requiredString(update.model, "Model");
+    const models = update.models ? normalizeProviderModels(update.models) : current.models;
+    const requestedModel = typeof update.model === "string" ? update.model.trim() : "";
+    let model = requestedModel || current.model;
+    if (models?.length && !models.includes(model)) {
+      model = models[0];
+    }
     const baseUrl = inferModelBaseUrl(providerName, model, requiredString(update.baseUrl, "Base URL"));
     const apiKey = normalizeModelApiKey(update.apiKey);
     let apiKeySecret = current.apiKeySecret;
@@ -4652,6 +4731,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       providerName,
       baseUrl,
       model,
+      models,
       temperature: clampNumber(Number(update.temperature), 0, 2),
       maxTokens: Math.round(clampNumber(Number(update.maxTokens), 64, 200_000)),
       apiKeySecret,
@@ -4692,6 +4772,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       providerName: provider.providerName,
       baseUrl: provider.baseUrl,
       model: provider.model,
+      models: provider.models,
       temperature: provider.temperature,
       maxTokens: provider.maxTokens,
       apiKeySaved: Boolean(provider.apiKeySecret),
@@ -4729,7 +4810,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
 
   protected assertLoaded(): void {
     if (!this.loaded) {
-      throw new Error("HyBot runtime init() must be called before use.");
+      throw new Error("HyWork runtime init() must be called before use.");
     }
   }
 
@@ -5395,6 +5476,10 @@ function inferModelBaseUrl(providerName: string, model: string, baseUrl: string)
   return baseUrl;
 }
 
+function normalizeProviderModels(models: string[]): string[] {
+  return [...new Set(models.map((item) => (typeof item === "string" ? item.trim() : "")).filter(Boolean))];
+}
+
 function normalizeHttpUrl(value: string): string | undefined {
   if (!value.trim()) {
     return undefined;
@@ -5610,6 +5695,9 @@ function isScheduleDue(job: ScheduledJob, at: Date): boolean {
     }
     return cronMatches(job.cronExpr, at);
   }
+  if (job.scheduleKind === "daily" && scheduleEnded(job, at)) {
+    return false;
+  }
   const next = job.nextRunAt || job.runAt;
   return Boolean(next && new Date(next).getTime() <= at.getTime());
 }
@@ -5617,6 +5705,10 @@ function isScheduleDue(job: ScheduledJob, at: Date): boolean {
 function isLocalPackageCapabilityId(id: string): boolean {
   return id.startsWith("local.skill.") || id.startsWith("local.plugin.") || id.startsWith("local.mcp.");
 }
+
+// Scheduled jobs run unattended on this machine, so their agent loop must not
+// see the remote Servstation A2A tools.
+const SERVSTATION_A2A_TOOL_NAMES: ReadonlySet<string> = new Set(["ServstationConnect", "ServstationPrompt"]);
 
 function nextScheduleState(job: ScheduledJob, at: Date): Pick<ScheduledJob, "enabled" | "nextRunAt"> {
   if (job.scheduleKind === "once") {
@@ -5629,9 +5721,24 @@ function nextScheduleState(job: ScheduledJob, at: Date): Pick<ScheduledJob, "ena
     if (next.getTime() <= at.getTime()) {
       next.setDate(next.getDate() + 1);
     }
+    if (job.endDate && next.getTime() > scheduleEndOfDay(job.endDate).getTime()) {
+      return { enabled: false, nextRunAt: undefined };
+    }
     return { enabled: true, nextRunAt: next.toISOString() };
   }
   return { enabled: true, nextRunAt: undefined };
+}
+
+/** End of the endDate calendar day in local time; the daily run on that day still happens. */
+function scheduleEndOfDay(endDate: string): Date {
+  const end = new Date(endDate);
+  end.setHours(23, 59, 59, 999);
+  return end;
+}
+
+/** A daily job with an end date stops once that date (inclusive) has passed. */
+function scheduleEnded(job: ScheduledJob, at: Date): boolean {
+  return Boolean(job.endDate && at.getTime() > scheduleEndOfDay(job.endDate).getTime());
 }
 
 function cronMatches(expr: string, at: Date): boolean {

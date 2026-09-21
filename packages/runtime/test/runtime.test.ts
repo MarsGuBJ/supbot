@@ -995,6 +995,108 @@ describe("SupbotRuntime", () => {
     await expect(runtime.deleteModelProvider(tertiary.id)).rejects.toThrow("At least one model provider is required.");
   });
 
+  test("defaults provider model from the fetched model list and switches the active model", async () => {
+    const runtime = await createRuntime();
+    const created = await runtime.createModelProvider({
+      providerName: "Provider Models",
+      baseUrl: "http://127.0.0.1:9010/v1",
+      models: ["model-x", "model-y"],
+      temperature: 0.2,
+      maxTokens: 2048,
+      apiKey: "secret-models",
+    });
+    expect(created.model).toBe("model-x");
+    expect(created.models).toEqual(["model-x", "model-y"]);
+
+    const updated = await runtime.updateModelProvider(created.id, {
+      providerName: "Provider Models",
+      baseUrl: "http://127.0.0.1:9010/v1",
+      models: ["model-z"],
+      temperature: 0.2,
+      maxTokens: 2048,
+    });
+    expect(updated.model).toBe("model-z");
+    expect(updated.models).toEqual(["model-z"]);
+
+    const switched = await runtime.setActiveModelProviderModel(created.id, "model-w");
+    expect(switched.model).toBe("model-w");
+    expect(switched.models).toEqual(["model-z", "model-w"]);
+    const snapshot = runtime.snapshot();
+    expect(snapshot.activeModelProviderId).toBe(created.id);
+    expect(snapshot.modelConfig.model).toBe("model-w");
+  });
+
+  test("backfills the model list for persisted providers saved before model lists existed", async () => {
+    const rootDir = await createGitRoot();
+    const dir = await mkdtemp(join(tmpdir(), "supbot-test-"));
+    tempDirs.push(dir);
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, "state.json"),
+      JSON.stringify(
+        {
+          modelProviders: [
+            {
+              id: "legacy-provider",
+              providerName: "Legacy provider",
+              baseUrl: "http://127.0.0.1:9005/v1",
+              model: "legacy-only-model",
+              temperature: 0.2,
+              maxTokens: 2048,
+              createdAt: "2024-01-01T00:00:00.000Z",
+              updatedAt: "2024-01-01T00:00:00.000Z",
+            },
+          ],
+          activeModelProviderId: "legacy-provider",
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const runtime = new SupbotRuntime(new JsonFileStorage(dir), { rootDir });
+    await runtime.init();
+    const provider = runtime.snapshot().modelProviders[0];
+    expect(provider.model).toBe("legacy-only-model");
+    expect(provider.models).toEqual(["legacy-only-model"]);
+  });
+
+  test("refreshes provider model lists from the endpoint on startup", async () => {
+    const server = createServer((_req, res) => {
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ data: [{ id: "fresh-1" }, { id: "fresh-2" }] }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const { port } = server.address() as AddressInfo;
+      const runtime = await createRuntime();
+      const created = await runtime.createModelProvider({
+        providerName: "Refreshable",
+        baseUrl: `http://127.0.0.1:${port}/v1`,
+        models: ["stale-model"],
+        temperature: 0.2,
+        maxTokens: 2048,
+        apiKey: "refresh-secret",
+      });
+      expect(created.models).toEqual(["stale-model"]);
+
+      const internals = runtime as unknown as { refreshModelProviderModels(): Promise<void> };
+      await internals.refreshModelProviderModels();
+      const provider = runtime.snapshot().modelProviders.find((item) => item.id === created.id);
+      expect(provider?.models).toEqual(["fresh-1", "fresh-2"]);
+      // 用户已选中的模型即使不在新列表中也不被改写。
+      expect(provider?.model).toBe("stale-model");
+
+      // 已是最新时再次刷新不产生变更。
+      const updatedAt = provider?.updatedAt;
+      await internals.refreshModelProviderModels();
+      expect(runtime.snapshot().modelProviders.find((item) => item.id === created.id)?.updatedAt).toBe(updatedAt);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   test("prefers multimodal providers for vision/OCR model resolution", async () => {
     const runtime = await createRuntime();
     const initial = runtime.snapshot().modelProviders[0];
@@ -2103,7 +2205,7 @@ describe("SupbotRuntime", () => {
     }
   });
 
-  test("sends the HyBot client origin to the remote market adapter", async () => {
+  test("sends the HyWork client origin to the remote market adapter", async () => {
     const market = await startRemotePluginMarket();
     try {
       const runtime = await createRuntime();
@@ -5458,7 +5560,7 @@ describe("SupbotRuntime", () => {
             "schedule.manage",
             "autopilot.manage",
           ]);
-          expect(parsed.displayName).toBe("HyBot Desktop");
+          expect(parsed.displayName).toBe("HyWork Desktop");
           expect(parsed.hbclientVersion).toBe("0.1.2");
           response.end(
             JSON.stringify({
@@ -5714,7 +5816,7 @@ describe("SupbotRuntime", () => {
       departmentId: "dept-recover",
       userId: "user-recover",
       peerType: "hbclient",
-      displayName: "HyBot Desktop",
+      displayName: "HyWork Desktop",
       connectionMode: "reverse_sse",
       clientInstanceId: "hbclient-client-recover",
       capabilities: ["prompt.readOnly"],
@@ -7665,6 +7767,133 @@ describe("SupbotRuntime", () => {
     expect(snapshot.jobs[0].scheduledJobId).toBe(snapshot.scheduledJobs[0].id);
   });
 
+  test("daily scheduled jobs run on their end date, then stop", async () => {
+    const runtime = await createRuntime();
+    const at = new Date();
+    at.setHours(12, 0, 0, 0);
+    const runAt = new Date(at);
+    runAt.setHours(9, 0, 0, 0);
+    await runtime.createScheduledJob({
+      title: "Daily Ping",
+      prompt: "scheduled hello",
+      scheduleKind: "daily",
+      runAt: runAt.toISOString(),
+      endDate: at.toISOString(),
+      enabled: true,
+    });
+
+    expect(await runtime.runDueScheduledJobs(at)).toBe(1);
+    const job = runtime.snapshot().scheduledJobs[0];
+    expect(job.enabled).toBe(false);
+    expect(job.nextRunAt).toBeUndefined();
+    expect(await runtime.runDueScheduledJobs(at)).toBe(0);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  });
+
+  test("daily scheduled jobs keep running before their end date", async () => {
+    const runtime = await createRuntime();
+    const at = new Date();
+    at.setHours(12, 0, 0, 0);
+    const runAt = new Date(at);
+    runAt.setHours(9, 0, 0, 0);
+    const endDate = new Date(at);
+    endDate.setDate(endDate.getDate() + 3);
+    await runtime.createScheduledJob({
+      title: "Daily Ping",
+      prompt: "scheduled hello",
+      scheduleKind: "daily",
+      runAt: runAt.toISOString(),
+      endDate: endDate.toISOString(),
+      enabled: true,
+    });
+
+    expect(await runtime.runDueScheduledJobs(at)).toBe(1);
+    const job = runtime.snapshot().scheduledJobs[0];
+    expect(job.enabled).toBe(true);
+    expect(job.nextRunAt).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  });
+
+  test("expires daily scheduled jobs whose end date already passed", async () => {
+    const runtime = await createRuntime();
+    const at = new Date();
+    at.setHours(12, 0, 0, 0);
+    const runAt = new Date(at);
+    runAt.setDate(runAt.getDate() - 2);
+    runAt.setHours(9, 0, 0, 0);
+    const endDate = new Date(at);
+    endDate.setDate(endDate.getDate() - 1);
+    await runtime.createScheduledJob({
+      title: "Daily Ping",
+      prompt: "scheduled hello",
+      scheduleKind: "daily",
+      runAt: runAt.toISOString(),
+      endDate: endDate.toISOString(),
+      enabled: true,
+    });
+
+    expect(await runtime.runDueScheduledJobs(at)).toBe(0);
+    expect(runtime.snapshot().scheduledJobs[0].enabled).toBe(false);
+    expect(runtime.snapshot().jobs).toHaveLength(0);
+  });
+
+  test("hides Servstation A2A tools from scheduled job runs", async () => {
+    const runtime = await createRuntime();
+    await runtime.updateServstationA2AConfig({ enabled: true, baseUrl: "http://127.0.0.1:1" });
+    const requestToolNames: string[][] = [];
+    const server = createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        try {
+          const tools = (JSON.parse(body).tools || []) as { function?: { name?: string } }[];
+          requestToolNames.push(tools.map((tool) => tool.function?.name || ""));
+        } catch {
+          requestToolNames.push([]);
+        }
+        response.setHeader("Content-Type", "application/json");
+        response.end(JSON.stringify({ choices: [{ message: { content: "done" } }] }));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address() as AddressInfo;
+      await runtime.updateModelConfig({
+        providerName: "Mock",
+        baseUrl: `http://127.0.0.1:${address.port}/v1`,
+        model: "mock-model",
+        temperature: 0.1,
+        maxTokens: 1000,
+        apiKey: "test-key",
+      });
+
+      const manual = await runtime.sendPrompt({ prompt: "manual hello" });
+      await waitForJob(runtime, manual.job.id);
+
+      await runtime.createScheduledJob({
+        title: "Ping",
+        prompt: "scheduled hello",
+        scheduleKind: "once",
+        runAt: new Date(Date.now() - 1000).toISOString(),
+        enabled: true,
+      });
+      expect(await runtime.runDueScheduledJobs(new Date())).toBe(1);
+      const scheduledRun = runtime.snapshot().jobs.find((item) => item.scheduledJobId)!;
+      await waitForJob(runtime, scheduledRun.id);
+
+      expect(requestToolNames.length).toBe(2);
+      expect(requestToolNames[0]).toContain("servstation_connect");
+      expect(requestToolNames[0]).toContain("servstation_prompt");
+      expect(requestToolNames[1]).not.toContain("servstation_connect");
+      expect(requestToolNames[1]).not.toContain("servstation_prompt");
+      expect(requestToolNames[1]).toContain("ReadFile");
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
   test("runs scheduled prompts inside their project", async () => {
     const runtime = await createRuntime();
     const projectDir = await mkdtemp(join(tmpdir(), "supbot-scheduled-project-"));
@@ -7811,7 +8040,7 @@ describe("user questions", () => {
       id: `msg-${jobId}`,
       conversationId,
       role: "assistant",
-      text: "HyBot is thinking...",
+      text: "HyWork is thinking...",
       createdAt: new Date().toISOString(),
       jobId,
       status: "running",
@@ -7863,7 +8092,7 @@ describe("user questions", () => {
             id: "msg-stale",
             conversationId: conversation.id,
             role: "assistant",
-            text: "HyBot is thinking...",
+            text: "HyWork is thinking...",
             createdAt: new Date().toISOString(),
             jobId: "job-stale",
             status: "running",

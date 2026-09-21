@@ -141,7 +141,7 @@ export function assistantPreviewForJob(snapshot: RuntimeSnapshot, job: AgentJob)
 }
 
 export function isAssistantWaitingText(text: string): boolean {
-  return text === "HyBot is thinking..." || /^@.+ is thinking\.\.\.$/.test(text);
+  return text === "HyWork is thinking..." || /^@.+ is thinking\.\.\.$/.test(text);
 }
 
 export function formatJsonSnippet(value: unknown, limit = 2400): string {

@@ -21,8 +21,8 @@ describe("file preview helpers", () => {
   });
 
   it("formats valid JSON and preserves invalid JSON", () => {
-    expect(formatJsonPreview('{"name":"HyBot","items":[1,2]}')).toEqual({
-      text: '{\n  "name": "HyBot",\n  "items": [\n    1,\n    2\n  ]\n}',
+    expect(formatJsonPreview('{"name":"HyWork","items":[1,2]}')).toEqual({
+      text: '{\n  "name": "HyWork",\n  "items": [\n    1,\n    2\n  ]\n}',
       valid: true,
     });
     expect(formatJsonPreview("{broken")).toEqual({ text: "{broken", valid: false });

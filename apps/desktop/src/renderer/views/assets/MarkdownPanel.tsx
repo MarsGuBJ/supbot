@@ -76,7 +76,7 @@ export function MarkdownPanel({
       <div className="assets-tab-preview">
         <Spin spinning={previewLoading}>
           {markdown ? (
-            <MarkdownPreview text={markdown.markdown} />
+            <MarkdownPreview text={markdown.markdown} copyLabel={t("Copy")} />
           ) : (
             <p className="assets-placeholder">{t("Click a file to preview")}</p>
           )}

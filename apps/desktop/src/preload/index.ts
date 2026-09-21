@@ -218,6 +218,8 @@ const api = {
     ipcRenderer.invoke("modelProvider:update", id, input),
   deleteModelProvider: (id: string) => ipcRenderer.invoke("modelProvider:delete", id),
   setActiveModelProvider: (id: string) => ipcRenderer.invoke("modelProvider:setActive", id),
+  setActiveModelProviderModel: (id: string, model: string) =>
+    ipcRenderer.invoke("modelProvider:setActiveModel", id, model),
   testModelProvider: (id?: string, input?: Partial<ModelProviderUpdate>) =>
     ipcRenderer.invoke("modelProvider:test", id, input),
   listModelProviderModels: (id?: string, input?: Partial<ModelProviderUpdate>) =>
@@ -265,6 +267,8 @@ const api = {
   openWikiGraphWindow: (project: string) => ipcRenderer.invoke("kb:openWikiGraphWindow", project),
   kbListReviews: (project: string) => ipcRenderer.invoke("kb:listReviews", project),
   kbResolveReview: (project: string, id: number) => ipcRenderer.invoke("kb:resolveReview", project, id),
+  kbRemoveDeadLink: (project: string, id: number) => ipcRenderer.invoke("kb:removeDeadLink", project, id),
+  kbRemoveReview: (project: string, id: number) => ipcRenderer.invoke("kb:removeReview", project, id),
   kbLint: (project: string) => ipcRenderer.invoke("kb:lint", project),
   kbListGraphTemplates: () => ipcRenderer.invoke("kb:listGraphTemplates"),
   kbSaveGraphTemplate: (template: GraphTemplate) => ipcRenderer.invoke("kb:saveGraphTemplate", template),
@@ -313,6 +317,8 @@ const api = {
   previewFile: (filePath: string): Promise<FilePreviewResult> => ipcRenderer.invoke("file:preview", filePath),
   downloadFile: (filePath: string, suggestedName?: string) =>
     ipcRenderer.invoke("file:download", filePath, suggestedName),
+  saveBase64File: (suggestedName: string, contentBase64: string) =>
+    ipcRenderer.invoke("file:saveBase64", suggestedName, contentBase64),
   userDataPath: () => ipcRenderer.invoke("path:userData"),
   onEvent: (listener: (event: SupbotEvent) => void) => {
     const wrapped = (_event: unknown, payload: SupbotEvent) => listener(payload);

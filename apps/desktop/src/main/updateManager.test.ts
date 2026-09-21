@@ -182,7 +182,7 @@ describe("HBClientUpdateManager", () => {
         platform: "linux",
         arch: "x64",
         isPackaged: true,
-        appImagePath: "/home/user/Applications/HyBot.AppImage",
+        appImagePath: "/home/user/Applications/HyWork.AppImage",
         enableDevUpdates: false,
       }),
     ).toBe(true);
