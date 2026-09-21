@@ -1,6 +1,6 @@
 {
   "name": "hbclient",
-  "version": "0.4.1",
+  "version": "0.4.3",
   "description": "Local single-user desktop agent.",
   "author": "HyWork contributors",
   "desktopName": "hbclient.desktop",
