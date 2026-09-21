@@ -6051,6 +6051,53 @@ body.right-resizing iframe {
   position: relative;
 }
 
+/* Floating "Running" tag above the composer while a job executes */
+.composer-running-tag {
+  position: absolute;
+  top: -6px;
+  left: 24px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 18px;
+  color: #ffffff;
+  background: linear-gradient(90deg, #3b82f6, #8b5cf6, #3b82f6);
+  background-size: 200% 100%;
+  box-shadow: var(--shadow-sm);
+  pointer-events: none;
+  animation: composer-running-tag-flow 2s linear infinite;
+}
+
+.composer-running-tag-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ffffff;
+  animation: composer-running-tag-pulse 1s ease-in-out infinite;
+}
+
+@keyframes composer-running-tag-flow {
+  to {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes composer-running-tag-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.7);
+  }
+}
+
 /* Empty conversation: hero + input sit as a vertically centered group */
 .chat-panel--empty::after {
   content: "";

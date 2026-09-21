@@ -1323,6 +1323,12 @@ export function ChatPanel({
         }}
         onDrop={(event) => void handleFileDrop(event)}
       >
+        {runningJob ? (
+          <div className="composer-running-tag" role="status">
+            <span className="composer-running-tag-dot" />
+            <span>{t("Running")}</span>
+          </div>
+        ) : null}
         {queuedPrompts.length ? (
           <div className="prompt-queue" aria-label={t("Queued prompts")}>
             <div className="prompt-queue-header">
