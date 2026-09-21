@@ -5,6 +5,7 @@ interface OidcLoginWindowHandlers {
   onWillNavigate: (event: Electron.Event, url: string) => void;
   onDidNavigate: (event: Electron.Event, url: string) => void;
   onDidFinishLoad: () => void;
+  onDidFailLoad: (event: Electron.Event, errorCode: number, errorDescription: string) => void;
   onClosed: () => void;
 }
 
@@ -16,5 +17,6 @@ export function removeOidcLoginWindowListeners(authWindow: BrowserWindow, handle
   authWindow.webContents.off("will-navigate", handlers.onWillNavigate);
   authWindow.webContents.off("did-navigate", handlers.onDidNavigate);
   authWindow.webContents.off("did-finish-load", handlers.onDidFinishLoad);
+  authWindow.webContents.off("did-fail-load", handlers.onDidFailLoad);
   authWindow.off("closed", handlers.onClosed);
 }

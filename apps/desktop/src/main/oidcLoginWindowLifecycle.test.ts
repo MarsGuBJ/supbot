@@ -7,6 +7,7 @@ const handlers = {
   onWillNavigate: vi.fn(),
   onDidNavigate: vi.fn(),
   onDidFinishLoad: vi.fn(),
+  onDidFailLoad: vi.fn(),
   onClosed: vi.fn(),
 };
 
@@ -34,7 +35,7 @@ describe("OIDC login window lifecycle", () => {
 
     removeOidcLoginWindowListeners(authWindow, handlers);
 
-    expect(webContents.off).toHaveBeenCalledTimes(4);
+    expect(webContents.off).toHaveBeenCalledTimes(5);
     expect(off).toHaveBeenCalledWith("closed", handlers.onClosed);
   });
 });

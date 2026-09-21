@@ -550,8 +550,11 @@ function openOidcLoginWindow(
     // With credentials available the window runs hidden while the login form
     // is autofilled; it is only revealed when the autofill cannot run (e.g.
     // the issuer does not serve the Botstation login form).
+    // The window stays parented to the main window even in hidden autofill
+    // mode, so if it is revealed later it surfaces above the main window
+    // instead of opening behind it unnoticed.
     const authWindow = new BrowserWindow({
-      parent: autoLogin ? undefined : mainWindow || undefined,
+      parent: mainWindow || undefined,
       modal: !autoLogin && Boolean(mainWindow),
       show: !autoLogin,
       width: 540,
@@ -572,6 +575,7 @@ function openOidcLoginWindow(
     authWindow.removeMenu();
     authWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     let settled = false;
+    let hiddenTimeout: NodeJS.Timeout | undefined;
     const settle = (fn: () => void): void => {
       if (settled) {
         return;
@@ -586,6 +590,10 @@ function openOidcLoginWindow(
     const revealAuthWindow = (): void => {
       if (settled || authWindow.isDestroyed()) {
         return;
+      }
+      if (hiddenTimeout) {
+        clearTimeout(hiddenTimeout);
+        hiddenTimeout = undefined;
       }
       authWindow.show();
       authWindow.focus();
@@ -673,6 +681,15 @@ function openOidcLoginWindow(
         }
       }, 800);
     };
+    const onDidFailLoad = (_event: Electron.Event, errorCode: number, errorDescription: string): void => {
+      // -3 (ERR_ABORTED) is emitted for navigations we cancel ourselves; ignore it.
+      if (errorCode === -3) {
+        return;
+      }
+      settle(() =>
+        reject(new Error(`Servstation sign-in page failed to load: ${errorDescription || `error ${errorCode}`}`)),
+      );
+    };
     const onClosed = (): void => {
       if (!settled) {
         settled = true;
@@ -681,11 +698,16 @@ function openOidcLoginWindow(
       }
     };
     const cleanup = (): void => {
+      if (hiddenTimeout) {
+        clearTimeout(hiddenTimeout);
+        hiddenTimeout = undefined;
+      }
       removeOidcLoginWindowListeners(authWindow, {
         onWillRedirect,
         onWillNavigate,
         onDidNavigate,
         onDidFinishLoad,
+        onDidFailLoad,
         onClosed,
       });
     };
@@ -693,7 +715,15 @@ function openOidcLoginWindow(
     authWindow.webContents.on("will-navigate", onWillNavigate);
     authWindow.webContents.on("did-navigate", onDidNavigate);
     authWindow.webContents.on("did-finish-load", onDidFinishLoad);
+    authWindow.webContents.on("did-fail-load", onDidFailLoad);
     authWindow.on("closed", onClosed);
+    if (autoLogin) {
+      // While the window runs hidden for autofill, never let it stall the
+      // login flow silently: surface a timeout error to the caller instead.
+      hiddenTimeout = setTimeout(() => {
+        settle(() => reject(new Error("Servstation sign-in timed out; the login page did not respond.")));
+      }, 45_000);
+    }
     authWindow.loadURL(authorizationUrl).catch((error) => settle(() => reject(error)));
   });
 }
