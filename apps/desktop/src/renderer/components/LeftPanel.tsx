@@ -10,6 +10,7 @@ import {
   FolderOpenOutlined,
   FolderOutlined,
   InboxOutlined,
+  LoginOutlined,
   PlusOutlined,
   PoweroffOutlined,
   PushpinOutlined,
@@ -35,6 +36,7 @@ export function LeftPanel({
   refresh,
   startNewConversation,
   startUpdate,
+  onRequestLogin,
   t,
 }: {
   snapshot: RuntimeSnapshot;
@@ -47,6 +49,7 @@ export function LeftPanel({
   refresh: () => void;
   startNewConversation: (projectId?: string | null) => Promise<void>;
   startUpdate: () => void | Promise<void>;
+  onRequestLogin: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
   const [newConversationOpen, setNewConversationOpen] = useState(false);
@@ -80,9 +83,9 @@ export function LeftPanel({
   }, []);
 
   const identity = snapshot.identityContext;
-  const displayName = identity?.userId || snapshot.agentName;
-  const avatarLetter = (displayName.trim().charAt(0) || "H").toUpperCase();
   const oidcLoggedIn = Boolean(snapshot.servstationA2A.config.oidc?.refreshTokenSaved);
+  const displayName = oidcLoggedIn ? identity?.userId || snapshot.agentName : t("Please log in");
+  const avatarLetter = (displayName.trim().charAt(0) || "H").toUpperCase();
 
   const resetNewConversationForm = () => {
     setProjectName("");
@@ -511,7 +514,19 @@ export function LeftPanel({
                   <PoweroffOutlined className="account-popup-row-icon" />
                   <span className="account-popup-row-label">{t("Log out")}</span>
                 </button>
-              ) : null}
+              ) : (
+                <button
+                  type="button"
+                  className="account-popup-row"
+                  onClick={() => {
+                    setAccountPopupOpen(false);
+                    onRequestLogin();
+                  }}
+                >
+                  <LoginOutlined className="account-popup-row-icon" />
+                  <span className="account-popup-row-label">{t("Log in")}</span>
+                </button>
+              )}
             </div>
           ) : null}
         </div>

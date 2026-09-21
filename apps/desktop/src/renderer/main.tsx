@@ -239,6 +239,7 @@ function App() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [focusConfigTab, setFocusConfigTab] = useState("model");
   const [promptInjection, setPromptInjection] = useState<{ text: string; nonce: number } | undefined>(undefined);
+  const [loginOverlayOpen, setLoginOverlayOpen] = useState(false);
   const [userDataPath, setUserDataPath] = useState("");
   const [updateState, setUpdateState] = useState<HBClientUpdateState>({ status: "idle", currentVersion: "" });
   const [messageApi, contextHolder] = message.useMessage();
@@ -257,6 +258,14 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem(RIGHT_PANEL_WIDTH_STORAGE_KEY, String(rightWidth));
   }, [rightWidth]);
+
+  const accountLoggedIn = Boolean(snapshot?.servstationA2A.config.oidc?.refreshTokenSaved);
+
+  useEffect(() => {
+    if (accountLoggedIn) {
+      setLoginOverlayOpen(false);
+    }
+  }, [accountLoggedIn]);
 
   const onRightResizeStart = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
@@ -904,6 +913,7 @@ function App() {
               refresh={refresh}
               startNewConversation={startNewConversation}
               startUpdate={startHBClientUpdate}
+              onRequestLogin={() => setLoginOverlayOpen(true)}
               t={t}
             />
           )}
@@ -1084,6 +1094,14 @@ function App() {
         onCancel={() => setTranscriptOpen(false)}
         t={t}
       />
+      {loginOverlayOpen && !accountLoggedIn ? (
+        <EnterpriseLoginOverlay
+          snapshot={snapshot}
+          refreshRuntime={refresh}
+          onBack={() => setLoginOverlayOpen(false)}
+          t={t}
+        />
+      ) : null}
     </ConfigProvider>
   );
 }

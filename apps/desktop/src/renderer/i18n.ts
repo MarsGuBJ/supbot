@@ -826,6 +826,7 @@ const zh: Record<string, string> = {
   "Use existing folder": "使用现有文件夹",
   "Conversation list": "会话列表",
   Online: "在线",
+  "Please log in": "请登录",
   "Upgrade to new version": "升级新版本",
   "Log out": "退出登录",
   "Logged out of the server agent.": "已退出服务器智能体登录。",
