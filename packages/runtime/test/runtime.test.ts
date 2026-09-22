@@ -1565,7 +1565,9 @@ describe("SupbotRuntime", () => {
   test("installs and uninstalls local tool market products as local deployment packages", async () => {
     const runtime = await createRuntime();
     const dataDir = tempDirs[tempDirs.length - 1];
-    const initial = (await runtime.listToolMarket({ query: "Shell" })).find((item) => item.id === "shell-runner");
+    const initial = (await runtime.listToolMarket({ query: "Shell" })).pinned.find(
+      (item) => item.id === "shell-runner",
+    );
     expect(initial?.installed).toBe(false);
 
     const installed = await runtime.installToolMarketProduct("shell-runner");
@@ -1642,9 +1644,9 @@ describe("SupbotRuntime", () => {
     const runtime = new SupbotRuntime(new JsonFileStorage(dataDir), { rootDir });
     await runtime.init();
     expect(runtime.snapshot().capabilities.find((item) => item.id === capability.id)).toMatchObject(capability);
-    expect((await runtime.listToolMarket({ query: "Seed" })).find((item) => item.id === "seed-skill")?.installed).toBe(
-      true,
-    );
+    expect(
+      (await runtime.listToolMarket({ query: "Seed" })).pinned.find((item) => item.id === "seed-skill")?.installed,
+    ).toBe(true);
 
     await runtime.deleteCapability(capability.id);
     const restarted = new SupbotRuntime(new JsonFileStorage(dataDir), { rootDir });
@@ -2014,9 +2016,100 @@ describe("SupbotRuntime", () => {
       });
 
       const products = await runtime.listToolMarket({});
-      expect(products.some((item) => item.origin === "local")).toBe(true);
-      expect(products.some((item) => item.origin === "remote")).toBe(false);
+      expect(products.pinned.some((item) => item.origin === "local")).toBe(true);
+      expect(products.items.some((item) => item.origin === "remote")).toBe(false);
       expect(events).toEqual([]);
+      expect(runtime.snapshot().toolMarketConfig.lastSyncError).toContain("missing subscriber session");
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  test("hides unpurchased remote tool market products when not logged in", async () => {
+    const server = createServer((_request, response) => {
+      response.setHeader("Content-Type", "application/json");
+      response.end(
+        JSON.stringify({
+          items: [
+            {
+              id: "owned-tool",
+              name: "Owned Tool",
+              type: "tool",
+              provider_name: "ToolsMarket",
+              billing_mode: "paid",
+              subscription_id: "sub-1",
+            },
+            {
+              id: "stranger-tool",
+              name: "Stranger Tool",
+              type: "tool",
+              provider_name: "ToolsMarket",
+              billing_mode: "free",
+            },
+          ],
+        }),
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const runtime = await createRuntime();
+      const address = server.address() as AddressInfo;
+      await runtime.updateToolMarketConfig({
+        source: "hybrid",
+        apiUrl: `http://127.0.0.1:${address.port}`,
+        accountEmail: "",
+        clearAccessToken: true,
+        clearPassword: true,
+      });
+
+      const products = await runtime.listToolMarket({});
+      const remoteIds = products.items.filter((item) => item.origin === "remote").map((item) => item.id);
+      expect(remoteIds).toEqual(["owned-tool"]);
+      expect(products.pinned.some((item) => item.origin === "local")).toBe(true);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  test("requests remote tool market pages and exposes the server total", async () => {
+    const requestedPages: string[] = [];
+    const server = createServer((request, response) => {
+      const url = new URL(request.url || "/", "http://127.0.0.1");
+      requestedPages.push(`${url.searchParams.get("page")}:${url.searchParams.get("pageSize")}`);
+      response.setHeader("Content-Type", "application/json");
+      response.end(
+        JSON.stringify({
+          items: [
+            {
+              id: `remote-page-${url.searchParams.get("page")}`,
+              name: "Remote Tool",
+              type: "tool",
+              provider_name: "ToolsMarket",
+              billing_mode: "free",
+            },
+          ],
+          total: 32,
+        }),
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const runtime = await createRuntime();
+      const address = server.address() as AddressInfo;
+      await runtime.updateToolMarketConfig({
+        source: "remote",
+        apiUrl: `http://127.0.0.1:${address.port}`,
+        accountEmail: "",
+        accessToken: "token-1",
+        clearPassword: true,
+      });
+
+      const result = await runtime.listToolMarket({ page: 2, pageSize: 15 });
+      expect(requestedPages).toEqual(["2:15"]);
+      expect(result.total).toBe(32);
+      expect(result.page).toBe(2);
+      expect(result.pageSize).toBe(15);
+      expect(result.items.map((item) => item.id)).toEqual(["remote-page-2"]);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
@@ -2122,8 +2215,8 @@ describe("SupbotRuntime", () => {
 
       const products = await runtime.listToolMarket({ type: "mcp" });
       expect(loggedIn).toBe(true);
-      expect(products).toHaveLength(1);
-      expect(products[0]).toMatchObject({ id: "calendar-mcp", origin: "remote", installed: false });
+      expect(products.items).toHaveLength(1);
+      expect(products.items[0]).toMatchObject({ id: "calendar-mcp", origin: "remote", installed: false });
 
       const installed = await runtime.installToolMarketProduct("calendar-mcp");
       expect(installed.installed).toBe(true);
@@ -2154,8 +2247,8 @@ describe("SupbotRuntime", () => {
       await restarted.init();
       await restarted.updateToolMarketConfig({ source: "local", apiUrl: "", accountEmail: "", clearPassword: true });
       const installedFromDisk = await restarted.listToolMarket({ query: "Calendar" });
-      expect(installedFromDisk).toHaveLength(1);
-      expect(installedFromDisk[0]).toMatchObject({ id: "calendar-mcp", installed: true });
+      expect(installedFromDisk.pinned).toHaveLength(1);
+      expect(installedFromDisk.pinned[0]).toMatchObject({ id: "calendar-mcp", installed: true });
 
       const uninstalled = await restarted.uninstallToolMarketProduct("calendar-mcp");
       expect(uninstalled.installed).toBe(false);

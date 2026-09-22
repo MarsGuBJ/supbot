@@ -115,6 +115,7 @@ import type {
   SubagentConfig,
   SupbotEvent,
   ToolMarketCatalogItem,
+  ToolMarketCatalogPage,
   ToolMarketConfig,
   ToolMarketConfigUpdate,
   ToolMarketQuery,
@@ -280,7 +281,7 @@ declare global {
       deleteCapability(id: string): Promise<void>;
       saveSubagent(input: SubagentConfig): Promise<SubagentConfig>;
       deleteSubagent(id: string): Promise<void>;
-      listToolMarket(query?: ToolMarketQuery): Promise<ToolMarketCatalogItem[]>;
+      listToolMarket(query?: ToolMarketQuery): Promise<ToolMarketCatalogPage>;
       installToolMarketProduct(id: string): Promise<ToolMarketCatalogItem>;
       uninstallToolMarketProduct(id: string): Promise<ToolMarketCatalogItem>;
       listMcpServers(): Promise<McpServerSnapshot[]>;

@@ -771,10 +771,7 @@ function base64Url(value: Buffer): string {
 // Older installs persist a scope string without offline_access; always request
 // it so the SSO issues a refresh token for background session renewal.
 function ensureOfflineAccessScope(scope: string): string {
-  const parts = scope
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
+  const parts = scope.trim().split(/\s+/).filter(Boolean);
   if (!parts.includes("offline_access")) {
     parts.push("offline_access");
   }
@@ -2359,6 +2356,8 @@ function validateToolMarketQuery(input: ToolMarketQuery | undefined): ToolMarket
   return {
     query: optionalString(value.query, "tool market query"),
     type: optionalEnum(value.type, ["tool", "skill", "plugin", "mcp", "all"], "tool market type"),
+    page: optionalNumber(value.page, "tool market page"),
+    pageSize: optionalNumber(value.pageSize, "tool market page size"),
   };
 }
 

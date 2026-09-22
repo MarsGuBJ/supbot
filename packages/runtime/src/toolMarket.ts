@@ -161,13 +161,18 @@ export function findLocalToolMarketProduct(productId: string): ToolMarketProduct
   return localToolMarketProducts.find((product) => product.id === productId);
 }
 
+export interface RemoteToolMarketPage {
+  products: ToolMarketProduct[];
+  total: number;
+}
+
 export async function fetchRemoteToolMarketProducts(
   config: ToolMarketConfig,
   query: ToolMarketQuery = {},
   auth: ToolMarketAuth = {},
-): Promise<ToolMarketProduct[]> {
+): Promise<RemoteToolMarketPage> {
   if (!config.apiUrl.trim()) {
-    return [];
+    return { products: [], total: 0 };
   }
   const url = new URL(normalizeMarketApiUrl(config.apiUrl.trim()));
   if (query.query?.trim()) {
@@ -175,6 +180,12 @@ export async function fetchRemoteToolMarketProducts(
   }
   if (query.type && query.type !== "all") {
     url.searchParams.set("type", query.type);
+  }
+  if (query.page && query.page > 0) {
+    url.searchParams.set("page", String(Math.floor(query.page)));
+  }
+  if (query.pageSize && query.pageSize > 0) {
+    url.searchParams.set("pageSize", String(Math.floor(query.pageSize)));
   }
   const cookie = await authenticateToolMarket(config, auth);
   const controller = new AbortController();
@@ -204,7 +215,11 @@ export async function fetchRemoteToolMarketProducts(
     throw new Error("Tool market request failed: catalog API returned invalid JSON.");
   }
   const items = Array.isArray(payload) ? payload : Array.isArray(payload.items) ? payload.items : [];
-  return items.map(normalizeRemoteMarketProduct);
+  const total =
+    !Array.isArray(payload) && typeof payload.total === "number" && payload.total >= 0
+      ? Math.floor(payload.total)
+      : items.length;
+  return { products: items.map(normalizeRemoteMarketProduct), total };
 }
 
 export interface ToolMarketAuth {
@@ -327,7 +342,7 @@ export function findMarketProduct(products: ToolMarketProduct[], productId: stri
   return products.find((product) => product.id === productId);
 }
 
-type RemoteToolMarketListPayload = RemoteToolMarketProduct[] | { items?: RemoteToolMarketProduct[] };
+type RemoteToolMarketListPayload = RemoteToolMarketProduct[] | { items?: RemoteToolMarketProduct[]; total?: number };
 
 interface RemoteToolMarketProduct {
   id?: string;

@@ -91,6 +91,7 @@ import {
   type ToolCallRecord,
   type WorktreeDiffSummary,
   type ToolMarketCatalogItem,
+  type ToolMarketCatalogPage,
   type ToolMarketConfig,
   type ToolMarketConfigUpdate,
   type ToolMarketLocalDeployment,
@@ -2114,28 +2115,62 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     await this.persistAndBroadcast();
   }
 
-  async listToolMarket(query: ToolMarketQuery = {}): Promise<ToolMarketCatalogItem[]> {
+  async listToolMarket(query: ToolMarketQuery = {}): Promise<ToolMarketCatalogPage> {
     this.assertLoaded();
+    const page = Math.max(1, Math.floor(query.page ?? 1));
+    const pageSize = Math.min(100, Math.max(1, Math.floor(query.pageSize ?? 15)));
     const local = this.state.toolMarketConfig.source === "remote" ? [] : localToolMarketProducts;
     const installed = await this.listInstalledToolMarketProducts();
+    const remoteAuthed = Boolean(this.state.toolMarketSecret?.trim() || this.state.toolMarketPasswordSecret?.trim());
     let remote: ToolMarketProduct[] = [];
+    let total = 0;
     if (this.state.toolMarketConfig.source !== "local" && this.state.toolMarketConfig.apiUrl.trim()) {
       try {
-        remote = await fetchRemoteToolMarketProducts(this.state.toolMarketConfig, query, this.toolMarketAuth());
+        const remotePage = await fetchRemoteToolMarketProducts(
+          this.state.toolMarketConfig,
+          { query: query.query, type: query.type, page, pageSize },
+          this.toolMarketAuth(),
+        );
+        remote = remotePage.products;
+        total = remotePage.total;
+        if (!remoteAuthed) {
+          // Anonymous catalog access only reveals what the user already owns;
+          // unpurchased remote products require a market login.
+          remote = remote.filter((product) => product.purchased);
+        }
         this.remoteMarketCache = remote;
-        this.state.toolMarketConfig = { ...this.state.toolMarketConfig, lastSyncedAt: nowIso() };
+        this.state.toolMarketConfig = {
+          ...this.state.toolMarketConfig,
+          lastSyncedAt: nowIso(),
+          lastSyncError: undefined,
+        };
         await this.persistAndBroadcast();
       } catch (error) {
         if (this.state.toolMarketConfig.source === "remote") {
           throw error;
         }
+        // Hybrid/local sources still return local results, but the remote failure
+        // must be visible instead of silently showing a stale catalog.
+        this.state.toolMarketConfig = {
+          ...this.state.toolMarketConfig,
+          lastSyncError: error instanceof Error ? error.message : String(error),
+        };
+        await this.persistAndBroadcast();
       }
     }
-    return listToolMarketCatalog(
-      uniqueMarketProducts([...local, ...remote, ...installed]),
-      this.state.capabilities,
-      query,
-    );
+    const knownIds = new Set([...local, ...remote].map((product) => product.id));
+    const installedExtras = installed.filter((product) => !knownIds.has(product.id));
+    return {
+      pinned: listToolMarketCatalog(
+        uniqueMarketProducts([...local, ...installedExtras]),
+        this.state.capabilities,
+        query,
+      ),
+      items: listToolMarketCatalog(remote, this.state.capabilities, query),
+      total,
+      page,
+      pageSize,
+    };
   }
 
   async installToolMarketProduct(productId: string): Promise<ToolMarketCatalogItem> {
@@ -5049,7 +5084,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       return undefined;
     }
     const remote = await fetchRemoteToolMarketProducts(this.state.toolMarketConfig, {}, this.toolMarketAuth());
-    return findMarketProduct(remote, productId);
+    return findMarketProduct(remote.products, productId);
   }
 
   private toolMarketAuth() {

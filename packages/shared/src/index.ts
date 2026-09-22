@@ -119,6 +119,7 @@ export interface ToolMarketConfig {
   tokenStorage?: "safeStorage" | "file";
   passwordStorage?: "safeStorage" | "file";
   lastSyncedAt?: string;
+  lastSyncError?: string;
 }
 
 export interface ToolMarketConfigUpdate {
@@ -205,6 +206,19 @@ export interface ToolMarketCatalogItem extends ToolMarketProduct {
 export interface ToolMarketQuery {
   query?: string;
   type?: ToolMarketProductType | "all";
+  page?: number;
+  pageSize?: number;
+}
+
+export interface ToolMarketCatalogPage {
+  /** Local built-ins and installed receipts; not paginated. */
+  pinned: ToolMarketCatalogItem[];
+  /** Remote catalog products for the requested page. */
+  items: ToolMarketCatalogItem[];
+  /** Total remote products matching the filter across all pages. */
+  total: number;
+  page: number;
+  pageSize: number;
 }
 
 export type McpConnectionState = "disconnected" | "connecting" | "connected" | "error";
