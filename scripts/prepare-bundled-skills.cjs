@@ -6,6 +6,8 @@ const path = require("node:path");
 const repoRoot = path.resolve(__dirname, "..");
 const desktopBuildDir = path.join(repoRoot, "apps", "desktop", "build");
 const targetRoot = path.join(desktopBuildDir, "default-data");
+// Plugins that must never ship inside the installer.
+const excludedPluginNames = new Set(["anthropic-agent-skills"]);
 const sourceDataDir = resolveSourceDataDir();
 const sourceSkillsDir = path.join(sourceDataDir, "skills");
 
@@ -72,7 +74,9 @@ function copyMarketPlugins() {
     .readdirSync(sourcePluginsDir, { withFileTypes: true })
     .filter(
       (entry) =>
-        entry.isDirectory() && fs.existsSync(path.join(sourcePluginsDir, entry.name, "supbot-local-tool.json")),
+        entry.isDirectory() &&
+        !excludedPluginNames.has(entry.name) &&
+        fs.existsSync(path.join(sourcePluginsDir, entry.name, "supbot-local-tool.json")),
     )
     .map((entry) => entry.name)
     .sort((a, b) => a.localeCompare(b));
