@@ -22,6 +22,7 @@ import { Button, Dropdown, Form, Input, Modal, Popconfirm, Tooltip, message } fr
 import type { Conversation, Project, ProjectUpdateInput, RuntimeSnapshot } from "@supbot/shared";
 import { conversationTitle, formatDateTime } from "@supbot/shared";
 import type { WorkspaceView } from "../lib/types";
+import { hasUsableServstationOidcSession } from "../servstationConnection";
 
 export const projectConversationPreviewLimit = 5;
 
@@ -83,7 +84,7 @@ export function LeftPanel({
   }, []);
 
   const identity = snapshot.identityContext;
-  const oidcLoggedIn = Boolean(snapshot.servstationA2A.config.oidc?.refreshTokenSaved);
+  const oidcLoggedIn = hasUsableServstationOidcSession(snapshot.servstationA2A.config);
   const displayName = oidcLoggedIn ? identity?.userId || snapshot.agentName : t("Please log in");
   const avatarLetter = (displayName.trim().charAt(0) || "H").toUpperCase();
 

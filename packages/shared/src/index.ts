@@ -30,7 +30,7 @@ export const defaultServstationIssuerUrl = "http://101.227.67.76:8092";
 // Dedicated HTTPS endpoint for app update checks/downloads.
 export const defaultUpdateFeedBaseUrl = "https://update.i-shu.com";
 export const defaultServstationClientId = "botstation-agent-client-web";
-export const defaultServstationScope = "openid profile email";
+export const defaultServstationScope = "openid profile email offline_access";
 export const defaultServstationRedirectUri = "http://localhost:8800/oauth2/callback";
 export const defaultServstationUser = "dev-user";
 

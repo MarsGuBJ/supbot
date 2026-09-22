@@ -929,6 +929,7 @@ const zh: Record<string, string> = {
   "Log in": "登 录",
   "Signing in…": "登录中…",
   "Please enter your username.": "请输入用户名。",
+  "Sign in was not completed.": "登录未完成，请重试。",
   "Password reset is not available yet.": "密码重置功能开发中",
   "HyWork © 2026 · Intelligent work platform": "中诚信和逸科技 © 2026 HyWork · 智能工作平台",
   "Resize right panel": "拖拽调整右侧面板宽度",

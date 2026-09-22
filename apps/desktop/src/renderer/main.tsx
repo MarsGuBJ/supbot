@@ -259,7 +259,7 @@ function App() {
     window.localStorage.setItem(RIGHT_PANEL_WIDTH_STORAGE_KEY, String(rightWidth));
   }, [rightWidth]);
 
-  const accountLoggedIn = Boolean(snapshot?.servstationA2A.config.oidc?.refreshTokenSaved);
+  const accountLoggedIn = snapshot ? hasUsableServstationOidcSession(snapshot.servstationA2A.config) : false;
 
   useEffect(() => {
     if (accountLoggedIn) {

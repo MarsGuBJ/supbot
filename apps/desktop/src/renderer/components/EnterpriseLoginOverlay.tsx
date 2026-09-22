@@ -76,6 +76,7 @@ export function EnterpriseLoginOverlay({
         password: password || undefined,
       });
       if (result.status === "canceled") {
+        setError(t("Sign in was not completed."));
         return;
       }
       await window.supbot.connectServstationReverseBridge();

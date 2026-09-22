@@ -447,8 +447,9 @@ async function loginServstationOidc(input: ServstationA2AOidcLoginInput): Promis
       defaultServstationClientId,
     "Botstation OIDC client id",
   );
-  const scope =
-    input.scope || currentConfig.oidc?.scope || process.env.HBCLIENT_BOTSTATION_SCOPE || defaultServstationScope;
+  const scope = ensureOfflineAccessScope(
+    input.scope || currentConfig.oidc?.scope || process.env.HBCLIENT_BOTSTATION_SCOPE || defaultServstationScope,
+  );
   const redirectUri = normalizeOidcUrl(
     input.redirectUri ||
       currentConfig.oidc?.redirectUri ||
@@ -765,6 +766,19 @@ function isLoopbackHost(hostname: string): boolean {
 
 function base64Url(value: Buffer): string {
   return value.toString("base64url");
+}
+
+// Older installs persist a scope string without offline_access; always request
+// it so the SSO issues a refresh token for background session renewal.
+function ensureOfflineAccessScope(scope: string): string {
+  const parts = scope
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!parts.includes("offline_access")) {
+    parts.push("offline_access");
+  }
+  return parts.join(" ");
 }
 
 function normalizeOidcUrl(value: string, label: string): string {
