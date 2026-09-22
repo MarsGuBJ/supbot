@@ -1,4 +1,15 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, safeStorage, shell, type WebContents } from "electron";
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  Menu,
+  safeStorage,
+  session,
+  shell,
+  type WebContents,
+} from "electron";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { cp, copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { hostname, userInfo } from "node:os";
@@ -468,6 +479,12 @@ async function loginServstationOidc(input: ServstationA2AOidcLoginInput): Promis
     loginHint,
     input.password || savedPassword || process.env.HBCLIENT_BOTSTATION_PASSWORD,
   );
+  if (autoLogin) {
+    // A lingering SSO session cookie lets the issuer skip the login form and
+    // issue a code without ever checking the password the user just typed.
+    // Clear the issuer's session storage so the credentials are verified.
+    await clearOidcIssuerSession(issuerUrl);
+  }
   const discovery = await discoverOidcDocument(issuerUrl);
   if (!discovery.authorization_endpoint || !discovery.token_endpoint) {
     throw new Error("Servstation OIDC discovery document is missing required endpoints.");
@@ -629,16 +646,17 @@ function openOidcLoginWindow(
     const onWillRedirect = (event: Electron.Event, url: string): void => maybeComplete(url, event);
     const onWillNavigate = (event: Electron.Event, url: string): void => maybeComplete(url, event);
     const onDidNavigate = (_event: Electron.Event, url: string): void => maybeComplete(url);
-    let autoSubmitted = false;
+    let autoSubmitAttempted = false;
+    let autoSubmitSent = false;
     const tryAutofill = (): boolean => {
-      if (!autoLogin || autoSubmitted || authWindow.isDestroyed()) {
+      if (!autoLogin || autoSubmitAttempted || authWindow.isDestroyed()) {
         return false;
       }
       const currentUrl = authWindow.webContents.getURL();
       if (!isBotstationLoginUrl(currentUrl, autoLogin.issuerOrigin)) {
         return false;
       }
-      autoSubmitted = true;
+      autoSubmitAttempted = true;
       const script = `
         (() => {
           const user = document.querySelector('input[name="userId"]');
@@ -654,7 +672,9 @@ function openOidcLoginWindow(
       authWindow.webContents
         .executeJavaScript(script, true)
         .then((filled) => {
-          if (!filled) {
+          if (filled) {
+            autoSubmitSent = true;
+          } else {
             revealAuthWindow();
           }
         })
@@ -662,10 +682,17 @@ function openOidcLoginWindow(
       return true;
     };
     const onDidFinishLoad = (): void => {
-      if (autoSubmitted) {
-        // Post-submit navigation: the completion handler closes the window
-        // on the redirect. Reveal only as a last resort so a wrong-credential
-        // error page cannot strand an invisible window.
+      if (autoSubmitSent) {
+        // The autofill was submitted and the issuer served the login page
+        // again: the credentials were rejected. Surface the failure instead of
+        // waiting for a timeout with the window hidden.
+        if (autoLogin && isBotstationLoginUrl(authWindow.webContents.getURL(), autoLogin.issuerOrigin)) {
+          settle(() => reject(new Error("Servstation sign-in failed: the username or password was rejected.")));
+        }
+        return;
+      }
+      if (autoSubmitAttempted) {
+        // Autofill result is pending; its callbacks reveal the window if needed.
         return;
       }
       if (tryAutofill()) {
@@ -677,7 +704,7 @@ function openOidcLoginWindow(
         return;
       }
       setTimeout(() => {
-        if (!autoSubmitted && !settled && !tryAutofill()) {
+        if (!autoSubmitAttempted && !settled && !tryAutofill()) {
           revealAuthWindow();
         }
       }, 800);
@@ -748,6 +775,17 @@ function botstationAutoLogin(
     password: resolvedPassword,
     issuerOrigin: issuer.origin,
   };
+}
+
+// Drops any SSO session cookie the issuer previously planted in the shared
+// Electron session, so the next authorization request shows the login form
+// and actually verifies the entered credentials.
+async function clearOidcIssuerSession(issuerUrl: string): Promise<void> {
+  try {
+    await session.defaultSession.clearStorageData({ origin: new URL(issuerUrl).origin });
+  } catch {
+    // Best effort; on failure the issuer may silently skip credential checks.
+  }
 }
 
 function isBotstationLoginUrl(rawUrl: string, issuerOrigin: string): boolean {
@@ -1227,7 +1265,17 @@ function registerIpc(): void {
     void updateManager?.check(false);
     return result;
   });
-  ipcMain.handle("servstationA2A:logoutOidc", () => getRuntime().clearServstationA2AOidcSession());
+  ipcMain.handle("servstationA2A:logoutOidc", async () => {
+    const service = getRuntime();
+    const issuerUrl = (await service.servstationA2AConfig()).oidc?.issuerUrl;
+    const cleared = await service.clearServstationA2AOidcSession();
+    if (issuerUrl) {
+      // Local tokens alone are not enough: without dropping the issuer's SSO
+      // session cookie, the next login would skip credential verification.
+      await clearOidcIssuerSession(issuerUrl);
+    }
+    return cleared;
+  });
   ipcMain.handle("servstationA2A:connectReverse", async () => {
     const result = await getRuntime().connectServstationReverseBridge();
     void updateManager?.check(false);
