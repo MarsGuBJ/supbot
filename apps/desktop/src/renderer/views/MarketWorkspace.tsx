@@ -39,6 +39,8 @@ export function MarketWorkspace({
   const marketConfig = snapshot.toolMarketConfig;
   const remoteEnabled = marketConfig.source !== "local";
   const loggedIn = marketConfig.passwordSaved || marketConfig.accessTokenSaved;
+  const staffAgentConfig = snapshot.servstationA2A.config;
+  const staffAgentReady = Boolean(staffAgentConfig.staffAgentAccount?.trim() && staffAgentConfig.staffAgentPasswordSaved);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -71,6 +73,27 @@ export function MarketWorkspace({
       messageApi.success(t("Tool market configuration saved."));
       setLoginOpen(false);
       loginForm.resetFields();
+      await refresh();
+      await load();
+    } catch (loginError) {
+      messageApi.error((loginError as Error).message);
+    } finally {
+      setLoggingIn(false);
+    }
+  };
+
+  // Preferred path: sign in with the stored Remote staff-agent credentials over
+  // the trusted integration channel; the market auto-registers a missing
+  // account. Falls back to the manual form when no staff-agent is configured.
+  const handleLogin = async () => {
+    if (!staffAgentReady) {
+      setLoginOpen(true);
+      return;
+    }
+    setLoggingIn(true);
+    try {
+      await window.supbot.integrationLoginToolMarket();
+      messageApi.success(t("Signed in to the tool market."));
       await refresh();
       await load();
     } catch (loginError) {
@@ -150,7 +173,7 @@ export function MarketWorkspace({
             ]}
           />
           {remoteEnabled && !loggedIn ? (
-            <Button icon={<LoginOutlined />} onClick={() => setLoginOpen(true)}>
+            <Button icon={<LoginOutlined />} onClick={() => void handleLogin()} loading={loggingIn}>
               {t("Log in")}
             </Button>
           ) : null}

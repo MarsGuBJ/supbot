@@ -1559,6 +1559,7 @@ function registerIpc(): void {
   ipcMain.handle("market-config:update", (_event, input: ToolMarketConfigUpdate) =>
     getRuntime().updateToolMarketConfig(validateToolMarketConfigUpdate(input)),
   );
+  ipcMain.handle("market:integration-login", () => getRuntime().integrationLoginToolMarket());
   ipcMain.handle("personality:update", (_event, input: PersonalityConfig) =>
     getRuntime().updatePersonality(validatePersonalityConfig(input)),
   );

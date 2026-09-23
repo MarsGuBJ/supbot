@@ -273,6 +273,7 @@ declare global {
       testModelProvider(id?: string, input?: Partial<ModelProviderUpdate>): Promise<ModelTestResult>;
       listModelProviderModels(id?: string, input?: Partial<ModelProviderUpdate>): Promise<ModelListResult>;
       updateToolMarketConfig(input: ToolMarketConfigUpdate): Promise<ToolMarketConfig>;
+      integrationLoginToolMarket(): Promise<ToolMarketConfig>;
       updatePersonality(input: PersonalityConfig): Promise<PersonalityConfig>;
       updateCapability(
         id: string,

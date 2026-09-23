@@ -210,6 +210,8 @@ const zh: Record<string, string> = {
   "Remote market sync failed; showing local catalog only.": "远程市场同步失败，当前仅显示本地目录。",
   "Tool market login": "工具市场登录",
   "Log in with your market account to load the remote catalog.": "使用市场账号登录后可加载远程目录。",
+  "Signed in to the tool market.": "已登录工具市场。",
+  "Signing in with the saved staff-agent account…": "正在使用已保存的 staff-agent 账号登录…",
   "Local and installed": "本地与已安装",
   Personality: "人格",
   Storage: "存储",

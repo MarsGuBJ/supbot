@@ -4,6 +4,8 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 
 import {
   addModelUsage,
   clampNumber,
+  defaultToolMarketApiUrl,
+  defaultToolMarketIntegrationSecret,
   type AgentJob,
   type Attachment,
   type AutopilotCheckpoint,
@@ -1921,6 +1923,49 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     next.passwordSaved = Boolean(this.state.toolMarketPasswordSecret);
     next.passwordStorage = next.passwordSaved ? this.marketSecretStorageKind : undefined;
     this.state.toolMarketConfig = next;
+    await this.persistAndBroadcast();
+    return redactToolMarketConfig(
+      this.state.toolMarketConfig,
+      this.state.toolMarketSecret,
+      this.state.toolMarketPasswordSecret,
+    );
+  }
+
+  /**
+   * Sign in to the remote tool market with the stored Remote staff-agent
+   * credentials over the trusted integration channel (the market server does
+   * not verify the password there and auto-registers a missing account).
+   */
+  async integrationLoginToolMarket(): Promise<ToolMarketConfig> {
+    this.assertLoaded();
+    const account = this.state.servstationA2AConfig.staffAgentAccount?.trim() || "";
+    const password = (await this.servstationA2AStaffAgentPassword()) || "";
+    if (!account || !password) {
+      throw new Error(
+        "Save the Remote staff-agent account and password in Config before signing in to the tool market.",
+      );
+    }
+    const current = this.state.toolMarketConfig;
+    const apiUrl = current.apiUrl.trim() || defaultToolMarketApiUrl;
+    const source = current.source === "local" ? "hybrid" : current.source;
+    const auth = {
+      email: account,
+      password,
+      integrationSecret: process.env.HBCLIENT_TOOL_MARKET_INTEGRATION_SECRET?.trim() || defaultToolMarketIntegrationSecret,
+    };
+    // Verify the login (and auto-register the account server-side) before
+    // persisting anything so a failure leaves no half-saved credentials.
+    await fetchRemoteToolMarketProducts({ ...current, apiUrl, source }, { pageSize: 1 }, auth);
+    this.state.toolMarketConfig = {
+      ...current,
+      source,
+      apiUrl,
+      accountEmail: account,
+      passwordSaved: true,
+      passwordStorage: this.marketSecretStorageKind,
+      lastSyncError: undefined,
+    };
+    this.state.toolMarketPasswordSecret = password;
     await this.persistAndBroadcast();
     return redactToolMarketConfig(
       this.state.toolMarketConfig,
@@ -5092,6 +5137,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       accessToken: this.state.toolMarketSecret,
       email: this.state.toolMarketConfig.accountEmail,
       password: this.state.toolMarketPasswordSecret,
+      integrationSecret: process.env.HBCLIENT_TOOL_MARKET_INTEGRATION_SECRET?.trim() || defaultToolMarketIntegrationSecret,
     };
   }
 }

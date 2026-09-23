@@ -21,7 +21,7 @@ import {
 import { queryLoop } from "../src/queryLoop";
 import { CompactManager } from "../src/compactManager";
 import { normalizeMarketApiUrl } from "../src/toolMarket";
-import { defaultModelConfig } from "@supbot/shared";
+import { defaultModelConfig, defaultToolMarketIntegrationSecret } from "@supbot/shared";
 import type { AgentJob, ChatMessage, CompactBoundary, PermissionMode } from "@supbot/shared";
 
 const tempDirs: string[] = [];
@@ -118,6 +118,13 @@ async function startRemotePluginMarket(product: Record<string, unknown> = remote
     seenOrigins.push(request.headers.origin);
     const url = new URL(request.url || "/", "http://127.0.0.1");
     response.setHeader("Content-Type", "application/json");
+    if (url.searchParams.get("action") === "integration-login") {
+      // This mock market has no INTEGRATION_LOGIN_SECRET configured; the
+      // client must fall back to the regular password login.
+      response.statusCode = 403;
+      response.end(JSON.stringify({ error: { message: "integration login is not available" } }));
+      return;
+    }
     if (url.searchParams.get("action") === "login") {
       response.setHeader("Set-Cookie", "toolsmarket_session=session-1; Path=/; HttpOnly");
       response.end(JSON.stringify({ authenticated: true }));
@@ -2118,6 +2125,12 @@ describe("SupbotRuntime", () => {
   test("reports remote tool market login failures with a clear message", async () => {
     const server = createServer((request, response) => {
       const url = new URL(request.url || "/", "http://127.0.0.1");
+      if (url.searchParams.get("action") === "integration-login") {
+        response.statusCode = 403;
+        response.setHeader("Content-Type", "application/json");
+        response.end(JSON.stringify({ error: { message: "integration login is not available" } }));
+        return;
+      }
       if (url.searchParams.get("action") === "login") {
         response.statusCode = 401;
         response.setHeader("Content-Type", "application/json");
@@ -2146,10 +2159,72 @@ describe("SupbotRuntime", () => {
     }
   });
 
+  test("signs in to the tool market with the stored staff-agent account over the integration channel", async () => {
+    const integrationLogins: Array<{ secret?: string; body: { email?: string; password?: string } }> = [];
+    const server = createServer((request, response) => {
+      const url = new URL(request.url || "/", "http://127.0.0.1");
+      if (url.searchParams.get("action") === "integration-login") {
+        let body = "";
+        request.on("data", (chunk) => {
+          body += chunk;
+        });
+        request.on("end", () => {
+          integrationLogins.push({
+            secret: request.headers["x-integration-secret"] as string | undefined,
+            body: JSON.parse(body),
+          });
+          response.setHeader("Set-Cookie", "toolsmarket_session=session-1; Path=/; HttpOnly");
+          response.setHeader("Content-Type", "application/json");
+          response.end(JSON.stringify({ authenticated: true }));
+        });
+        return;
+      }
+      if (url.searchParams.get("action") === "login") {
+        response.statusCode = 500;
+        response.end("plain password login should not be used for the integration channel");
+        return;
+      }
+      expect(request.headers.cookie).toContain("toolsmarket_session=session-1");
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({ items: [] }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const runtime = await createRuntime();
+      const address = server.address() as AddressInfo;
+      await runtime.updateServstationA2AConfig({
+        staffAgentAccount: "staff-agent@example.com",
+        staffAgentPassword: "staff-secret-1",
+      });
+      await runtime.updateToolMarketConfig({ apiUrl: `http://127.0.0.1:${address.port}` });
+
+      const config = await runtime.integrationLoginToolMarket();
+      expect(config.source).toBe("hybrid");
+      expect(config.accountEmail).toBe("staff-agent@example.com");
+      expect(config.passwordSaved).toBe(true);
+      expect(integrationLogins).toHaveLength(1);
+      expect(integrationLogins[0].secret).toBe(defaultToolMarketIntegrationSecret);
+      expect(integrationLogins[0].body).toEqual({ email: "staff-agent@example.com", password: "staff-secret-1" });
+
+      // Later catalog syncs keep using the trusted channel without falling
+      // back to the password login.
+      await runtime.listToolMarket({});
+      expect(integrationLogins.length).toBeGreaterThanOrEqual(2);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
   test("lists and installs remote tool market products as local deployment packages", async () => {
     let loggedIn = false;
     const server = createServer((request, response) => {
       const url = new URL(request.url || "/", "http://127.0.0.1");
+      if (url.searchParams.get("action") === "integration-login") {
+        response.statusCode = 403;
+        response.setHeader("Content-Type", "application/json");
+        response.end(JSON.stringify({ error: { message: "integration login is not available" } }));
+        return;
+      }
       if (url.searchParams.get("action") === "login") {
         let body = "";
         request.on("data", (chunk) => {

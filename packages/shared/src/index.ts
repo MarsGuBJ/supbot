@@ -23,6 +23,12 @@ export type ToolMarketSource = "local" | "remote" | "hybrid";
 
 export const defaultToolMarketApiUrl = "https://i-shu.com";
 
+// Shared secret for the trusted tool-market integration login channel
+// (`action=integration-login`). The market server must run with the same value
+// in INTEGRATION_LOGIN_SECRET; override per-environment via
+// HBCLIENT_TOOL_MARKET_INTEGRATION_SECRET.
+export const defaultToolMarketIntegrationSecret = "hybot-tm-integ-2f8a4c6e9b1d47a3";
+
 // Default Servstation/Botstation endpoints. The current deployment only serves
 // plain HTTP on this host; migrate these defaults to https:// once TLS is available.
 export const defaultServstationBaseUrl = "http://101.227.67.76:8800";

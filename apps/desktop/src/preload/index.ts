@@ -225,6 +225,7 @@ const api = {
   listModelProviderModels: (id?: string, input?: Partial<ModelProviderUpdate>) =>
     ipcRenderer.invoke("modelProvider:listModels", id, input),
   updateToolMarketConfig: (input: ToolMarketConfigUpdate) => ipcRenderer.invoke("market-config:update", input),
+  integrationLoginToolMarket: () => ipcRenderer.invoke("market:integration-login"),
   updatePersonality: (input: PersonalityConfig) => ipcRenderer.invoke("personality:update", input),
   updateCapability: (id: string, input: CapabilityUpdateInput) => ipcRenderer.invoke("capability:update", id, input),
   deleteCapability: (id: string) => ipcRenderer.invoke("capability:delete", id),

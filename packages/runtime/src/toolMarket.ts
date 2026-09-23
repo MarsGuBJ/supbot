@@ -226,6 +226,8 @@ export interface ToolMarketAuth {
   accessToken?: string;
   email?: string;
   password?: string;
+  /** Shared secret for the trusted integration-login channel (skips password verification server-side). */
+  integrationSecret?: string;
 }
 
 /**
@@ -240,8 +242,31 @@ async function authenticateToolMarket(config: ToolMarketConfig, auth: ToolMarket
   if (!auth.email?.trim() || !auth.password?.trim()) {
     return undefined;
   }
+  const integrationSecret = auth.integrationSecret?.trim();
+  if (integrationSecret) {
+    try {
+      return await postMarketLogin(config, auth, "integration-login", integrationSecret);
+    } catch (error) {
+      // Markets that have not configured INTEGRATION_LOGIN_SECRET reject the
+      // trusted channel (403 from the proxy / 404 from the API); fall back to
+      // the regular password login for those deployments.
+      const status = (error as Error & { statusCode?: number }).statusCode;
+      if (status !== 403 && status !== 404) {
+        throw error;
+      }
+    }
+  }
+  return postMarketLogin(config, auth, "login");
+}
+
+async function postMarketLogin(
+  config: ToolMarketConfig,
+  auth: ToolMarketAuth,
+  action: "login" | "integration-login",
+  integrationSecret?: string,
+): Promise<string | undefined> {
   const loginUrl = new URL(normalizeMarketApiUrl(config.apiUrl));
-  loginUrl.searchParams.set("action", "login");
+  loginUrl.searchParams.set("action", action);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), toolMarketRequestTimeoutMs);
   try {
@@ -252,8 +277,9 @@ async function authenticateToolMarket(config: ToolMarketConfig, auth: ToolMarket
         Accept: "application/json",
         "Content-Type": "application/json",
         ...authHeaders(auth.accessToken),
+        ...(integrationSecret ? { "X-Integration-Secret": integrationSecret } : {}),
       },
-      body: JSON.stringify({ email: auth.email.trim(), password: auth.password }),
+      body: JSON.stringify({ email: auth.email!.trim(), password: auth.password }),
     });
     if (!response.ok) {
       throw await toolMarketHttpError(response, "login");
@@ -290,13 +316,16 @@ function readSetCookie(headers: Headers): string | undefined {
 async function toolMarketHttpError(response: Response, phase: "login" | "request"): Promise<Error> {
   const detailText = await response.text().catch(() => response.statusText);
   const detail = parseMarketErrorDetail(detailText) || response.statusText || `HTTP ${response.status}`;
+  let error: Error & { statusCode?: number };
   if (phase === "login") {
-    return new Error(`Tool market login failed: ${detail}`);
+    error = new Error(`Tool market login failed: ${detail}`);
+  } else if (response.status === 401 || response.status === 403) {
+    error = new Error(`Tool market requires a valid subscriber login: ${detail}`);
+  } else {
+    error = new Error(`Tool market request failed (${response.status}): ${detail}`);
   }
-  if (response.status === 401 || response.status === 403) {
-    return new Error(`Tool market requires a valid subscriber login: ${detail}`);
-  }
-  return new Error(`Tool market request failed (${response.status}): ${detail}`);
+  error.statusCode = response.status;
+  return error;
 }
 
 function toolMarketConnectionError(error: unknown, url: URL, phase: "login" | "request"): Error {
