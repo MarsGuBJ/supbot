@@ -6,14 +6,15 @@ the package manager or by installing a newer `.deb`.
 
 ## Initial Build
 
-Build on Linux x64 with Node.js 22 or newer. Point `HBCLIENT_BUNDLED_DATA_DIR`
-at the HyWork data directory whose installed skills should be included, then
-run:
+Build on Linux x64 with Node.js 22 or newer, then run:
 
 ```bash
 npm ci
 npm run verify:release:linux
 ```
+
+Skills are no longer bundled into the installer; the previously documented
+`HBCLIENT_BUNDLED_DATA_DIR` step is gone.
 
 `verify:release:linux` blocks on `npm run audit:production`, which audits only dependencies shipped with the application. Run `npm run audit:all` separately for every release to review development and build-tool advisories. Current Electron Builder transitive dependencies still use legacy `brace-expansion` major versions for which npm cannot apply a compatible patched version. Keep those advisories under review and remove this exception when the upstream build chain provides a compatible fix; do not use `npm audit fix --force` when it proposes a breaking downgrade or major-version substitution.
 
@@ -21,7 +22,7 @@ From Windows, keep the Windows `node_modules` directory untouched by building
 in an isolated WSL directory:
 
 ```powershell
-npm run dist:linux:wsl -- /mnt/c/Users/<user>/AppData/Roaming/HyBot/data
+npm run dist:linux:wsl
 ```
 
 On a Linux desktop, launch-smoke the packaged application before publishing:

@@ -1,6 +1,6 @@
 {
   "name": "hbclient",
-  "version": "0.4.7",
+  "version": "0.4.9",
   "description": "Local single-user desktop agent.",
   "author": "HyWork contributors",
   "desktopName": "hbclient.desktop",
@@ -24,9 +24,9 @@
     "dev": "npm run build:main && concurrently -k \"vite --host 127.0.0.1 --port 5273 --strictPort\" \"cross-env HBCLIENT_DEV_SERVER_URL=http://127.0.0.1:5273 electron .\"",
     "start": "electron .",
     "prepare:default-skills": "node ../../scripts/prepare-bundled-skills.cjs",
-    "dist:win": "npm run prepare:default-skills && electron-builder --win nsis",
-    "dist:linux": "npm run prepare:default-skills && electron-builder --linux AppImage --x64",
-    "dist:linux:deb": "npm run prepare:default-skills && electron-builder --linux deb --x64"
+    "dist:win": "electron-builder --win nsis",
+    "dist:linux": "electron-builder --linux AppImage --x64",
+    "dist:linux:deb": "electron-builder --linux deb --x64"
   },
   "dependencies": {
     "@ant-design/icons": "^5.5.1",
@@ -70,15 +70,6 @@
       "build/icon.ico",
       "build/icon.png",
       "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "build/default-data",
-        "to": "default-data",
-        "filter": [
-          "**/*"
-        ]
-      }
     ],
     "extraMetadata": {
       "main": "dist/main/index.js"
