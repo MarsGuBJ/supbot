@@ -7283,6 +7283,43 @@ describe("SupbotRuntime", () => {
     expect(runtime.snapshot().servstationA2A.config.oidc?.refreshTokenSaved).toBe(false);
   });
 
+  test("drops the stored agent instance id when the signed-in user changes", async () => {
+    const runtime = await createRuntime();
+    const baseUrl = "http://127.0.0.1:12345";
+    const issuerUrl = `${baseUrl}/issuer`;
+    const signIn = (userId: string) =>
+      runtime.updateServstationA2AOidcSession({
+        baseUrl,
+        issuerUrl,
+        clientId: "agent-client",
+        tokens: {
+          accessToken: fakeJwt({
+            tenantId: "tenant-1",
+            organizationId: "org-1",
+            departmentId: "dept-1",
+            preferred_username: userId,
+          }),
+          refreshToken: `refresh-${userId}`,
+          issuerUrl,
+          clientId: "agent-client",
+        },
+      });
+
+    await signIn("user-1");
+    await runtime.updateServstationA2AConfig({ agentInstanceId: "agent-user-1" });
+    expect(runtime.snapshot().servstationA2A.config.agentInstanceId).toBe("agent-user-1");
+
+    // 切换到另一个账号：旧实例属于前一个用户，必须一并从 config 和身份上下文中清除。
+    await signIn("user-2");
+    expect(runtime.snapshot().servstationA2A.config.agentInstanceId).toBeUndefined();
+    expect((await runtime.identityContext())?.agentInstanceId).toBeUndefined();
+
+    // 同一用户重新登录：保留当前实例 id。
+    await runtime.updateServstationA2AConfig({ agentInstanceId: "agent-user-2" });
+    await signIn("user-2");
+    expect(runtime.snapshot().servstationA2A.config.agentInstanceId).toBe("agent-user-2");
+  });
+
   test("uses saved Servstation OIDC session before opening reverse SSE", async () => {
     const runtime = await createRuntime();
     const tokenBodies: string[] = [];

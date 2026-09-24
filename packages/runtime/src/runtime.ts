@@ -1153,14 +1153,22 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       issuerUrl,
       clientId,
     };
+    const previousUserId = this.state.identityContext?.userId;
     const derivedIdentity = input.identityContext
       ? normalizeIdentityContext({ ...input.identityContext, servstationUrl: baseUrl, updatedAt: nowIso() })
       : identityContextFromAccessToken(tokens.accessToken, {
           ...(this.state.identityContext || {}),
           servstationUrl: baseUrl,
         });
+    // agentInstanceId is bound to the user that minted it; never carry it (or
+    // the identity context's copy) across an account switch.
+    const accountSwitched = Boolean(
+      derivedIdentity?.userId && previousUserId && derivedIdentity.userId !== previousUserId,
+    );
     if (derivedIdentity) {
-      this.state.identityContext = derivedIdentity;
+      this.state.identityContext = accountSwitched
+        ? { ...derivedIdentity, agentInstanceId: undefined }
+        : derivedIdentity;
     }
     this.state.servstationA2AOidcSecret = serializeServstationOidcSecret(tokens);
     this.state.servstationA2AConfig = {
@@ -1178,7 +1186,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
         refreshTokenSaved: Boolean(tokens.refreshToken),
         userId: derivedIdentity?.userId || current.oidc?.userId,
       },
-      agentInstanceId: derivedIdentity?.agentInstanceId || current.agentInstanceId,
+      agentInstanceId: accountSwitched ? undefined : derivedIdentity?.agentInstanceId || current.agentInstanceId,
       updatedAt: nowIso(),
     };
     const event = this.createRuntimeEvent("servstation_a2a", "Servstation OIDC session updated", {

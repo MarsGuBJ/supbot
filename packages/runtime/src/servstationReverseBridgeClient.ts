@@ -252,6 +252,26 @@ export class ServstationReverseBridgeClient {
     const baseUrl = this.requireBaseUrl(config, identity);
     const clientInstanceId = config.reverse?.clientInstanceId || this.host.randomId("hbclient");
     await this.safeUpdateReverseState({ enabled: true, status: "connecting", clientInstanceId });
+    try {
+      await this.connectWithAgentInstance(baseUrl, clientInstanceId, signal);
+    } catch (error) {
+      if (!isAgentInstanceAccessError(error)) {
+        throw error;
+      }
+      // The stored agent instance belongs to a different user context (e.g. the
+      // user signed in with another account). Mint a fresh instance for the
+      // current identity, persist it, and retry the connection once.
+      const freshAgentInstanceId = await this.mintAgentInstanceId(baseUrl, signal);
+      await this.host.updateConfig({ agentInstanceId: freshAgentInstanceId });
+      await this.connectWithAgentInstance(baseUrl, clientInstanceId, signal);
+    }
+  }
+
+  private async connectWithAgentInstance(
+    baseUrl: string,
+    clientInstanceId: string,
+    signal: AbortSignal,
+  ): Promise<void> {
     const agentInstanceId = await this.ensureAgentInstanceId(baseUrl, signal);
     const registration = await this.registerReverseConnection(baseUrl, agentInstanceId, clientInstanceId, signal);
     const peerId = registration.peer?.id;
@@ -270,6 +290,18 @@ export class ServstationReverseBridgeClient {
       lastError: undefined,
     });
     await this.openEventStream(baseUrl, streamUrl, agentInstanceId, peerId, signal);
+  }
+
+  private async mintAgentInstanceId(baseUrl: string, signal: AbortSignal): Promise<string> {
+    const connected = await this.request<AgentConnectResponse>(baseUrl, "/api/v1/agent/connect", {
+      method: "POST",
+      signal,
+      body: JSON.stringify({ clientId: "hbclient-reverse-a2a" }),
+    });
+    if (!connected.agentInstanceId) {
+      throw new Error("Botstation connect did not return an agent instance id.");
+    }
+    return connected.agentInstanceId;
   }
 
   private async registerReverseConnection(
@@ -723,6 +755,14 @@ function isRecoverableReverseRegistrationError(error: unknown): boolean {
     return false;
   }
   return error.message.toLowerCase().includes("invalid input syntax for type json");
+}
+
+// The server rejects requests that address an agent instance owned by another
+// user (e.g. a stale id persisted across an account switch) with this message.
+function isAgentInstanceAccessError(error: unknown): boolean {
+  return (
+    error instanceof ServstationHttpError && error.message.toLowerCase().includes("agent instance is not accessible")
+  );
 }
 
 function isRecoverableHeartbeatError(error: unknown): boolean {
