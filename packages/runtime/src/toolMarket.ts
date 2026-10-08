@@ -166,10 +166,20 @@ export interface RemoteToolMarketPage {
   total: number;
 }
 
+/**
+ * In-memory market session. The catalog endpoint requires a login round trip
+ * before every request unless the session cookie is reused; callers keep one
+ * session per runtime so pagination does not pay a full login each time.
+ */
+export interface ToolMarketSession {
+  cookie?: string;
+}
+
 export async function fetchRemoteToolMarketProducts(
   config: ToolMarketConfig,
   query: ToolMarketQuery = {},
   auth: ToolMarketAuth = {},
+  session?: ToolMarketSession,
 ): Promise<RemoteToolMarketPage> {
   if (!config.apiUrl.trim()) {
     return { products: [], total: 0 };
@@ -187,24 +197,7 @@ export async function fetchRemoteToolMarketProducts(
   if (query.pageSize && query.pageSize > 0) {
     url.searchParams.set("pageSize", String(Math.floor(query.pageSize)));
   }
-  const cookie = await authenticateToolMarket(config, auth);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), toolMarketRequestTimeoutMs);
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: "GET",
-      signal: controller.signal,
-      headers: {
-        Accept: "application/json",
-        ...authHeaders(auth.accessToken, cookie),
-      },
-    });
-  } catch (error) {
-    throw toolMarketConnectionError(error, url, "request");
-  } finally {
-    clearTimeout(timer);
-  }
+  const response = await requestMarketWithSession(config, url, auth, session);
   if (!response.ok) {
     throw await toolMarketHttpError(response, "request");
   }
@@ -220,6 +213,89 @@ export async function fetchRemoteToolMarketProducts(
       ? Math.floor(payload.total)
       : items.length;
   return { products: items.map(normalizeRemoteMarketProduct), total };
+}
+
+/**
+ * Fetch a single remote product. Catalog list responses deliberately omit the
+ * embedded local-deployment package (they would be megabytes per page), so the
+ * desktop client calls this at install time to get the full product payload.
+ */
+export async function fetchRemoteToolMarketProduct(
+  config: ToolMarketConfig,
+  productId: string,
+  auth: ToolMarketAuth = {},
+  session?: ToolMarketSession,
+): Promise<ToolMarketProduct | undefined> {
+  const id = productId.trim();
+  if (!config.apiUrl.trim() || !id) {
+    return undefined;
+  }
+  const url = new URL(normalizeMarketApiUrl(config.apiUrl.trim()));
+  url.searchParams.set("tool_id", id);
+  const response = await requestMarketWithSession(config, url, auth, session);
+  if (response.status === 404) {
+    return undefined;
+  }
+  if (!response.ok) {
+    throw await toolMarketHttpError(response, "request");
+  }
+  let payload: RemoteToolMarketProduct;
+  try {
+    payload = (await response.json()) as RemoteToolMarketProduct;
+  } catch {
+    throw new Error("Tool market request failed: product API returned invalid JSON.");
+  }
+  return normalizeRemoteMarketProduct(payload);
+}
+
+async function requestMarketWithSession(
+  config: ToolMarketConfig,
+  url: URL,
+  auth: ToolMarketAuth,
+  session?: ToolMarketSession,
+): Promise<Response> {
+  const usedCachedCookie = Boolean(session?.cookie);
+  let cookie = session?.cookie;
+  if (!cookie) {
+    cookie = await authenticateToolMarket(config, auth);
+    if (session && cookie) {
+      session.cookie = cookie;
+    }
+  }
+  let response = await requestCatalog(url, auth.accessToken, cookie);
+  if ((response.status === 401 || response.status === 403) && usedCachedCookie) {
+    // The cached session expired server-side; log in once more and retry.
+    if (session) {
+      session.cookie = undefined;
+    }
+    const freshCookie = await authenticateToolMarket(config, auth);
+    if (freshCookie) {
+      if (session) {
+        session.cookie = freshCookie;
+      }
+      response = await requestCatalog(url, auth.accessToken, freshCookie);
+    }
+  }
+  return response;
+}
+
+async function requestCatalog(url: URL, accessToken?: string, cookie?: string): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), toolMarketRequestTimeoutMs);
+  try {
+    return await fetch(url, {
+      method: "GET",
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        ...authHeaders(accessToken, cookie),
+      },
+    });
+  } catch (error) {
+    throw toolMarketConnectionError(error, url, "request");
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export interface ToolMarketAuth {

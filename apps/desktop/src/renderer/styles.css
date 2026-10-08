@@ -2760,6 +2760,10 @@ button {
   align-items: stretch;
 }
 
+.market-panel .ant-spin-nested-loading {
+  min-height: 240px;
+}
+
 .market-product {
   display: grid;
   grid-template-rows: auto minmax(72px, 1fr) auto auto;

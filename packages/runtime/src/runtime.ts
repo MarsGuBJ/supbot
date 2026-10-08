@@ -149,11 +149,13 @@ import { ToolExecutor } from "./toolExecutor";
 import { ToolRegistry } from "./toolRegistry";
 import { messagesFromEntries, TranscriptStore } from "./transcriptStore";
 import {
+  fetchRemoteToolMarketProduct,
   fetchRemoteToolMarketProducts,
   findLocalToolMarketProduct,
   findMarketProduct,
   listToolMarketCatalog,
   localToolMarketProducts,
+  type ToolMarketSession,
 } from "./toolMarket";
 import { WorktreeManager } from "./worktreeManager";
 
@@ -207,6 +209,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
   private readonly autopilotOrchestrator = new AutopilotOrchestrator({ randomId, nowIso });
   private readonly kbManager: KbManager;
   private remoteMarketCache: ToolMarketProduct[] = [];
+  private toolMarketSession: ToolMarketSession = {};
   private loaded = false;
   private readonly secretStorageKind: ModelConfig["apiKeyStorage"];
   private readonly marketSecretStorageKind: ToolMarketConfig["tokenStorage"];
@@ -1939,6 +1942,8 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     next.passwordSaved = Boolean(this.state.toolMarketPasswordSecret);
     next.passwordStorage = next.passwordSaved ? this.marketSecretStorageKind : undefined;
     this.state.toolMarketConfig = next;
+    // Credentials or endpoint may have changed; drop any cached market session.
+    this.toolMarketSession = {};
     await this.persistAndBroadcast();
     return redactToolMarketConfig(
       this.state.toolMarketConfig,
@@ -1972,7 +1977,8 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     };
     // Verify the login (and auto-register the account server-side) before
     // persisting anything so a failure leaves no half-saved credentials.
-    await fetchRemoteToolMarketProducts({ ...current, apiUrl, source }, { pageSize: 1 }, auth);
+    this.toolMarketSession = {};
+    await fetchRemoteToolMarketProducts({ ...current, apiUrl, source }, { pageSize: 1 }, auth, this.toolMarketSession);
     this.state.toolMarketConfig = {
       ...current,
       source,
@@ -2192,6 +2198,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
           this.state.toolMarketConfig,
           { query: query.query, type: query.type, page, pageSize },
           this.toolMarketAuth(),
+          this.toolMarketSession,
         );
         remote = remotePage.products;
         total = remotePage.total;
@@ -2206,7 +2213,10 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
           lastSyncedAt: nowIso(),
           lastSyncError: undefined,
         };
-        await this.persistAndBroadcast();
+        // Page turns hit this path every time; a blocking state.json write +
+        // rename on each click adds avoidable latency (Windows AV/indexer can
+        // stall the rename), so persist in the background instead.
+        this.schedulePersistAndBroadcast();
       } catch (error) {
         if (this.state.toolMarketConfig.source === "remote") {
           throw error;
@@ -2217,7 +2227,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
           ...this.state.toolMarketConfig,
           lastSyncError: error instanceof Error ? error.message : String(error),
         };
-        await this.persistAndBroadcast();
+        this.schedulePersistAndBroadcast();
       }
     }
     const knownIds = new Set([...local, ...remote].map((product) => product.id));
@@ -2237,12 +2247,30 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
 
   async installToolMarketProduct(productId: string): Promise<ToolMarketCatalogItem> {
     this.assertLoaded();
-    const product = await this.resolveMarketProduct(productId);
+    let product = await this.resolveMarketProduct(productId);
     if (!product) {
       throw new Error(`Tool market product not found: ${productId}`);
     }
     if (!product.free && !product.purchased) {
       throw new Error(`Tool market product must be purchased before local installation: ${product.name}`);
+    }
+    if (
+      product.origin === "remote" &&
+      !product.localDeployment?.files?.length &&
+      this.state.toolMarketConfig.apiUrl.trim()
+    ) {
+      // Catalog pages omit the embedded deployment package to stay small;
+      // pull the single-product payload (with files) before installing.
+      const detailed = await fetchRemoteToolMarketProduct(
+        this.state.toolMarketConfig,
+        product.id,
+        this.toolMarketAuth(),
+        this.toolMarketSession,
+      ).catch(() => undefined);
+      if (detailed) {
+        product = detailed;
+        this.remoteMarketCache = this.remoteMarketCache.map((item) => (item.id === detailed.id ? detailed : item));
+      }
     }
     const deployment = product.localDeployment || defaultLocalDeployment(product);
     const installPath = await this.installToolMarketPackage(product, deployment);
@@ -5145,7 +5173,12 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     if (this.state.toolMarketConfig.source === "local" || !this.state.toolMarketConfig.apiUrl.trim()) {
       return undefined;
     }
-    const remote = await fetchRemoteToolMarketProducts(this.state.toolMarketConfig, {}, this.toolMarketAuth());
+    const remote = await fetchRemoteToolMarketProducts(
+      this.state.toolMarketConfig,
+      {},
+      this.toolMarketAuth(),
+      this.toolMarketSession,
+    );
     return findMarketProduct(remote.products, productId);
   }
 

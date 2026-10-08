@@ -2220,10 +2220,62 @@ describe("SupbotRuntime", () => {
       expect(integrationLogins[0].secret).toBe(defaultToolMarketIntegrationSecret);
       expect(integrationLogins[0].body).toEqual({ email: "staff-agent@example.com", password: "staff-secret-1" });
 
-      // Later catalog syncs keep using the trusted channel without falling
-      // back to the password login.
+      // Later catalog syncs reuse the session cookie cached during the probe
+      // login instead of paying another login round trip; the server handler
+      // above asserts the session cookie is present on every catalog request.
       await runtime.listToolMarket({});
-      expect(integrationLogins.length).toBeGreaterThanOrEqual(2);
+      expect(integrationLogins).toHaveLength(1);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  test("re-logs in and retries once when the cached market session is rejected", async () => {
+    let integrationLogins = 0;
+    let catalogRequests = 0;
+    const server = createServer((request, response) => {
+      const url = new URL(request.url || "/", "http://127.0.0.1");
+      response.setHeader("Content-Type", "application/json");
+      if (url.searchParams.get("action") === "integration-login") {
+        response.statusCode = 403;
+        response.end(JSON.stringify({ error: { message: "integration login is not available" } }));
+        return;
+      }
+      if (url.searchParams.get("action") === "login") {
+        integrationLogins += 1;
+        response.setHeader("Set-Cookie", `toolsmarket_session=session-${integrationLogins}; Path=/; HttpOnly`);
+        response.end(JSON.stringify({ authenticated: true }));
+        return;
+      }
+      catalogRequests += 1;
+      if (catalogRequests === 2) {
+        // Simulate the first cached session expiring server-side.
+        expect(request.headers.cookie).toContain("toolsmarket_session=session-1");
+        response.statusCode = 401;
+        response.end(JSON.stringify({ error: { message: "session expired" } }));
+        return;
+      }
+      if (catalogRequests > 2) {
+        expect(request.headers.cookie).toContain("toolsmarket_session=session-2");
+      }
+      response.end(JSON.stringify({ items: [], total: 0 }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const runtime = await createRuntime();
+      const address = server.address() as AddressInfo;
+      await runtime.updateToolMarketConfig({
+        source: "remote",
+        apiUrl: `http://127.0.0.1:${address.port}`,
+        accountEmail: "subscriber@example.com",
+        password: "market123",
+      });
+
+      await runtime.listToolMarket({});
+      await runtime.listToolMarket({});
+      await runtime.listToolMarket({});
+      expect(integrationLogins).toBe(2);
+      expect(catalogRequests).toBe(4);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
@@ -2344,6 +2396,79 @@ describe("SupbotRuntime", () => {
       expect(restarted.snapshot().mcpServers.some((item) => item.id === "calendar-mcp")).toBe(false);
       await expect(readFile(join(installPath, "supbot-local-tool.json"), "utf8")).rejects.toThrow();
       await expect(readFile(join(receiptPath, "supbot-market-install.json"), "utf8")).rejects.toThrow();
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  test("fetches the product detail payload at install time when the catalog omits embedded files", async () => {
+    const detailRequests: string[] = [];
+    const server = createServer((request, response) => {
+      const url = new URL(request.url || "/", "http://127.0.0.1");
+      response.setHeader("Content-Type", "application/json");
+      if (url.searchParams.get("action") === "integration-login" || url.searchParams.get("action") === "login") {
+        response.setHeader("Set-Cookie", "toolsmarket_session=session-1; Path=/; HttpOnly");
+        response.end(JSON.stringify({ authenticated: true }));
+        return;
+      }
+      const toolId = url.searchParams.get("tool_id");
+      if (toolId) {
+        // Detail endpoint: full payload with embedded deployment files.
+        detailRequests.push(toolId);
+        response.end(
+          JSON.stringify({
+            id: "notes-skill",
+            name: "Notes Skill",
+            type: "skill",
+            provider_name: "ToolsMarket",
+            billing_mode: "free",
+            purchased: true,
+            local_deployment: {
+              kind: "skill",
+              files: [{ path: "SKILL.md", content: "# Notes Skill\n", encoding: "utf8" }],
+            },
+          }),
+        );
+        return;
+      }
+      // Catalog list: no embedded deployment package.
+      response.end(
+        JSON.stringify({
+          items: [
+            {
+              id: "notes-skill",
+              name: "Notes Skill",
+              type: "skill",
+              provider_name: "ToolsMarket",
+              description: "Notes automation.",
+              billing_mode: "free",
+              storage_mode: "hosted_package",
+            },
+          ],
+          total: 1,
+        }),
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const runtime = await createRuntime();
+      const address = server.address() as AddressInfo;
+      await runtime.updateToolMarketConfig({
+        source: "remote",
+        apiUrl: `http://127.0.0.1:${address.port}`,
+        accountEmail: "subscriber@example.com",
+        password: "market123",
+      });
+
+      const products = await runtime.listToolMarket({});
+      expect(products.items).toHaveLength(1);
+      expect(products.items[0].localDeployment?.files).toBeUndefined();
+
+      const installed = await runtime.installToolMarketProduct("notes-skill");
+      expect(installed.installed).toBe(true);
+      expect(detailRequests).toEqual(["notes-skill"]);
+      const dataDir = tempDirs[tempDirs.length - 1];
+      expect(await readFile(join(dataDir, "skills", "notes-skill", "SKILL.md"), "utf8")).toBe("# Notes Skill\n");
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }

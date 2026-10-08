@@ -6,7 +6,21 @@ import {
   ReloadOutlined,
   ToolOutlined,
 } from "@ant-design/icons";
-import { Alert, Button, Empty, Form, Input, Modal, Pagination, Select, Space, Tag, Typography, message } from "antd";
+import {
+  Alert,
+  Button,
+  Empty,
+  Form,
+  Input,
+  Modal,
+  Pagination,
+  Select,
+  Space,
+  Spin,
+  Tag,
+  Typography,
+  message,
+} from "antd";
 import type { RuntimeSnapshot, ToolMarketCatalogItem, ToolMarketProductType } from "@supbot/shared";
 import { defaultToolMarketApiUrl, formatDateTime } from "@supbot/shared";
 
@@ -233,15 +247,19 @@ export function MarketWorkspace({
           description={snapshot.toolMarketConfig.lastSyncError}
         />
       ) : null}
-      {pinned.length > 0 ? (
-        <>
-          <div className="market-section-title">{t("Local and installed")}</div>
-          <div className="market-grid">{pinned.map(renderProduct)}</div>
-        </>
-      ) : null}
-      {remoteEnabled && pinned.length > 0 ? <div className="market-section-title is-remote">{t("Remote")}</div> : null}
-      <div className="market-grid">{products.map(renderProduct)}</div>
-      {pagination}
+      <Spin spinning={loading} size="large">
+        {pinned.length > 0 ? (
+          <>
+            <div className="market-section-title">{t("Local and installed")}</div>
+            <div className="market-grid">{pinned.map(renderProduct)}</div>
+          </>
+        ) : null}
+        {remoteEnabled && pinned.length > 0 ? (
+          <div className="market-section-title is-remote">{t("Remote")}</div>
+        ) : null}
+        <div className="market-grid">{products.map(renderProduct)}</div>
+        {pagination}
+      </Spin>
       {!loading && pinned.length === 0 && products.length === 0 ? (
         <Empty className="market-empty" description={t("No matching tool products")} />
       ) : null}
