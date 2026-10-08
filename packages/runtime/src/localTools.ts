@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import type { Dirent } from "node:fs";
+import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { GeneratedFile, ModelUsage } from "@supbot/shared";
@@ -115,13 +116,37 @@ export async function runShellCommand(
   timeoutMs = 60_000,
   cwd?: string,
 ): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+  const isWindows = process.platform === "win32";
+  // A deleted/inaccessible cwd makes Windows spawn fail with EPERM/ENOENT, so
+  // only pass directories that still exist.
+  const workingDir = cwd && existsSync(cwd) ? cwd : undefined;
+  const shell = isWindows
+    ? { file: "powershell.exe", args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command] }
+    : { file: "/bin/sh", args: ["-lc", command] };
+  try {
+    return await spawnAndCollect(shell.file, shell.args, workingDir, signal, timeoutMs);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (!isWindows || (code !== "EPERM" && code !== "ENOENT")) {
+      throw error;
+    }
+    // Windows policy software (AppLocker/WDAC/AV) can deny spawning PowerShell
+    // from a desktop app with EPERM even though the user approved the action;
+    // fall back to cmd.exe so an approved command still runs.
+    const comspec = process.env.ComSpec?.trim() || "cmd.exe";
+    return spawnAndCollect(comspec, ["/d", "/s", "/c", command], workingDir, signal, timeoutMs);
+  }
+}
+
+function spawnAndCollect(
+  file: string,
+  args: string[],
+  cwd: string | undefined,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const isWindows = process.platform === "win32";
-    const child = spawn(
-      isWindows ? "powershell.exe" : "/bin/sh",
-      isWindows ? ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command] : ["-lc", command],
-      { windowsHide: true, cwd },
-    );
+    const child = spawn(file, args, { windowsHide: true, cwd });
     let stdout = "";
     let stderr = "";
     const timeout = setTimeout(() => {
