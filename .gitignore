@@ -2,6 +2,7 @@ node_modules/
 dist/
 release/
 *.tgz
+!vendor/xlsx-0.20.3.tgz
 *.log
 npm-debug.log*
 yarn-debug.log*

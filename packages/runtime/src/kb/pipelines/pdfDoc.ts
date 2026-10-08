@@ -1,12 +1,12 @@
 /**
- * pdfjs-dist 的 Node 入口封装（legacy build，CJS，无需配置 worker：
- * Node 环境下 pdfjs 自动走 fake worker，同目录加载 pdf.worker.js）。
+ * pdfjs-dist 的 Node 入口封装（legacy build，无需配置 worker：
+ * Node 环境下 pdfjs 自动走 fake worker，同目录加载 pdf.worker.mjs）。
  *
  * 对应 k-pipeline 中 PyMuPDF（fitz）的文本层检测能力。
  */
 
 import { readFileSync } from "node:fs";
-import { getDocument, type PDFDocumentProxy, type PDFPageProxy } from "pdfjs-dist/legacy/build/pdf.js";
+import { getDocument, type PDFDocumentProxy, type PDFPageProxy } from "pdfjs-dist/legacy/build/pdf.mjs";
 
 /** 每页可提取字符数低于该值视为无文本层（扫描页），与 Python 版 _PDF_MIN_CHARS_PER_PAGE 一致。 */
 export const PDF_MIN_CHARS_PER_PAGE = 50;

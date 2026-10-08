@@ -13,6 +13,10 @@ npm run verify:release
 
 `verify:release` audits production dependencies against the official registry, builds and tests the workspace, runs the Electron smoke checks, and creates the Windows NSIS installer. The production audit is the blocking release gate because development-only dependencies are not packaged with the application.
 
+The audit gate (`scripts/audit-production.cjs`) allows documented exceptions for advisories with no upstream fix that are unreachable in this product. Current exceptions:
+
+- `GHSA-86w9-cpqp-85rv` (node-forge, all versions ≤ 1.4.0, recorded 2026-10-08): RSA PKCS#1 v1.5 signature verification forgery. The only importer is `@anthropic-ai/sandbox-runtime`, which uses node-forge solely to generate MITM CA keypairs and certificates, never to verify third-party signatures; the sandbox feature is Linux/macOS-only and is not loaded by the Windows desktop release. Remove this exception as soon as node-forge or sandbox-runtime ships a fix.
+
 Run `npm run audit:all` separately for every release to review development and build-tool advisories. Current Electron Builder transitive dependencies still use legacy `brace-expansion` major versions for which npm cannot apply a compatible patched version. Keep those advisories under review and remove this exception as soon as the upstream build chain provides a compatible fix; never use `npm audit fix --force` when it proposes a breaking downgrade or major-version substitution.
 
 Before publishing a build:

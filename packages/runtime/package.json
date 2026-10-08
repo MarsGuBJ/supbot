@@ -13,9 +13,9 @@
     "@supbot/shared": "file:../shared",
     "jschardet": "^3.1.4",
     "mammoth": "^1.12.2",
-    "pdfjs-dist": "^3.11.174",
+    "pdfjs-dist": "^4.10.38",
     "unzipper": "^0.12.3",
-    "xlsx": "^0.18.5"
+    "xlsx": "file:../../vendor/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "vitest": "^4.1.9"

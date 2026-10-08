@@ -1,6 +1,6 @@
 {
   "name": "hbclient",
-  "version": "0.4.10",
+  "version": "0.5.0",
   "description": "Local single-user desktop agent.",
   "author": "HyWork contributors",
   "desktopName": "hbclient.desktop",
@@ -43,7 +43,7 @@
     "react-markdown": "^10.1.0",
     "react-virtuoso": "^4.18.11",
     "remark-gfm": "^4.0.1",
-    "xlsx": "^0.18.5"
+    "xlsx": "file:../../vendor/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@types/react": "^19.2.17",

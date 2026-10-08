@@ -220,7 +220,7 @@ async function main() {
         composer: rectFor(".input-bar"),
         leftScroll: rectFor(".sidebar-history-list"),
         messageStream: rectFor(".message-stream"),
-        rightScroll: rectFor(".activity-list")
+        rightScroll: rectFor(".activity-panel")
       };
     })()`,
   );
@@ -482,82 +482,18 @@ async function main() {
   if (rightPanelTasks?.hasTaskTab) {
     throw new Error(`Right panel should not render the tasks tab: ${JSON.stringify(rightPanelTasks)}`);
   }
-  const autopilotClick = await evaluate(
+  // Autopilot 侧边栏菜单自 e06c656 起有意隐藏（视图保留但无 UI 入口），
+  // 冒烟断言菜单项不存在，防止它被意外加回。
+  const autopilotMenuCheck = await evaluate(
     page.webSocketDebuggerUrl,
     `(() => {
       const autopilotNav = [...document.querySelectorAll(".sidebar-menu .menu-item")]
         .find((el) => el.textContent?.includes("Autopilot") || el.textContent?.includes("自动驾驶"));
-      autopilotNav?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
-      return { clickedAutopilot: Boolean(autopilotNav), text: autopilotNav?.textContent || "" };
+      return { foundAutopilotNav: Boolean(autopilotNav), text: autopilotNav?.textContent || "" };
     })()`,
   );
-  await sleep(300);
-  const autopilotUi = await evaluate(
-    page.webSocketDebuggerUrl,
-    `(() => {
-      const workbench = document.querySelector(".autopilot-workbench");
-      const text = workbench?.textContent || "";
-      return {
-        hasWorkspace: Boolean(document.querySelector(".autodrive-workspace")),
-        hasPanel: Boolean(workbench),
-        hasIcon: Boolean(workbench?.querySelector(".anticon-thunderbolt")),
-        hasNewProjectButton: Boolean(workbench?.querySelector(".autopilot-new-project-button")),
-        hasInlineProjectForm: Boolean(workbench?.querySelector(".autopilot-folder-picker input[readonly]")),
-        hasProjectFolderIpc: typeof window.supbot?.pickProjectFolder === "function",
-        hasRunMonitor: Boolean(workbench?.querySelector(".autopilot-run-panel")),
-        hasRunMonitorCard: Boolean(workbench?.querySelector(".autopilot-run-monitor-card")),
-        hasRunSelect: Boolean(workbench?.querySelector(".autopilot-run-monitor-card .autopilot-run-select .ant-select-selector")),
-        hasEmptyRunInfo: text.includes("Register a project and start a data run."),
-        hasDataSourceControls: Boolean(workbench?.querySelector(".autopilot-source-row, .autopilot-source-kind, .autopilot-source-value, [name='sourceKind'], [name='sourceValue']")),
-        hasProjectText: text.includes("Project data runs") || text.includes("DATA AUTOPILOT") || text.includes("项目数据任务"),
-        hasStartRunText: text.includes("Start run") || text.includes("启动运行"),
-        hasSurfaceText: text.includes("Autopilot surface") || text.includes("自动驾驶面板"),
-        hasAutomationLoopText: text.includes("automation loop") || text.includes("自动化循环")
-      };
-    })()`,
-  );
-  const projectModalUi = await evaluate(
-    page.webSocketDebuggerUrl,
-    `(() => {
-      document.querySelector(".autopilot-new-project-button")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
-      return new Promise((resolve) => {
-        window.setTimeout(() => {
-          const result = {
-            hasModal: Boolean(document.querySelector(".ant-modal")),
-            hasFolderPicker: Boolean(document.querySelector(".ant-modal .autopilot-folder-picker input[readonly]")),
-            hasFolderButton: Boolean(document.querySelector(".ant-modal .autopilot-folder-picker .anticon-folder-open")),
-            hasRegisterText: document.body.innerText.includes("Register project") || document.body.innerText.includes("注册项目")
-          };
-          document.querySelector(".ant-modal-close")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
-          resolve(result);
-        }, 150);
-      });
-    })()`,
-  );
-  console.log(JSON.stringify({ autopilotClick, autopilotUi, projectModalUi }, null, 2));
-  if (
-    !autopilotClick?.clickedAutopilot ||
-    !autopilotUi?.hasWorkspace ||
-    !autopilotUi?.hasPanel ||
-    !autopilotUi.hasIcon ||
-    !autopilotUi.hasNewProjectButton ||
-    autopilotUi.hasInlineProjectForm ||
-    !autopilotUi.hasProjectFolderIpc ||
-    !autopilotUi.hasRunMonitor ||
-    !autopilotUi.hasRunMonitorCard ||
-    !autopilotUi.hasRunSelect ||
-    autopilotUi.hasEmptyRunInfo ||
-    autopilotUi.hasDataSourceControls ||
-    !autopilotUi.hasProjectText ||
-    !autopilotUi.hasStartRunText ||
-    !projectModalUi?.hasModal ||
-    !projectModalUi.hasFolderPicker ||
-    !projectModalUi.hasFolderButton ||
-    !projectModalUi.hasRegisterText
-  ) {
-    throw new Error(
-      `Autopilot panel did not render correctly: ${JSON.stringify({ autopilotClick, autopilotUi, projectModalUi })}`,
-    );
+  if (autopilotMenuCheck?.foundAutopilotNav) {
+    throw new Error(`Autopilot menu should stay hidden: ${JSON.stringify(autopilotMenuCheck)}`);
   }
   const memoryClick = await evaluate(
     page.webSocketDebuggerUrl,
@@ -1050,7 +986,7 @@ async function main() {
         composer: rectFor(".input-bar"),
         leftScroll: rectFor(".sidebar-history-list"),
         messageStream: rectFor(".message-stream"),
-        rightScroll: rectFor(".activity-list")
+        rightScroll: rectFor(".activity-panel")
       };
     })()`,
   );
@@ -1164,7 +1100,7 @@ async function main() {
         return {
           hasWorkspace: Boolean(document.querySelector(".server-agent-workspace")),
           names: links.map((link) => link.textContent || ""),
-          hasDownloadIcon: links.every((link) => Boolean(link.querySelector(".anticon-download"))),
+          hasDownloadIcon: links.every((link) => /Download|下载/.test(link.getAttribute("aria-label") || "")),
           hasDownloadIpc: typeof window.supbot.fetchServstationJobFile === "function",
           downloadedFileName: download.fileName,
           downloadedContent: atob(download.contentBase64)

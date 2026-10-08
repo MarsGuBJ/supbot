@@ -14,7 +14,7 @@
 
 import { deflateSync } from "node:zlib";
 import { mkdirSync } from "node:fs";
-import { ImageKind, OPS, type PDFPageProxy } from "pdfjs-dist/legacy/build/pdf.js";
+import { ImageKind, OPS, type PDFPageProxy } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { baseMeta, type MarkdownBundle, type Pipeline } from "./base";
 import { openPdf, pageTextContent, PDF_MIN_CHARS_PER_PAGE } from "./pdfDoc";
 import { checkBundle } from "./quality";
