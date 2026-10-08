@@ -75,6 +75,7 @@ const api = {
   answerUserQuestion: (id: string, answers: UserQuestionAnswer[]) => ipcRenderer.invoke("question:answer", id, answers),
   setPermissionMode: (mode: PermissionMode) => ipcRenderer.invoke("permission:setMode", mode),
   setMemoryEnabled: (enabled: boolean) => ipcRenderer.invoke("memory:setEnabled", enabled),
+  setRequireLoginOnStart: (enabled: boolean) => ipcRenderer.invoke("settings:setRequireLoginOnStart", enabled),
   addPermissionRule: (rule: Omit<PermissionRule, "id" | "createdAt" | "scope"> & { id?: string }) =>
     ipcRenderer.invoke("permission:addRule", rule),
   removePermissionRule: (id: string) => ipcRenderer.invoke("permission:removeRule", id),
@@ -325,6 +326,11 @@ const api = {
     const wrapped = (_event: unknown, payload: SupbotEvent) => listener(payload);
     ipcRenderer.on("supbot:event", wrapped);
     return () => ipcRenderer.off("supbot:event", wrapped);
+  },
+  onAppReopened: (listener: () => void) => {
+    const wrapped = () => listener();
+    ipcRenderer.on("supbot:appReopened", wrapped);
+    return () => ipcRenderer.off("supbot:appReopened", wrapped);
   },
 };
 

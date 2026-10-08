@@ -978,6 +978,8 @@ function recordInitializeResult(connection: McpConnection, result: unknown): voi
   }
 }
 
+const MCP_TOOL_RESULT_MAX_CHARS = 64_000;
+
 function formatMcpToolResult(result: unknown): {
   text: string;
   parts: ToolCallRecord["outputParts"];
@@ -995,9 +997,9 @@ function formatMcpToolResult(result: unknown): {
       .join("\n");
     if (text.trim()) {
       const formattedText = payload.isError ? `Error: ${text}` : text;
-      const truncated = formattedText.length > 8_000;
+      const truncated = formattedText.length > MCP_TOOL_RESULT_MAX_CHARS;
       return {
-        text: truncated ? `${formattedText.slice(0, 8_000)}\n[truncated]` : formattedText,
+        text: truncated ? `${formattedText.slice(0, MCP_TOOL_RESULT_MAX_CHARS)}\n[truncated]` : formattedText,
         parts,
         truncated,
       };

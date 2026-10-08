@@ -968,6 +968,7 @@ function showMainWindow(): void {
   if (mainWindow) {
     mainWindow.show();
     mainWindow.focus();
+    mainWindow.webContents.send("supbot:appReopened");
   } else {
     void createWindow();
   }
@@ -1156,6 +1157,12 @@ function registerIpc(): void {
       throw new Error("memory enabled flag must be a boolean.");
     }
     return getRuntime().setMemoryEnabled(enabled);
+  });
+  ipcMain.handle("settings:setRequireLoginOnStart", (_event, enabled: unknown) => {
+    if (typeof enabled !== "boolean") {
+      throw new Error("require login flag must be a boolean.");
+    }
+    return getRuntime().setRequireLoginOnStart(enabled);
   });
   ipcMain.handle(
     "permission:addRule",

@@ -1952,6 +1952,7 @@ export interface RuntimeSnapshot {
   compactBoundaries: CompactBoundary[];
   memory: MemorySnapshot;
   memoryEnabled: boolean;
+  requireLoginOnStart: boolean;
   permissionMode: PermissionMode;
   permissionRules: PermissionRule[];
   mcpServers: McpServerSnapshot[];

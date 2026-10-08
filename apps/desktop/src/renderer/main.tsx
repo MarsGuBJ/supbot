@@ -39,6 +39,7 @@ import {
   Modal,
   Popconfirm,
   Popover,
+  Progress,
   Select,
   Space,
   Switch,
@@ -242,6 +243,7 @@ function App() {
   const [loginOverlayOpen, setLoginOverlayOpen] = useState(false);
   const [userDataPath, setUserDataPath] = useState("");
   const [updateState, setUpdateState] = useState<HBClientUpdateState>({ status: "idle", currentVersion: "" });
+  const [updateDialogHidden, setUpdateDialogHidden] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
   const [modalApi, modalContextHolder] = Modal.useModal();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -371,6 +373,36 @@ function App() {
   const refresh = useCallback(async () => {
     applySnapshot(await window.supbot.snapshot(activeConversationIdRef.current || undefined));
   }, [applySnapshot]);
+
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
+
+  const enforceLoginGate = useCallback(async () => {
+    const current = snapshotRef.current;
+    if (!current?.requireLoginOnStart) {
+      return;
+    }
+    if (hasUsableServstationOidcSession(current.servstationA2A.config)) {
+      try {
+        await window.supbot.logoutServstationOidc();
+      } catch {
+        // The gate still blocks usage until a fresh interactive login succeeds.
+      }
+      await refresh();
+    }
+    setLoginOverlayOpen(true);
+  }, [refresh]);
+
+  const startupLoginGateRef = useRef(false);
+  useEffect(() => {
+    if (!snapshot || startupLoginGateRef.current) {
+      return;
+    }
+    startupLoginGateRef.current = true;
+    void enforceLoginGate();
+  }, [snapshot, enforceLoginGate]);
+
+  useEffect(() => window.supbot.onAppReopened(() => void enforceLoginGate()), [enforceLoginGate]);
 
   const startHBClientUpdate = useCallback(async () => {
     try {
@@ -521,6 +553,13 @@ function App() {
       unsubscribe();
     };
   }, []);
+
+  // Re-show the download progress dialog whenever a new download starts.
+  useEffect(() => {
+    if (updateState.status !== "downloading") {
+      setUpdateDialogHidden(false);
+    }
+  }, [updateState.status]);
 
   useEffect(() => {
     if (updateState.status !== "available") {
@@ -1109,11 +1148,49 @@ function App() {
         onCancel={() => setTranscriptOpen(false)}
         t={t}
       />
-      {loginOverlayOpen && !accountLoggedIn ? (
+      <Modal
+        open={
+          (updateState.status === "downloading" && !updateDialogHidden) ||
+          updateState.status === "downloaded" ||
+          updateState.status === "installing"
+        }
+        title={updateState.status === "downloading" ? t("Downloading HyWork update") : t("Update ready to install")}
+        width={420}
+        centered
+        footer={null}
+        closable={false}
+        maskClosable={false}
+        keyboard={false}
+      >
+        <div className="update-download-dialog">
+          <Progress
+            percent={Math.round(updateState.progress?.percent ?? (updateState.status === "downloading" ? 0 : 100))}
+            status={updateState.status === "downloading" ? "active" : "success"}
+          />
+          {updateState.status === "downloading" ? (
+            <>
+              <div className="update-download-meta">
+                {updateState.progress && updateState.progress.total > 0
+                  ? `${formatFileSize(updateState.progress.transferred)} / ${formatFileSize(updateState.progress.total)} · ${formatFileSize(updateState.progress.bytesPerSecond)}/s`
+                  : t("Preparing download…")}
+              </div>
+              <div className="update-download-actions">
+                <Button onClick={() => setUpdateDialogHidden(true)}>{t("Download in background")}</Button>
+              </div>
+            </>
+          ) : (
+            <div className="update-download-meta">
+              {t("Download complete. The app will restart to install the update.")}
+            </div>
+          )}
+        </div>
+      </Modal>
+      {snapshot && (loginOverlayOpen || snapshot.requireLoginOnStart) && !accountLoggedIn ? (
         <EnterpriseLoginOverlay
           snapshot={snapshot}
           refreshRuntime={refresh}
           onBack={() => setLoginOverlayOpen(false)}
+          dismissable={!snapshot.requireLoginOnStart}
           t={t}
         />
       ) : null}

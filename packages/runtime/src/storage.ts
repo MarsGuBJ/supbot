@@ -80,6 +80,7 @@ export interface RuntimeState {
   compactBoundaries: CompactBoundary[];
   memory: MemorySnapshot;
   memoryEnabled: boolean;
+  requireLoginOnStart: boolean;
   permissionMode: PermissionMode;
   permissionRules: PermissionRule[];
   mcpServers: McpServerConfig[];
@@ -401,6 +402,7 @@ export function createInitialState(): RuntimeState {
     compactBoundaries: [],
     memory: { pages: [], facts: [], chunks: [], links: [], candidates: [], recallHistory: [], recallFeedback: [] },
     memoryEnabled: true,
+    requireLoginOnStart: false,
     permissionMode: "default",
     permissionRules: [],
     mcpServers: [],
@@ -597,6 +599,7 @@ function normalizeState(input: LegacyRuntimeStateInput): RuntimeState {
     compactBoundaries: Array.isArray(input.compactBoundaries) ? input.compactBoundaries : [],
     memory: normalizeMemory(input.memory),
     memoryEnabled: typeof input.memoryEnabled === "boolean" ? input.memoryEnabled : true,
+    requireLoginOnStart: typeof input.requireLoginOnStart === "boolean" ? input.requireLoginOnStart : false,
     permissionMode: normalizePermissionMode(input.permissionMode),
     permissionRules: Array.isArray(input.permissionRules) ? input.permissionRules : [],
     mcpServers: Array.isArray(input.mcpServers)

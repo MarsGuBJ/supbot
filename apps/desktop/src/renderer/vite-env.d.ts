@@ -148,6 +148,7 @@ declare global {
       answerUserQuestion(id: string, answers: UserQuestionAnswer[]): Promise<void>;
       setPermissionMode(mode: PermissionMode): Promise<PermissionMode>;
       setMemoryEnabled(enabled: boolean): Promise<boolean>;
+      setRequireLoginOnStart(enabled: boolean): Promise<boolean>;
       addPermissionRule(
         rule: Omit<PermissionRule, "id" | "createdAt" | "scope"> & { id?: string },
       ): Promise<PermissionRule>;
@@ -337,6 +338,7 @@ declare global {
       saveBase64File(suggestedName: string, contentBase64: string): Promise<boolean>;
       userDataPath(): Promise<string>;
       onEvent(listener: (event: SupbotEvent) => void): () => void;
+      onAppReopened(listener: () => void): () => void;
     };
   }
 }

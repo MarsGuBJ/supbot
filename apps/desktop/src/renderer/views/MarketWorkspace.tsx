@@ -40,7 +40,9 @@ export function MarketWorkspace({
   const remoteEnabled = marketConfig.source !== "local";
   const loggedIn = marketConfig.passwordSaved || marketConfig.accessTokenSaved;
   const staffAgentConfig = snapshot.servstationA2A.config;
-  const staffAgentReady = Boolean(staffAgentConfig.staffAgentAccount?.trim() && staffAgentConfig.staffAgentPasswordSaved);
+  const staffAgentReady = Boolean(
+    staffAgentConfig.staffAgentAccount?.trim() && staffAgentConfig.staffAgentPasswordSaved,
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -125,6 +127,17 @@ export function MarketWorkspace({
       setActingId("");
     }
   };
+
+  const pagination =
+    total > marketPageSize ? (
+      <Pagination
+        current={page}
+        pageSize={marketPageSize}
+        total={total}
+        showSizeChanger={false}
+        onChange={(nextPage) => setPage(nextPage)}
+      />
+    ) : null;
 
   return (
     <section className="market-panel">
@@ -222,21 +235,13 @@ export function MarketWorkspace({
       ) : null}
       {pinned.length > 0 ? (
         <>
-          <div className="eyebrow">{t("Local and installed")}</div>
+          <div className="market-section-title">{t("Local and installed")}</div>
           <div className="market-grid">{pinned.map(renderProduct)}</div>
         </>
       ) : null}
-      {remoteEnabled && pinned.length > 0 ? <div className="eyebrow">{t("Remote")}</div> : null}
+      {remoteEnabled && pinned.length > 0 ? <div className="market-section-title is-remote">{t("Remote")}</div> : null}
       <div className="market-grid">{products.map(renderProduct)}</div>
-      {total > marketPageSize ? (
-        <Pagination
-          current={page}
-          pageSize={marketPageSize}
-          total={total}
-          showSizeChanger={false}
-          onChange={(nextPage) => setPage(nextPage)}
-        />
-      ) : null}
+      {pagination}
       {!loading && pinned.length === 0 && products.length === 0 ? (
         <Empty className="market-empty" description={t("No matching tool products")} />
       ) : null}

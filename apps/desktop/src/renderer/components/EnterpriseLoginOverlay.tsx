@@ -17,11 +17,13 @@ export function EnterpriseLoginOverlay({
   snapshot,
   refreshRuntime,
   onBack,
+  dismissable = true,
   t,
 }: {
   snapshot: RuntimeSnapshot;
   refreshRuntime: () => Promise<void> | void;
   onBack: () => void;
+  dismissable?: boolean;
   t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
   const [username, setUsername] = useState(() => {
@@ -90,9 +92,11 @@ export function EnterpriseLoginOverlay({
 
   return (
     <div className="login-overlay" role="dialog" aria-label={t("Enterprise workspace sign in")}>
-      <button className="login-close-btn" type="button" onClick={onBack} aria-label={t("Back to personal space")}>
-        <CloseOutlined />
-      </button>
+      {dismissable ? (
+        <button className="login-close-btn" type="button" onClick={onBack} aria-label={t("Back to personal space")}>
+          <CloseOutlined />
+        </button>
+      ) : null}
       <div className="login-card">
         <div className="login-logo">
           <svg viewBox="0 0 160 36" width="140" height="32">

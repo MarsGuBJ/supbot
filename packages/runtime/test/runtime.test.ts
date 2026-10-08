@@ -1320,6 +1320,20 @@ describe("SupbotRuntime", () => {
     expect(restarted.snapshot().memoryEnabled).toBe(false);
   });
 
+  test("requireLoginOnStart defaults to false and persists across restart", async () => {
+    const rootDir = await createGitRoot();
+    const dir = await mkdtemp(join(tmpdir(), "supbot-test-"));
+    tempDirs.push(dir);
+    const runtime = new SupbotRuntime(new JsonFileStorage(dir), { rootDir });
+    await runtime.init();
+    expect(runtime.snapshot().requireLoginOnStart).toBe(false);
+    await runtime.setRequireLoginOnStart(true);
+
+    const restarted = new SupbotRuntime(new JsonFileStorage(dir), { rootDir });
+    await restarted.init();
+    expect(restarted.snapshot().requireLoginOnStart).toBe(true);
+  });
+
   test("searches memory with keyword, scope, and disabled filters", async () => {
     const runtime = await createRuntime();
     const conversation = await runtime.createConversation("Search memory");

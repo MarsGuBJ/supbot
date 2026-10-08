@@ -460,6 +460,7 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       compactBoundaries: this.state.compactBoundaries,
       memory: this.state.memory,
       memoryEnabled: this.state.memoryEnabled,
+      requireLoginOnStart: this.state.requireLoginOnStart,
       permissionMode: this.state.permissionMode,
       permissionRules: this.state.permissionRules,
       ...this.mcpManager.snapshot(),
@@ -845,6 +846,13 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     this.state.memoryEnabled = enabled === true;
     await this.persistAndBroadcast();
     return this.state.memoryEnabled;
+  }
+
+  async setRequireLoginOnStart(enabled: boolean): Promise<boolean> {
+    this.assertLoaded();
+    this.state.requireLoginOnStart = enabled === true;
+    await this.persistAndBroadcast();
+    return this.state.requireLoginOnStart;
   }
 
   async addPermissionRule(
@@ -1959,7 +1967,8 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     const auth = {
       email: account,
       password,
-      integrationSecret: process.env.HBCLIENT_TOOL_MARKET_INTEGRATION_SECRET?.trim() || defaultToolMarketIntegrationSecret,
+      integrationSecret:
+        process.env.HBCLIENT_TOOL_MARKET_INTEGRATION_SECRET?.trim() || defaultToolMarketIntegrationSecret,
     };
     // Verify the login (and auto-register the account server-side) before
     // persisting anything so a failure leaves no half-saved credentials.
@@ -5145,7 +5154,8 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
       accessToken: this.state.toolMarketSecret,
       email: this.state.toolMarketConfig.accountEmail,
       password: this.state.toolMarketPasswordSecret,
-      integrationSecret: process.env.HBCLIENT_TOOL_MARKET_INTEGRATION_SECRET?.trim() || defaultToolMarketIntegrationSecret,
+      integrationSecret:
+        process.env.HBCLIENT_TOOL_MARKET_INTEGRATION_SECRET?.trim() || defaultToolMarketIntegrationSecret,
     };
   }
 }

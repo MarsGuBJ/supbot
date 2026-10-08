@@ -16,9 +16,10 @@ import {
   PushpinOutlined,
   RightOutlined,
   SettingOutlined,
+  SkinOutlined,
   UpCircleOutlined,
 } from "@ant-design/icons";
-import { Button, Dropdown, Form, Input, Modal, Popconfirm, Tooltip, message } from "antd";
+import { Button, Checkbox, Dropdown, Form, Input, Modal, Popconfirm, Tooltip, message } from "antd";
 import type { Conversation, Project, ProjectUpdateInput, RuntimeSnapshot } from "@supbot/shared";
 import { conversationTitle, formatDateTime } from "@supbot/shared";
 import type { WorkspaceView } from "../lib/types";
@@ -65,6 +66,8 @@ export function LeftPanel({
   const [projectsCollapsed, setProjectsCollapsed] = useState(false);
   const [projectPopupOpen, setProjectPopupOpen] = useState(false);
   const [accountPopupOpen, setAccountPopupOpen] = useState(false);
+  const [personalOpen, setPersonalOpen] = useState(false);
+  const [savingRequireLogin, setSavingRequireLogin] = useState(false);
   const [messageApi, messageContextHolder] = message.useMessage();
   const [modalApi, modalContextHolder] = Modal.useModal();
   const projectPopupRef = useRef<HTMLDivElement | null>(null);
@@ -250,6 +253,18 @@ export function LeftPanel({
       messageApi.success(t("Logged out of the server agent."));
     } catch (error) {
       messageApi.error((error as Error).message);
+    }
+  };
+
+  const saveRequireLoginOnStart = async (checked: boolean) => {
+    setSavingRequireLogin(true);
+    try {
+      await window.supbot.setRequireLoginOnStart(checked);
+      await refresh();
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    } finally {
+      setSavingRequireLogin(false);
     }
   };
 
@@ -498,6 +513,17 @@ export function LeftPanel({
                 <SettingOutlined className="account-popup-row-icon" />
                 <span className="account-popup-row-label">{t("Config")}</span>
               </button>
+              <button
+                type="button"
+                className="account-popup-row"
+                onClick={() => {
+                  setAccountPopupOpen(false);
+                  setPersonalOpen(true);
+                }}
+              >
+                <SkinOutlined className="account-popup-row-icon" />
+                <span className="account-popup-row-label">{t("Personalization")}</span>
+              </button>
               <div className="account-popup-divider" />
               <button
                 type="button"
@@ -508,7 +534,7 @@ export function LeftPanel({
                 }}
               >
                 <UpCircleOutlined className="account-popup-row-icon" />
-                <span className="account-popup-row-label">{t("Upgrade to new version")}</span>
+                <span className="account-popup-row-label">{t("Check for updates")}</span>
               </button>
               {oidcLoggedIn ? (
                 <button type="button" className="account-popup-row logout" onClick={() => void logoutServstation()}>
@@ -616,6 +642,24 @@ export function LeftPanel({
             <Input value={editingProject?.rootPath || ""} readOnly />
           </Form.Item>
         </Form>
+      </Modal>
+      <Modal
+        open={personalOpen}
+        title={t("Personalization")}
+        width={420}
+        footer={null}
+        onCancel={() => setPersonalOpen(false)}
+      >
+        <Checkbox
+          checked={snapshot.requireLoginOnStart}
+          disabled={savingRequireLogin}
+          onChange={(event) => void saveRequireLoginOnStart(event.target.checked)}
+        >
+          {t("Require login after startup")}
+        </Checkbox>
+        <div className="personal-setting-hint">
+          {t("When enabled, you must log in before using the app each time it starts or is reopened from the tray.")}
+        </div>
       </Modal>
     </>
   );
