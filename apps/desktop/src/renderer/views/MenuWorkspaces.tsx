@@ -7,6 +7,7 @@ import {
   DeleteOutlined,
   DownOutlined,
   EditOutlined,
+  PlayCircleOutlined,
   PlusOutlined,
   RightOutlined,
   ThunderboltOutlined,
@@ -72,6 +73,22 @@ export function ScheduleMenuView({
     try {
       await window.supbot.updateScheduledJob(job.id, { enabled: !job.enabled });
       await refresh();
+    } catch (error) {
+      messageApi.error((error as Error).message);
+    } finally {
+      setBusyId("");
+    }
+  };
+
+  const runJob = async (job: ScheduledJob) => {
+    if (busyId) {
+      return;
+    }
+    setBusyId(`run:${job.id}`);
+    try {
+      await window.supbot.runScheduledJob(job.id);
+      await refresh();
+      messageApi.success(t("Scheduled task started."));
     } catch (error) {
       messageApi.error((error as Error).message);
     } finally {
@@ -152,6 +169,15 @@ export function ScheduleMenuView({
                 </div>
               </div>
               <div className="schedule-job-actions">
+                <Button
+                  type="text"
+                  icon={<PlayCircleOutlined />}
+                  loading={busyId === `run:${job.id}`}
+                  onClick={() => void runJob(job)}
+                  aria-label={t("Run scheduled task now")}
+                >
+                  {t("Run")}
+                </Button>
                 <Button
                   type="text"
                   icon={<EditOutlined />}

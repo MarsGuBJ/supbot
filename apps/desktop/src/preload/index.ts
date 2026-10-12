@@ -252,6 +252,7 @@ const api = {
   updateScheduledJob: (id: string, input: Partial<ScheduledJobInput>) =>
     ipcRenderer.invoke("schedule:update", id, input),
   deleteScheduledJob: (id: string) => ipcRenderer.invoke("schedule:delete", id),
+  runScheduledJob: (id: string) => ipcRenderer.invoke("schedule:run", id),
   kbListProjects: () => ipcRenderer.invoke("kb:listProjects"),
   kbCreateProject: (name: string) => ipcRenderer.invoke("kb:createProject", name),
   kbUploadDocuments: (project: string, files: KbUploadFileInput[]) =>

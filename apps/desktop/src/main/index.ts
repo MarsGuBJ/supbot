@@ -1629,6 +1629,9 @@ function registerIpc(): void {
   ipcMain.handle("schedule:delete", (_event, id: string) =>
     getRuntime().deleteScheduledJob(requiredString(id, "scheduled job id")),
   );
+  ipcMain.handle("schedule:run", (_event, id: string) =>
+    getRuntime().runScheduledJob(requiredString(id, "scheduled job id")),
+  );
   ipcMain.handle("kb:listProjects", () => getRuntime().kb.listProjects());
   ipcMain.handle("kb:createProject", (_event, name: unknown) =>
     getRuntime().kb.createProject(requiredString(name, "kb project name")),

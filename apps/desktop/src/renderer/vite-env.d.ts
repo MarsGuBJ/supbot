@@ -302,6 +302,7 @@ declare global {
       createScheduledJob(input: ScheduledJobInput): Promise<ScheduledJob>;
       updateScheduledJob(id: string, input: Partial<ScheduledJobInput>): Promise<ScheduledJob>;
       deleteScheduledJob(id: string): Promise<void>;
+      runScheduledJob(id: string): Promise<void>;
       kbListProjects(): Promise<KbProject[]>;
       kbCreateProject(name: string): Promise<KbProject>;
       kbUploadDocuments(project: string, files: KbUploadFileInput[]): Promise<KbIngestTask[]>;

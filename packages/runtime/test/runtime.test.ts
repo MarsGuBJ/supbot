@@ -8092,6 +8092,33 @@ describe("SupbotRuntime", () => {
     }
   });
 
+  test("runs a scheduled job manually without changing its schedule", async () => {
+    const runtime = await createRuntime();
+    const runAt = new Date(Date.now() + 60 * 60_000).toISOString();
+    const created = await runtime.createScheduledJob({
+      title: "Ping",
+      prompt: "scheduled hello",
+      scheduleKind: "once",
+      runAt,
+      enabled: true,
+    });
+
+    await runtime.runScheduledJob(created.id);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const snapshot = runtime.snapshot();
+    const job = snapshot.scheduledJobs[0];
+    expect(job.enabled).toBe(true);
+    expect(job.nextRunAt).toBe(runAt);
+    expect(job.lastRunAt).toBeTruthy();
+    expect(snapshot.jobs[0].scheduledJobId).toBe(job.id);
+    expect(snapshot.conversations[0].messages[0].text).toContain("[Scheduled] Ping");
+  });
+
+  test("runScheduledJob rejects unknown ids", async () => {
+    const runtime = await createRuntime();
+    await expect(runtime.runScheduledJob("schedule_missing")).rejects.toThrow("Scheduled job not found");
+  });
+
   test("runs due one-time scheduled jobs", async () => {
     const runtime = await createRuntime();
     await runtime.createScheduledJob({

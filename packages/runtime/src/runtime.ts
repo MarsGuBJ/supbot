@@ -1834,6 +1834,29 @@ export class SupbotRuntime extends ServstationRuntimeFacade {
     return due.length;
   }
 
+  /**
+   * Manually runs a scheduled job now, regardless of its enabled state or
+   * schedule. Only lastRunAt is updated; nextRunAt/enabled are left alone so
+   * the regular schedule is unaffected.
+   */
+  async runScheduledJob(id: string): Promise<void> {
+    this.assertLoaded();
+    const job = this.state.scheduledJobs.find((item) => item.id === id);
+    if (!job) {
+      throw new Error(`Scheduled job not found: ${id}`);
+    }
+    const ranAt = nowIso();
+    this.state.scheduledJobs = this.state.scheduledJobs.map((item) =>
+      item.id === id ? { ...item, lastRunAt: ranAt, updatedAt: ranAt } : item,
+    );
+    await this.sendPrompt({
+      projectId: job.projectId,
+      scheduledJobId: job.id,
+      prompt: `[Scheduled] ${job.title}\n\n${job.prompt}`,
+    });
+    await this.persistAndBroadcast();
+  }
+
   async updateModelConfig(update: ModelConfigUpdate): Promise<ModelConfig> {
     this.assertLoaded();
     const activeProvider = this.ensureActiveModelProvider();
