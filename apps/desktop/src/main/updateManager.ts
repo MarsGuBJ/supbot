@@ -1,3 +1,6 @@
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { app } from "electron";
 import { autoUpdater } from "electron-updater";
 import type { HBClientUpdateProgress, HBClientUpdateState } from "@supbot/shared";
@@ -23,6 +26,7 @@ export class HBClientUpdateManager {
   };
   private interval?: NodeJS.Timeout;
   private checkPromise?: Promise<HBClientUpdateState>;
+  private downloadedInstallerPath?: string;
 
   constructor(private readonly options: HBClientUpdateManagerOptions) {
     autoUpdater.autoDownload = false;
@@ -123,8 +127,10 @@ export class HBClientUpdateManager {
       return this.getState();
     }
     this.setState({ status: "downloading", progress: undefined, error: undefined });
+    this.downloadedInstallerPath = undefined;
     try {
-      await this.withAuthenticatedFeed(() => autoUpdater.downloadUpdate());
+      const files = await this.withAuthenticatedFeed(() => autoUpdater.downloadUpdate());
+      this.downloadedInstallerPath = pickInstallerPath(files);
       return this.getState();
     } catch (error) {
       const message = errorMessage(error);
@@ -138,8 +144,42 @@ export class HBClientUpdateManager {
       return this.getState();
     }
     this.setState({ status: "installing", error: undefined });
-    setImmediate(() => autoUpdater.quitAndInstall(false, true));
+    setImmediate(() => this.quitAndInstall());
     return this.getState();
+  }
+
+  private quitAndInstall(): void {
+    // Windows upgrades run the installer with admin rights by default. The
+    // assisted installer allows installing into protected locations (e.g.
+    // Program Files), and a non-elevated update installer fails there with
+    // "Error opening file for writing". elevate.exe is the helper
+    // electron-builder packs into resources and electron-updater itself uses
+    // when update metadata demands admin rights; it acquires elevation
+    // automatically through a UAC prompt, so no manual setup is required.
+    if (process.platform === "win32" && this.downloadedInstallerPath) {
+      const resourcesPath = process.resourcesPath;
+      const elevatePath = resourcesPath ? join(resourcesPath, "elevate.exe") : undefined;
+      if (elevatePath && existsSync(elevatePath) && this.launchElevatedInstaller(elevatePath)) {
+        // Mirror electron-updater: the installer is up, quit so it can
+        // replace the running installation and relaunch it (--force-run).
+        setImmediate(() => app.quit());
+        return;
+      }
+    }
+    autoUpdater.quitAndInstall(false, true);
+  }
+
+  private launchElevatedInstaller(elevatePath: string): boolean {
+    try {
+      const child = spawn(elevatePath, [this.downloadedInstallerPath!, "--updated", "--force-run"], {
+        detached: true,
+        stdio: "ignore",
+      });
+      child.unref();
+      return child.pid !== undefined;
+    } catch {
+      return false;
+    }
   }
 
   private async performCheck(manual: boolean): Promise<HBClientUpdateState> {
@@ -273,6 +313,10 @@ function normalizeProgress(progress: {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function pickInstallerPath(files: string[]): string | undefined {
+  return files.find((file) => file.toLowerCase().endsWith(".exe")) ?? files[0];
 }
 
 function isUnauthorized(error: unknown): boolean {

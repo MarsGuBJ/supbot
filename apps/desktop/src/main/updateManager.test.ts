@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const updaterMock = vi.hoisted(() => {
@@ -29,16 +30,36 @@ const updaterMock = vi.hoisted(() => {
   };
 });
 
+const appMock = vi.hoisted(() => ({
+  getVersion: () => "1.0.0",
+  isPackaged: true,
+  quit: vi.fn(),
+}));
+
+const spawnMock = vi.hoisted(() => vi.fn());
+const existsSyncMock = vi.hoisted(() => vi.fn());
+
 vi.mock("electron", () => ({
-  app: {
-    getVersion: () => "1.0.0",
-    isPackaged: true,
-  },
+  app: appMock,
 }));
 
 vi.mock("electron-updater", () => ({ autoUpdater: updaterMock }));
 
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
+  spawn: spawnMock,
+}));
+
+vi.mock("node:fs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:fs")>()),
+  existsSync: existsSyncMock,
+}));
+
 import { HBClientUpdateManager, isUpdateRuntimeSupported, updatePlatform } from "./updateManager";
+
+function setResourcesPath(value: string | undefined): void {
+  Object.defineProperty(process, "resourcesPath", { value, configurable: true, writable: true });
+}
 
 describe("HBClientUpdateManager", () => {
   beforeEach(() => {
@@ -47,6 +68,9 @@ describe("HBClientUpdateManager", () => {
     updaterMock.checkForUpdates.mockReset();
     updaterMock.downloadUpdate.mockReset();
     updaterMock.quitAndInstall.mockReset();
+    appMock.quit.mockReset();
+    spawnMock.mockReset();
+    existsSyncMock.mockReset();
     updaterMock.disableDifferentialDownload = true;
     updaterMock.requestHeaders = {};
     delete process.env.HBCLIENT_UPDATE_FEED_URL;
@@ -100,6 +124,80 @@ describe("HBClientUpdateManager", () => {
     expect(updaterMock.quitAndInstall).toHaveBeenCalledWith(false, true);
     expect(states).toContain("downloading");
     expect(manager.getState().status).toBe("installing");
+  });
+
+  it("runs the Windows update installer with admin rights by default", async () => {
+    const manager = new HBClientUpdateManager({
+      getFeedContext: vi.fn().mockResolvedValue({ baseUrl: "https://botstation.example" }),
+      emitState: vi.fn(),
+    });
+    updaterMock.checkForUpdates.mockImplementation(async () => {
+      updaterMock.emit("update-available", { version: "1.1.0" });
+      return {};
+    });
+    const installerPath = "C:\\cache\\HyWork-1.1.0-win-x64.exe";
+    updaterMock.downloadUpdate.mockImplementation(async () => {
+      updaterMock.emit("update-downloaded", { version: "1.1.0" });
+      return [installerPath];
+    });
+    existsSyncMock.mockReturnValue(true);
+    spawnMock.mockReturnValue({ pid: 4321, unref: vi.fn() });
+    const previousResourcesPath = process.resourcesPath;
+    setResourcesPath("C:\\app\\resources");
+
+    try {
+      await manager.check(true);
+      await manager.download();
+      manager.install();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      if (process.platform === "win32") {
+        const elevatePath = join("C:\\app\\resources", "elevate.exe");
+        expect(existsSyncMock).toHaveBeenCalledWith(elevatePath);
+        expect(spawnMock).toHaveBeenCalledWith(elevatePath, [installerPath, "--updated", "--force-run"], {
+          detached: true,
+          stdio: "ignore",
+        });
+        expect(updaterMock.quitAndInstall).not.toHaveBeenCalled();
+        expect(appMock.quit).toHaveBeenCalledTimes(1);
+      } else {
+        expect(spawnMock).not.toHaveBeenCalled();
+        expect(updaterMock.quitAndInstall).toHaveBeenCalledWith(false, true);
+      }
+    } finally {
+      setResourcesPath(previousResourcesPath);
+    }
+  });
+
+  it("falls back to the standard installer when the elevate helper is missing", async () => {
+    const manager = new HBClientUpdateManager({
+      getFeedContext: vi.fn().mockResolvedValue({ baseUrl: "https://botstation.example" }),
+      emitState: vi.fn(),
+    });
+    updaterMock.checkForUpdates.mockImplementation(async () => {
+      updaterMock.emit("update-available", { version: "1.1.0" });
+      return {};
+    });
+    updaterMock.downloadUpdate.mockImplementation(async () => {
+      updaterMock.emit("update-downloaded", { version: "1.1.0" });
+      return ["C:\\cache\\HyWork-1.1.0-win-x64.exe"];
+    });
+    existsSyncMock.mockReturnValue(false);
+    setResourcesPath("C:\\app\\resources");
+
+    try {
+      await manager.check(true);
+      await manager.download();
+      manager.install();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(spawnMock).not.toHaveBeenCalled();
+      expect(updaterMock.quitAndInstall).toHaveBeenCalledWith(false, true);
+      expect(appMock.quit).not.toHaveBeenCalled();
+    } finally {
+      setResourcesPath(undefined);
+    }
   });
 
   it("refreshes the access token once after a 401", async () => {

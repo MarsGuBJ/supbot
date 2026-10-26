@@ -11,6 +11,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.5.4",
+    date: "2026-10-26",
+    zh: [
+      "自动升级默认以管理员权限运行安装器（自动弹出 UAC 授权），修复装到受保护目录时升级失败（不能打开要写入的文件）",
+      "修复生产依赖安全审计问题（axios、undici、body-parser 等）",
+    ],
+    en: [
+      "Auto-updates now run the installer with administrator rights by default (automatic UAC prompt), fixing upgrade failures (cannot open file for writing) when installed to protected locations",
+      "Cleared production dependency audit issues (axios, undici, body-parser, and more)",
+    ],
+  },
+  {
     version: "0.5.3",
     date: "2026-10-23",
     zh: ["“关于 HyWork”弹窗新增历次版本更新日志，按版本号倒序展示"],

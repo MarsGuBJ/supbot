@@ -11,10 +11,22 @@
  *   唯一引入方 @anthropic-ai/sandbox-runtime 仅用 node-forge 生成
  *   MITM CA 密钥对与证书，不做第三方签名验证，且沙箱功能仅在
  *   Linux/macOS 启用，Windows 桌面发布不加载该模块。
+ * - GHSA-mrhx-c7xc-m3w5（zod，2026-10-26 起放行）：
+ *   修复仅存在于 zod 4.6.7（breaking major），3.x 线无修复版本
+ *   （最新 3.25.76 仍受影响）。kennyharness 及其依赖
+ *   （@mendable/firecrawl-js、@anthropic-ai/sandbox-runtime、
+ *   @modelcontextprotocol/sdk）均锁定 zod@3，升级到 4 属于破坏性迁移。
+ *   漏洞为校验超大受限集合时的内存耗尽 DoS，需要攻击者控制
+ *   schema 输入（恶意模型服务商/MCP server）；本产品为本地单用户
+ *   桌面应用，最坏后果是本地进程内存耗尽，不影响数据机密性与完整性。
+ *   kennyharness 迁移到 zod 4 或上游发布 3.x 修复后立即移除。
  */
 const { execSync } = require("node:child_process");
 
-const ALLOWED_ADVISORY_URLS = new Set(["https://github.com/advisories/GHSA-86w9-cpqp-85rv"]);
+const ALLOWED_ADVISORY_URLS = new Set([
+  "https://github.com/advisories/GHSA-86w9-cpqp-85rv",
+  "https://github.com/advisories/GHSA-mrhx-c7xc-m3w5",
+]);
 
 let raw;
 try {

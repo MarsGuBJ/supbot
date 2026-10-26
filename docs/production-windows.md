@@ -16,6 +16,7 @@ npm run verify:release
 The audit gate (`scripts/audit-production.cjs`) allows documented exceptions for advisories with no upstream fix that are unreachable in this product. Current exceptions:
 
 - `GHSA-86w9-cpqp-85rv` (node-forge, all versions ≤ 1.4.0, recorded 2026-10-08): RSA PKCS#1 v1.5 signature verification forgery. The only importer is `@anthropic-ai/sandbox-runtime`, which uses node-forge solely to generate MITM CA keypairs and certificates, never to verify third-party signatures; the sandbox feature is Linux/macOS-only and is not loaded by the Windows desktop release. Remove this exception as soon as node-forge or sandbox-runtime ships a fix.
+- `GHSA-mrhx-c7xc-m3w5` (zod, all versions < 4.6.6, recorded 2026-10-26): memory exhaustion while validating oversized constrained collections. The fix exists only in zod 4.6.7, a breaking major upgrade; the zod 3 line has no patched release (latest 3.25.76 is still affected). kennyharness and its own dependencies (`@mendable/firecrawl-js`, `@anthropic-ai/sandbox-runtime`, `@modelcontextprotocol/sdk`) all pin zod 3, so upgrading is a breaking migration. Exploitation requires attacker-controlled schema input (a malicious model provider or MCP server) against a local single-user desktop app; the worst outcome is local process memory exhaustion with no confidentiality or integrity impact. Remove this exception as soon as kennyharness migrates to zod 4 or upstream ships a patched 3.x release.
 
 Run `npm run audit:all` separately for every release to review development and build-tool advisories. Current Electron Builder transitive dependencies still use legacy `brace-expansion` major versions for which npm cannot apply a compatible patched version. Keep those advisories under review and remove this exception as soon as the upstream build chain provides a compatible fix; never use `npm audit fix --force` when it proposes a breaking downgrade or major-version substitution.
 
@@ -33,6 +34,8 @@ Before publishing a build:
 ## Remote Updates
 
 HyWork checks the authenticated Botstation stable update feed after connecting and every 30 minutes. It never downloads or installs an update without user action.
+
+On Windows the update installer is launched through the bundled `resources/elevate.exe` helper, so upgrades always run with administrator rights acquired via an automatic UAC prompt. This keeps upgrades working for installations in protected locations (e.g. Program Files) without any manual permission setup. If the helper is missing, the client falls back to the standard non-elevated `quitAndInstall` flow.
 
 Publish a release from Botstation Admin Console:
 
