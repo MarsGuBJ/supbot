@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AppstoreAddOutlined,
   CheckCircleOutlined,
@@ -23,6 +23,7 @@ import {
 } from "antd";
 import type { RuntimeSnapshot, ToolMarketCatalogItem, ToolMarketProductType } from "@supbot/shared";
 import { defaultToolMarketApiUrl, formatDateTime } from "@supbot/shared";
+import { hasUsableServstationOidcSession } from "../servstationConnection";
 
 const marketPageSize = 15;
 
@@ -57,6 +58,7 @@ export function MarketWorkspace({
   const staffAgentReady = Boolean(
     staffAgentConfig.staffAgentAccount?.trim() && staffAgentConfig.staffAgentPasswordSaved,
   );
+  const accountLoggedIn = hasUsableServstationOidcSession(staffAgentConfig);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -118,6 +120,22 @@ export function MarketWorkspace({
       setLoggingIn(false);
     }
   };
+
+  // When the HyWork account already has a usable OIDC session and the
+  // staff-agent credentials are stored, sign in to the market over the
+  // integration channel automatically instead of waiting for a manual click.
+  // Attempted once per mount; on failure the manual login button stays visible.
+  const autoLoginAttemptedRef = useRef(false);
+  useEffect(() => {
+    if (autoLoginAttemptedRef.current) {
+      return;
+    }
+    if (!remoteEnabled || loggedIn || !accountLoggedIn || !staffAgentReady || loggingIn) {
+      return;
+    }
+    autoLoginAttemptedRef.current = true;
+    void handleLogin();
+  }, [remoteEnabled, loggedIn, accountLoggedIn, staffAgentReady, loggingIn]);
 
   const toggleInstall = async (product: ToolMarketCatalogItem) => {
     if (product.id === "local-mcp-bridge") {

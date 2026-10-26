@@ -105,6 +105,7 @@ import { filesFromPasteEvent, renamePastedFiles } from "./lib/pastedAttachments"
 import { formatFileSize } from "./lib/flowSchema";
 import { formatSkillPromptDirective } from "./lib/skills";
 import { promptContainsScheduleIntent } from "./lib/schedulePromptGuard";
+import { CHANGELOG } from "./lib/changelog";
 import {
   servstationConversationTitle,
   servstationJobIsTerminal,
@@ -451,12 +452,34 @@ function App() {
     const chinese = language === "zh";
     modalApi.info({
       title: chinese ? "关于 HyWork" : "About HyWork",
+      width: 520,
       content: (
         <div className="version-info">
           <div className="version-info-product">HyWork</div>
           <div className="version-info-number">
             <span>{chinese ? "版本号" : "Version"}</span>
             <strong>{currentVersion ? `v${currentVersion}` : chinese ? "未知" : "Unknown"}</strong>
+          </div>
+          <div className="version-info-changelog-title">{chinese ? "更新日志" : "What's new"}</div>
+          <div className="hb-changelog">
+            {CHANGELOG.map((entry) => (
+              <section className="hb-changelog-entry" key={entry.version}>
+                <div className="hb-changelog-entry-header">
+                  <span className="hb-changelog-version">
+                    v{entry.version}
+                    {entry.version === currentVersion ? (
+                      <span className="hb-changelog-current">{chinese ? "当前版本" : "Current"}</span>
+                    ) : null}
+                  </span>
+                  <span className="hb-changelog-date">{entry.date}</span>
+                </div>
+                <ul className="hb-changelog-list">
+                  {(chinese ? entry.zh : entry.en).map((item, index) => (
+                    <li key={index}>{item}</li>
+                  ))}
+                </ul>
+              </section>
+            ))}
           </div>
         </div>
       ),
